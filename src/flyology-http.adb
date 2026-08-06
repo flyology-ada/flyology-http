@@ -188,6 +188,8 @@ package body Flyology.HTTP is
    end Image;
 
    function Image (Value : Protocol) return String is
-     (if Value = HTTP_1_1_Protocol then "HTTP/1.1" else "HTTP/unknown");
+     (if Value = HTTP_1_1_Protocol then "HTTP/1.1"
+      elsif Value = HTTP_2_Protocol then "HTTP/2"
+      else "HTTP/unknown");
 
 end Flyology.HTTP;

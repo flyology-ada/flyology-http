@@ -532,6 +532,29 @@ begin
    pragma Assert (not Flyology.HTTP.Is_Idempotent (Flyology.HTTP.Methods.POST));
    pragma Assert
      (Flyology.HTTP.Image (Flyology.HTTP.HTTP_1_1_Protocol) = "HTTP/1.1");
+   pragma Assert
+     (Flyology.HTTP.Image (Flyology.HTTP.HTTP_2_Protocol) = "HTTP/2");
+
+   declare
+      Plain : constant Flyology.HTTP.Origin :=
+        Flyology.HTTP.Parse_Origin ("http://127.0.0.1:8080");
+      Prior_Knowledge : Client.Client (Capacity => 1);
+      Invalid : Client.Client (Capacity => 1);
+      Rejected : Boolean := False;
+   begin
+      Client.Configure
+        (Prior_Knowledge, Plain, Client.HTTP_2_Prior_Knowledge);
+      pragma Assert
+        (Client.Diagnostics (Prior_Knowledge).Transport_Capacity = 1);
+      begin
+         Client.Configure (Invalid, Plain, Client.Negotiate_HTTP_2);
+      exception
+         when Program_Error =>
+            Rejected := True;
+      end;
+      pragma Assert (Rejected);
+      Client.Configure (Invalid, Plain, Client.HTTP_1_Only);
+   end;
 
    declare
       Origin : constant Flyology.HTTP.Origin :=

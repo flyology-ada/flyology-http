@@ -103,6 +103,13 @@ flyology-websocket_client_policy-smoke
 flyology-http-decoded_path_policy-smoke
 flyology-http-expect_policy-smoke
 flyology-http-client_policy-smoke
+flyology-http-http_2_frames-smoke
+flyology-http-http_2_huffman-smoke
+flyology-http-http_2_hpack-smoke
+flyology-http-http_2_payloads-smoke
+flyology-http-http_2_policy-smoke
+flyology-http-http_2_requests-smoke
+flyology-http-http_2_settings-smoke
 flyology-http-route_parameter_policy-smoke
 flyology-websocket_deflate_policy_smoke
 buffers_smoke

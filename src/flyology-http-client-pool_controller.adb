@@ -28,6 +28,61 @@ protected body Pool_Controller is
          end if;
 
          for Index in Slots'Range loop
+            if Slots (Index).Phase = Shared
+              and then Slots (Index).Active_Streams <
+                H2_Connections.Maximum_Concurrent_Streams
+            then
+               declare
+                  Idle_Age : constant Duration := Ada.Real_Time.To_Duration
+                    (Now - Slots (Index).Last_Used);
+                  Total_Age : constant Duration := Ada.Real_Time.To_Duration
+                    (Now - Slots (Index).Born);
+                  Expired : constant Boolean :=
+                    (Slots (Index).Active_Streams = 0
+                       and then Policy.Idle_Timeout >= 0.0
+                       and then Idle_Age >= Policy.Idle_Timeout)
+                    or else
+                    (Policy.Max_Connection_Age >= 0.0
+                       and then Total_Age >= Policy.Max_Connection_Age)
+                    or else
+                    (Policy.Max_Requests_Per_Connection > 0
+                       and then Slots (Index).Request_Count >=
+                         Policy.Max_Requests_Per_Connection);
+               begin
+                  if Expired then
+                     Shared_Count := Shared_Count - 1;
+                     if Slots (Index).Active_Streams = 0 then
+                        Idle_Count := Idle_Count - 1;
+                        Slots (Index).Phase := Closing;
+                        Closing_Count := Closing_Count + 1;
+                        Slot_Index := Index;
+                        Connection := Slots (Index).Connection;
+                        Result := Checkout_Discard;
+                        exit;
+                     else
+                        Slots (Index).Phase := Draining;
+                     end if;
+                  else
+                     if Slots (Index).Active_Streams = 0 then
+                        Idle_Count := Idle_Count - 1;
+                     end if;
+                     Slots (Index).Active_Streams :=
+                       Slots (Index).Active_Streams + 1;
+                     Slots (Index).Request_Count :=
+                       Slots (Index).Request_Count + 1;
+                     Leased_Count := Leased_Count + 1;
+                     Reused_Count := Reused_Count + 1;
+                     Slot_Index := Index;
+                     Connection := Slots (Index).Connection;
+                     Result := Checkout_Idle;
+                     exit;
+                  end if;
+               end;
+            end if;
+         end loop;
+
+         for Index in Slots'Range loop
+            exit when Slot_Index /= 0;
             if Slots (Index).Phase = Idle then
                declare
                   Idle_Age : constant Duration := Ada.Real_Time.To_Duration
@@ -82,7 +137,12 @@ protected body Pool_Controller is
          end if;
 
          for Item of Slots loop
-            if Item.Phase in Empty | Idle then
+            if Item.Phase in Empty | Idle
+              or else
+                (Item.Phase = Shared
+                   and then Item.Active_Streams <
+                     H2_Connections.Maximum_Concurrent_Streams)
+            then
                Available_After := True;
                exit;
             end if;
@@ -107,16 +167,29 @@ protected body Pool_Controller is
             raise Client_Closed;
          end if;
          Slots (Slot_Index) :=
-           (Phase         => Leased,
+           (Phase         =>
+              (if Connection.Protocol = HTTP_2_Transport
+               then Shared else Leased),
             Connection    => Connection,
             Born          => Now,
             Last_Used     => Now,
             Request_Count => 1,
+            Active_Streams =>
+              (if Connection.Protocol = HTTP_2_Transport then 1 else 0),
             Interrupting  => False,
             Interrupt_Sent => False,
             Owner_Done    => False);
          Connecting_Count := Connecting_Count - 1;
          Leased_Count := Leased_Count + 1;
+         if Connection.Protocol = HTTP_2_Transport then
+            Shared_Count := Shared_Count + 1;
+            if Flyology.Wake_Sources.Descriptor (Checkout_Wake) >= 0
+              and then not Checkout_Signalled
+            then
+               Flyology.Wake_Sources.Signal (Checkout_Wake);
+               Checkout_Signalled := True;
+            end if;
+         end if;
          Created_Count := Created_Count + 1;
       end Install;
 
@@ -171,7 +244,7 @@ protected body Pool_Controller is
          Total_Age : Duration;
       begin
          if Slot_Index > Capacity
-           or else Slots (Slot_Index).Phase /= Leased
+           or else Slots (Slot_Index).Phase not in Leased | Shared | Draining
          then
             raise Program_Error with "invalid HTTP pool lease return";
          end if;
@@ -179,6 +252,54 @@ protected body Pool_Controller is
          Total_Age := Ada.Real_Time.To_Duration
            (Now - Slots (Slot_Index).Born);
          Leased_Count := Leased_Count - 1;
+         if Slots (Slot_Index).Phase in Shared | Draining then
+            if Slots (Slot_Index).Active_Streams = 0 then
+               raise Program_Error with "invalid HTTP/2 stream lease return";
+            end if;
+            Slots (Slot_Index).Active_Streams :=
+              Slots (Slot_Index).Active_Streams - 1;
+            if Slots (Slot_Index).Phase = Shared
+              and then
+                (not Reusable
+                   or else Stopping
+                   or else
+                     (Policy.Max_Connection_Age >= 0.0
+                        and then Total_Age >= Policy.Max_Connection_Age)
+                   or else
+                     (Policy.Max_Requests_Per_Connection > 0
+                        and then Slots (Slot_Index).Request_Count >=
+                          Policy.Max_Requests_Per_Connection))
+            then
+               Slots (Slot_Index).Phase := Draining;
+               Shared_Count := Shared_Count - 1;
+            end if;
+            if Slots (Slot_Index).Active_Streams > 0 then
+               Result := Returned_Shared;
+            elsif Slots (Slot_Index).Phase = Shared
+              and then Idle_Count < Policy.Max_Idle
+            then
+               Slots (Slot_Index).Last_Used := Now;
+               Idle_Count := Idle_Count + 1;
+               Result := Returned_Shared;
+            else
+               if Slots (Slot_Index).Phase = Shared then
+                  Shared_Count := Shared_Count - 1;
+               end if;
+               Slots (Slot_Index).Phase := Closing;
+               Slots (Slot_Index).Owner_Done := True;
+               Closing_Count := Closing_Count + 1;
+               Result :=
+                 (if Slots (Slot_Index).Interrupting
+                  then Return_Close_Deferred else Return_Close);
+            end if;
+            if Flyology.Wake_Sources.Descriptor (Checkout_Wake) >= 0
+              and then not Checkout_Signalled
+            then
+               Flyology.Wake_Sources.Signal (Checkout_Wake);
+               Checkout_Signalled := True;
+            end if;
+            return;
+         end if;
          if Reusable and then not Stopping
            and then Idle_Count < Policy.Max_Idle
            and then
@@ -239,9 +360,18 @@ protected body Pool_Controller is
          Slot_Index := 0;
          Connection := null;
          for Index in Slots'Range loop
-            if Slots (Index).Phase = Idle then
+            if Slots (Index).Phase = Idle
+              or else
+                (Slots (Index).Phase in Shared | Draining
+                   and then Slots (Index).Active_Streams = 0)
+            then
+               if Slots (Index).Phase = Shared then
+                  Shared_Count := Shared_Count - 1;
+               end if;
+               if Slots (Index).Phase in Idle | Shared then
+                  Idle_Count := Idle_Count - 1;
+               end if;
                Slots (Index).Phase := Closing;
-               Idle_Count := Idle_Count - 1;
                Closing_Count := Closing_Count + 1;
                Found := True;
                Slot_Index := Index;
@@ -275,7 +405,10 @@ protected body Pool_Controller is
          Slot_Index := 0;
          Connection := null;
          for Index in Slots'Range loop
-            if Slots (Index).Phase in Connecting | Leased
+            if (Slots (Index).Phase in Connecting | Leased
+                  or else
+                (Slots (Index).Phase in Shared | Draining
+                   and then Slots (Index).Active_Streams > 0))
               and then Slots (Index).Connection /= null
               and then not Slots (Index).Interrupt_Sent
             then
@@ -333,7 +466,12 @@ protected body Pool_Controller is
          Can_Checkout := Stopping;
          if not Can_Checkout then
             for Item of Slots loop
-               if Item.Phase in Empty | Idle then
+               if Item.Phase in Empty | Idle
+                 or else
+                   (Item.Phase = Shared
+                      and then Item.Active_Streams <
+                        H2_Connections.Maximum_Concurrent_Streams)
+               then
                   Can_Checkout := True;
                   exit;
                end if;
@@ -383,17 +521,26 @@ protected body Pool_Controller is
       end Record_Stale_Retry;
 
       function Snapshot return Client_Diagnostics is
-        (Transport_Capacity => Capacity,
-         Pending_Transports => Connecting_Count,
-         Active_Exchanges   => Leased_Count,
-         Reusable_Transports => Idle_Count,
-         Closing_Transports => Closing_Count,
-         Admission_Waiters  => Waiter_Count,
-         Transports_Created => Created_Count,
-         Transport_Reuses   => Reused_Count,
-         Transports_Closed  => Closed_Count,
-         Stale_Retries      => Stale_Retry_Count,
-         Admission_Timeouts => Timeout_Count);
+         Reusable : Natural := 0;
+      begin
+         for Item of Slots loop
+            if Item.Phase in Idle | Shared then
+               Reusable := Reusable + 1;
+            end if;
+         end loop;
+         return
+           (Transport_Capacity => Capacity,
+            Pending_Transports => Connecting_Count,
+            Active_Exchanges   => Leased_Count,
+            Reusable_Transports => Reusable,
+            Closing_Transports => Closing_Count,
+            Admission_Waiters  => Waiter_Count,
+            Transports_Created => Created_Count,
+            Transport_Reuses   => Reused_Count,
+            Transports_Closed  => Closed_Count,
+            Stale_Retries      => Stale_Retry_Count,
+            Admission_Timeouts => Timeout_Count);
+      end Snapshot;
 
       function Is_Stopping return Boolean is (Stopping);
 end Pool_Controller;

@@ -23,6 +23,7 @@ cd "$http_root/proof"
   flyology-http-decoded_path_policy.adb \
   flyology-http-expect_policy.adb \
   flyology-http-client_policy.adb \
+  flyology-http-http_2_policy.adb \
   flyology-http-route_parameter_policy.adb \
   flyology-websocket_deflate_policy.adb
 

@@ -1,11 +1,11 @@
 # Flyology HTTP
 
-Flyology HTTP is an experimental HTTP/1.1 client and server library for
-[Flyology](https://flyology.org/) tasks. Its synchronous Ada APIs work from
-native and lightweight tasks. The library includes bounded HTTP client pools,
-an origin-bound WebSocket client, streaming request and response bodies,
-routing, middleware, server-sent events, WebSocket servers, and plain or TLS
-transports built on Flyology I/O.
+Flyology HTTP is an experimental HTTP/1.1 client and server library, with an
+opt-in HTTP/2 client, for [Flyology](https://flyology.org/) tasks. Its
+synchronous Ada APIs work from native and lightweight tasks. The library
+includes bounded client pools, an origin-bound WebSocket client, streaming
+request and response bodies, routing, middleware, server-sent events,
+WebSocket servers, and plain or TLS transports built on Flyology I/O.
 
 Documentation is published at [http.flyology.org](https://http.flyology.org/).
 The [client guide](https://http.flyology.org/guide/client/) and
@@ -17,11 +17,15 @@ inbound lifecycles separately.
 ```sh
 alr build
 ./scripts/test.sh
+./scripts/http2-test.sh prepare
+./scripts/http2-test.sh all
 ```
 
 The test runner prepares a version-matched Flyology runtime, builds the HTTP
 library as a separate GPR library, and runs its client, server, WebSocket, TLS,
-policy, and negative lifetime tests.
+policy, and negative lifetime tests. The separate HTTP/2 command uses a pinned
+python-hyper/h2 peer for ALPN, prior-knowledge, multiplexing, flow-control, and
+retry interoperability, plus differential HPACK testing.
 
 ## Use with Alire
 
@@ -42,13 +46,17 @@ prepare Flyology's version-matched runtime as described in the
 ## Scope
 
 - HTTP/1.0 response compatibility and HTTP/1.1 client and server messages.
-- Origin-bound HTTP pools and single-session WebSocket clients with monotonic
-  operation deadlines.
+- Opt-in HTTP/2 clients with ALPN fallback or requirement, cleartext prior
+  knowledge, multiplexed streams, and bounded receive flow control.
+- Origin-bound HTTP pools with one monotonic exchange deadline and
+  single-session WebSocket clients with monotonic operation deadlines.
 - Fixed-length and chunked bodies with bounded streaming adapters.
 - Optional routing, middleware, native offload, SSE, and WebSocket facilities.
 - Provider-neutral TLS integration through Flyology I/O.
 
-The library does not currently provide HTTP/2, proxying, or content decoding.
-It is experimental and does not claim production qualification.
+HTTP/2 currently supports retained request bodies; borrowed streaming request
+sources and `Expect: 100-continue` remain HTTP/1.1-only. The library does not
+provide an HTTP/2 server, proxying, or content decoding. It is experimental and
+does not claim production qualification.
 
 Flyology HTTP is dual-licensed under MIT or Apache-2.0.

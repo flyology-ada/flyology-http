@@ -8,8 +8,9 @@ with Flyology.IO.TLS;
 
 --  Provides an origin-bound synchronous HTTP client with bounded connection
 --  pooling. Lightweight callers suspend on Flyology I/O; native callers block
---  only their pthread. HTTP/1.1 is the initial protocol engine, while the
---  request/response API does not expose connection ownership.
+--  only their pthread. Existing configuration remains HTTP/1.1-only; additive
+--  protocol modes enable negotiated or prior-knowledge HTTP/2 without exposing
+--  transport or stream ownership through the request/response API.
 package Flyology.HTTP.Client is
 
    --  Raised after client shutdown rejects a request or interrupts pool
@@ -75,9 +76,22 @@ package Flyology.HTTP.Client is
    --  Default conservative pool policy.
    Default_Pool_Configuration : constant Pool_Configuration := (others => <>);
 
+   --  Connection protocol selection. Existing Configure overloads retain
+   --  HTTP/1.1-only behavior; callers opt into HTTP/2 with an overload that
+   --  requires this value.
+   --  @enum HTTP_1_Only Use HTTP/1.1 without offering HTTP/2
+   --  @enum Negotiate_HTTP_2 Offer h2 then http/1.1 over TLS
+   --  @enum Require_HTTP_2 Require h2 negotiation over TLS
+   --  @enum HTTP_2_Prior_Knowledge Start HTTP/2 directly on cleartext HTTP
+   type Protocol_Mode is
+     (HTTP_1_Only,
+      Negotiate_HTTP_2,
+      Require_HTTP_2,
+      HTTP_2_Prior_Knowledge);
+
    --  Coherent client counters. Exchange and transport counts are separate so
-   --  a later multiplexed protocol can report several exchanges on one
-   --  transport without changing this record's meaning.
+   --  multiplexed protocols can report several exchanges on one transport
+   --  without changing this record's meaning.
    --  @field Transport_Capacity Configured transport slot bound
    --  @field Pending_Transports Transports being established
    --  @field Active_Exchanges Requests that own protocol exchanges
@@ -152,6 +166,8 @@ package Flyology.HTTP.Client is
    --  is retried once on a fresh transport without the expectation, within
    --  the same deadline and shared automatic-retry budget. The whole exchange
    --  deadline is never extended.
+   --  The current HTTP/2 engine rejects this opt-in handshake; use it with an
+   --  HTTP_1_Only client.
    --  @param Item Request to change
    --  @param Enabled Whether to generate Expect: 100-continue
    --  @param Wait_Timeout Maximum continue-specific wait in seconds
@@ -269,6 +285,20 @@ package Flyology.HTTP.Client is
       Origin_Value : Origin;
       Pool         : Pool_Configuration := Default_Pool_Configuration);
 
+   --  Bind a client with an explicit cleartext protocol mode. Negotiated modes
+   --  require TLS and are rejected here; HTTP_2_Prior_Knowledge is cleartext
+   --  HTTP/2 without the deprecated Upgrade handshake.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Normalized cleartext origin
+   --  @param Mode HTTP/1.1 or HTTP/2 prior-knowledge behavior
+   --  @param Pool Pool retention policy
+   --  @exception Program_Error Item is configured or arguments are invalid
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Mode         : Protocol_Mode;
+      Pool         : Pool_Configuration := Default_Pool_Configuration);
+
    --  Bind a new client to one origin using an explicit TLS provider. The
    --  client retains independently owned provider state, so Backend may be
    --  finalized after Configure returns. This overload is required for HTTPS
@@ -285,9 +315,30 @@ package Flyology.HTTP.Client is
       Backend      : not null access Flyology.IO.TLS.Provider'Class;
       Pool         : Pool_Configuration := Default_Pool_Configuration);
 
+   --  Bind a client with a retained TLS provider and explicit protocol mode.
+   --  Negotiate_HTTP_2 permits HTTP/1.1 fallback; Require_HTTP_2 rejects any
+   --  other ALPN result. As with the existing provider overload, a cleartext
+   --  origin is accepted for shared configuration code and does not use TLS.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Normalized origin
+   --  @param Backend Initialized TLS provider retained by Item
+   --  @param Mode TLS protocol selection behavior
+   --  @param Pool Pool retention policy
+   --  @exception Program_Error Item is configured, arguments are invalid, or
+   --     an HTTP/2 negotiation mode receives a backend without ALPN support
+   --  @exception Flyology.IO.TLS.TLS_Error Backend cannot be retained
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Backend      : not null access Flyology.IO.TLS.Provider'Class;
+      Mode         : Protocol_Mode;
+      Pool         : Pool_Configuration := Default_Pool_Configuration);
+
    --  Limited response owning one exchange lease until its body is consumed.
-   --  Reading the complete body returns a reusable connection to the pool.
-   --  Finalizing an incomplete response closes it without draining.
+   --  Reading the complete body returns an HTTP/1.1 transport lease or an
+   --  HTTP/2 stream lease to the pool. Finalizing an incomplete HTTP/1.1
+   --  response closes its transport; finalizing an incomplete HTTP/2 response
+   --  resets only its stream when the multiplexed transport remains usable.
    type Response is limited private;
 
    --  Execute one request. One monotonic Timeout starts before pool admission
@@ -304,6 +355,8 @@ package Flyology.HTTP.Client is
    --  bodies can be replayed directly; streamed bodies are eligible only when
    --  Source implements Rewindable_Request_Body_Source. The retry remains
    --  inside the original deadline. Non-idempotent requests are never retried.
+   --  HTTP/2 additionally applies this one-retry budget to streams that the
+   --  peer explicitly leaves unprocessed with GOAWAY or REFUSED_STREAM.
    --  @return Response head with a streaming body lease
    --  @exception Client_Closed Client is stopping
    --  @exception Connection_Error Resolution or all address attempts fail
@@ -328,6 +381,9 @@ package Flyology.HTTP.Client is
    --  is replayed only when it implements Rewindable_Request_Body_Source and
    --  the ordinary idempotent stale-transport retry conditions hold. Its
    --  exceptions propagate after the leased transport is discarded.
+   --  The current HTTP/2 engine accepts retained request bodies but rejects
+   --  borrowed streaming sources; HTTP_1_Only retains the behavior described
+   --  above.
    --  @param Item Shared configured client that outlives the result
    --  @param Value Request metadata; a retained body is rejected
    --  @param Source Request body producer used only during this call
@@ -370,7 +426,7 @@ package Flyology.HTTP.Client is
 
    --  Return the negotiated protocol.
    --  @param Item Response to inspect
-   --  @return HTTP_1_1_Protocol in the initial implementation
+   --  @return HTTP_1_1_Protocol or HTTP_2_Protocol
    --  @exception Program_Error Item is not initialized by Execute
    function Negotiated_Protocol (Item : Response) return Protocol;
 
@@ -456,8 +512,8 @@ package Flyology.HTTP.Client is
    --  Stream decoded response representation bytes. Fixed-length and chunked
    --  framing are removed. Last is Data'First - 1 when no bytes are produced.
    --  Finished becomes true only after complete framing; that transition
-   --  releases or closes the underlying connection. The Execute deadline and
-   --  token remain authoritative and are never restarted.
+   --  releases the underlying HTTP/1.1 connection or HTTP/2 stream. The
+   --  Execute deadline and token remain authoritative and are never restarted.
    --  @param Item Active response
    --  @param Data Caller-owned destination
    --  @param Last Last decoded byte, or Data'First - 1

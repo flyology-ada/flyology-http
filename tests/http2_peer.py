@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""Independent HTTP/2 peer used by the Flyology HTTP client tests.
+
+The peer deliberately uses python-hyper/h2 rather than Flyology's frame or
+HPACK implementation.  Each scenario is deterministic and emits a JSON-lines
+event log so the Ada integration test can verify wire-level behavior.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import socket
+import ssl
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import BinaryIO
+
+from h2.config import H2Configuration
+from h2.connection import H2Connection
+from h2.errors import ErrorCodes
+from h2.events import (
+    ConnectionTerminated,
+    DataReceived,
+    RequestReceived,
+    StreamEnded,
+    StreamReset,
+    WindowUpdated,
+)
+from h2.settings import SettingCodes
+
+
+BODY = b"flyology-http2"
+FLOW_BODY = bytes(range(256)) * 1024
+
+
+@dataclass
+class PeerState:
+    scenario: str
+    log: BinaryIO
+    request_count: int = 0
+    refused_once: bool = False
+    pending_streams: list[int] = field(default_factory=list)
+    flow_stream: int | None = None
+    flow_offset: int = 0
+    request_bytes: dict[int, int] = field(default_factory=dict)
+
+    def record(self, event: str, **values: object) -> None:
+        line = {"event": event, **values}
+        self.log.write((json.dumps(line, sort_keys=True) + "\n").encode())
+        self.log.flush()
+
+
+def send_response(connection: H2Connection, stream_id: int, body: bytes = BODY) -> None:
+    connection.send_headers(
+        stream_id,
+        [(":status", "200"), ("content-length", str(len(body))), ("x-peer", "h2")],
+    )
+    connection.send_data(stream_id, body, end_stream=True)
+
+
+def flush_flow_body(connection: H2Connection, state: PeerState) -> None:
+    stream_id = state.flow_stream
+    if stream_id is None:
+        return
+    while state.flow_offset < len(FLOW_BODY):
+        available = connection.local_flow_control_window(stream_id)
+        if available <= 0:
+            return
+        count = min(
+            available,
+            connection.max_outbound_frame_size,
+            len(FLOW_BODY) - state.flow_offset,
+        )
+        end_stream = state.flow_offset + count == len(FLOW_BODY)
+        connection.send_data(
+            stream_id,
+            FLOW_BODY[state.flow_offset : state.flow_offset + count],
+            end_stream=end_stream,
+        )
+        state.flow_offset += count
+        if end_stream:
+            state.record("response", stream=stream_id, bytes=len(FLOW_BODY))
+            state.flow_stream = None
+
+
+def serve_connection(
+    channel: socket.socket | ssl.SSLSocket, state: PeerState, cleartext: bool
+) -> bool:
+    if not cleartext and channel.selected_alpn_protocol() != "h2":
+        raise RuntimeError("client did not negotiate h2")
+
+    connection = H2Connection(
+        config=H2Configuration(client_side=False, header_encoding="utf-8")
+    )
+    # hyper-h2 retains the obsolete RFC 7540 server-side ENABLE_PUSH=0
+    # default. RFC 9113 forbids a server from sending this setting.
+    del connection.local_settings[SettingCodes.ENABLE_PUSH]
+    connection.initiate_connection()
+    channel.sendall(connection.data_to_send())
+    state.record(
+        "connected", alpn="h2c" if cleartext else channel.selected_alpn_protocol()
+    )
+
+    while True:
+        try:
+            data = channel.recv(65_535)
+        except (ConnectionResetError, ssl.SSLError):
+            return False
+        if not data:
+            return False
+        events = connection.receive_data(data)
+        for event in events:
+            if isinstance(event, RequestReceived):
+                state.request_count += 1
+                headers = dict(event.headers)
+                state.record(
+                    "request",
+                    stream=event.stream_id,
+                    method=headers.get(":method"),
+                    path=headers.get(":path"),
+                )
+            elif isinstance(event, DataReceived):
+                state.request_bytes[event.stream_id] = (
+                    state.request_bytes.get(event.stream_id, 0) + len(event.data)
+                )
+                connection.acknowledge_received_data(
+                    event.flow_controlled_length, event.stream_id
+                )
+            elif isinstance(event, StreamEnded):
+                stream_id = event.stream_id
+                if state.scenario == "upload":
+                    state.record(
+                        "request-body",
+                        stream=stream_id,
+                        bytes=state.request_bytes.get(stream_id, 0),
+                    )
+                if state.scenario == "goaway" and state.request_count == 1:
+                    connection.close_connection(
+                        error_code=ErrorCodes.NO_ERROR, last_stream_id=0
+                    )
+                    state.record("goaway", last_stream=0)
+                    channel.sendall(connection.data_to_send())
+                    return True
+                if state.scenario == "refused" and not state.refused_once:
+                    state.refused_once = True
+                    connection.reset_stream(stream_id, ErrorCodes.REFUSED_STREAM)
+                    state.record("refused", stream=stream_id)
+                elif state.scenario == "refused-post":
+                    connection.reset_stream(stream_id, ErrorCodes.REFUSED_STREAM)
+                    state.record("refused", stream=stream_id)
+                elif state.scenario == "multiplex":
+                    state.pending_streams.append(stream_id)
+                    if len(state.pending_streams) == 2:
+                        first, second = state.pending_streams
+                        connection.send_headers(first, [(":status", "200")])
+                        connection.send_headers(second, [(":status", "200")])
+                        connection.send_data(first, b"first-", end_stream=False)
+                        connection.send_data(second, b"second", end_stream=True)
+                        connection.send_data(first, b"response", end_stream=True)
+                        state.record("multiplex", streams=state.pending_streams)
+                elif state.scenario == "flow":
+                    connection.send_headers(
+                        stream_id,
+                        [(":status", "200"), ("content-length", str(len(FLOW_BODY)))],
+                    )
+                    state.flow_stream = stream_id
+                    state.flow_offset = 0
+                    flush_flow_body(connection, state)
+                else:
+                    send_response(connection, stream_id)
+                    state.record("response", stream=stream_id, bytes=len(BODY))
+            elif isinstance(event, WindowUpdated):
+                flush_flow_body(connection, state)
+            elif isinstance(event, StreamReset):
+                state.record(
+                    "client-reset",
+                    stream=event.stream_id,
+                    error=int(event.error_code),
+                )
+            elif isinstance(event, ConnectionTerminated):
+                state.record("client-goaway", error=int(event.error_code))
+                return False
+
+        outbound = connection.data_to_send()
+        if outbound:
+            channel.sendall(outbound)
+
+def serve_http1(channel: ssl.SSLSocket, state: PeerState) -> bool:
+    state.record("connected", alpn=channel.selected_alpn_protocol())
+    request = bytearray()
+    while b"\r\n\r\n" not in request:
+        data = channel.recv(4096)
+        if not data:
+            return False
+        request.extend(data)
+    state.request_count += 1
+    state.record("request", protocol="http/1.1")
+    body = b"fallback"
+    channel.sendall(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\n"
+        + body
+    )
+    return False
+
+
+def make_tls_context(
+    certificate: Path, private_key: Path, protocols: list[str]
+) -> ssl.SSLContext:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certificate, private_key)
+    context.set_alpn_protocols(protocols)
+    return context
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "scenario",
+        choices=(
+            "basic",
+            "multiplex",
+            "flow",
+            "goaway",
+            "refused",
+            "prior",
+            "fallback",
+            "require-failure",
+            "upload",
+            "refused-post",
+        ),
+    )
+    parser.add_argument("--certificate", type=Path, required=True)
+    parser.add_argument("--private-key", type=Path, required=True)
+    parser.add_argument("--port-file", type=Path, required=True)
+    parser.add_argument("--log-file", type=Path, required=True)
+    parser.add_argument("--cleartext", action="store_true")
+    arguments = parser.parse_args()
+
+    context = (
+        None
+        if arguments.cleartext
+        else make_tls_context(
+            arguments.certificate,
+            arguments.private_key,
+            ["http/1.1"]
+            if arguments.scenario in {"fallback", "require-failure"}
+            else ["h2"],
+        )
+    )
+    with arguments.log_file.open("wb") as log:
+        state = PeerState(arguments.scenario, log)
+        with socket.create_server(("127.0.0.1", 0)) as listener:
+            listener.settimeout(15)
+            arguments.port_file.write_text(str(listener.getsockname()[1]), encoding="ascii")
+            more_connections = True
+            while more_connections:
+                raw, _ = listener.accept()
+                with raw:
+                    raw.settimeout(30)
+                    if arguments.cleartext:
+                        more_connections = serve_connection(raw, state, True)
+                    else:
+                        assert context is not None
+                        with context.wrap_socket(raw, server_side=True) as channel:
+                            if arguments.scenario == "fallback":
+                                more_connections = serve_http1(channel, state)
+                            elif arguments.scenario == "require-failure":
+                                state.record(
+                                    "connected",
+                                    alpn=channel.selected_alpn_protocol(),
+                                )
+                                try:
+                                    channel.recv(1)
+                                except (ConnectionResetError, ssl.SSLError):
+                                    pass
+                                more_connections = False
+                            else:
+                                more_connections = serve_connection(
+                                    channel, state, False
+                                )
+
+
+if __name__ == "__main__":
+    main()

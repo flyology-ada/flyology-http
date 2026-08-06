@@ -223,6 +223,8 @@ package body HTTP_1_Internals is
       Flyology.HTTP.Headers.Clear (Data.Trailers);
       Data.Connection := null;
       Data.Slot_Index := 0;
+      Data.Engine := HTTP_1_Response;
+      Data.HTTP_2_Stream := H2_Connections.No_Stream;
       Data.Status_Value := 200;
       Data.Reason_Value := Null_Unbounded_String;
       Data.Protocol_Value := HTTP_1_1_Protocol;

@@ -26,6 +26,14 @@ project HTTP_Tests is
       "flyology-http-decoded_path_policy-smoke.adb",
       "flyology-http-expect_policy-smoke.adb",
       "flyology-http-client_policy-smoke.adb",
+      "flyology-http-http_2_frames-smoke.adb",
+      "flyology-http-http_2_huffman-smoke.adb",
+      "flyology-http-http_2_hpack-smoke.adb",
+      "flyology-http-http_2_hpack-differential.adb",
+      "flyology-http-http_2_payloads-smoke.adb",
+      "flyology-http-http_2_policy-smoke.adb",
+      "flyology-http-http_2_requests-smoke.adb",
+      "flyology-http-http_2_settings-smoke.adb",
       "flyology-http-route_parameter_policy-smoke.adb",
       "flyology-websocket_deflate_policy_smoke.adb",
       "http_smoke.adb",
@@ -48,6 +56,7 @@ project HTTP_Tests is
       "http_client_tls_smoke.adb",
       "websocket_client_smoke.adb",
       "websocket_client_tls_smoke.adb",
+      "http2_client_integration.adb",
       "websocket_conformance_server.adb");
    for Create_Missing_Dirs use "True";
 

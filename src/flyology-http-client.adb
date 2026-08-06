@@ -3,12 +3,16 @@ with Ada.Real_Time;
 with Ada.Strings.Fixed;
 with Ada.Unchecked_Deallocation;
 with Flyology.HTTP.Client_Policy;
+with Flyology.HTTP.HTTP_2_Client_Connection;
+with Flyology.HTTP.HTTP_2_Policy;
+with Flyology.HTTP.HTTP_2_Requests;
 with Flyology.IO;
 with Flyology.IO.Connections;
 with Flyology.IO.Connections.TLS;
 with Flyology.IO.DNS;
 with Flyology.IO.Sockets;
 with Flyology.Time_Math;
+with Flyology.IO.TLS.ALPN;
 with Flyology.Wake_Sources;
 #if FLYOLOGY_CONNECTION_TEST_HOOKS then
 with Interfaces.C;
@@ -22,22 +26,35 @@ package body Flyology.HTTP.Client is
    use type Flyology.IO.Descriptor;
 
    package Connections renames Flyology.IO.Connections;
+   package H2_Connections renames
+     Flyology.HTTP.HTTP_2_Client_Connection;
+   package H2_Policy renames Flyology.HTTP.HTTP_2_Policy;
+   package H2_Requests renames Flyology.HTTP.HTTP_2_Requests;
    package Sockets renames Flyology.IO.Sockets;
+   use type H2_Connections.Session_Access;
+   use type H2_Connections.Stream_Handle;
+   use type H2_Policy.Retry_Action;
+   use type H2_Policy.Retry_Cause;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    Receive_Buffer_Size : constant Positive := 8 * 1_024;
    Request_Buffer_Size : constant Positive := 8 * 1_024;
    Max_Request_Target_Bytes : constant Positive := 8 * 1_024;
 
+   type Transport_Protocol is (HTTP_1_Transport, HTTP_2_Transport);
+
    type Pooled_Connection is limited record
-      Channel : Connections.Connection;
+      Channel  : aliased Connections.Connection;
+      Protocol : Transport_Protocol := HTTP_1_Transport;
+      HTTP_2   : H2_Connections.Session_Access := null;
    end record;
    type Pooled_Connection_Access is access Pooled_Connection;
 
    procedure Free_Connection is new Ada.Unchecked_Deallocation
      (Pooled_Connection, Pooled_Connection_Access);
 
-   type Slot_Phase is (Empty, Connecting, Leased, Idle, Closing);
+   type Slot_Phase is
+     (Empty, Connecting, Leased, Idle, Shared, Draining, Closing);
 
    type Slot is record
       Phase       : Slot_Phase := Empty;
@@ -45,6 +62,7 @@ package body Flyology.HTTP.Client is
       Born         : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
       Last_Used    : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
       Request_Count : Natural := 0;
+      Active_Streams : Natural := 0;
       Interrupting : Boolean := False;
       Interrupt_Sent : Boolean := False;
       Owner_Done   : Boolean := False;
@@ -55,7 +73,8 @@ package body Flyology.HTTP.Client is
      (Checkout_Idle, Checkout_Create, Checkout_Discard, Checkout_Busy,
       Checkout_Closed);
    type Return_Result is
-     (Returned_Idle, Return_Close, Return_Close_Deferred);
+     (Returned_Idle, Returned_Shared, Return_Close,
+      Return_Close_Deferred);
    type Failure_Result is (Failure_Free, Failure_Free_Deferred);
 
    protected type Pool_Controller (Capacity : Positive) is
@@ -112,6 +131,7 @@ package body Flyology.HTTP.Client is
       Connecting_Count : Natural := 0;
       Leased_Count : Natural := 0;
       Idle_Count   : Natural := 0;
+      Shared_Count : Natural := 0;
       Closing_Count : Natural := 0;
       Waiter_Count : Natural := 0;
       Created_Count : Natural := 0;
@@ -143,15 +163,20 @@ package body Flyology.HTTP.Client is
       Lifetime      : State_Lifetime;
       Backend       : Flyology.IO.TLS.Provider_Access := null;
       Origin_Value  : Origin;
+      Protocol_Policy : Protocol_Mode := HTTP_1_Only;
       Is_Configured : Boolean := False;
    end record;
 
    type Body_Mode is (No_Body, Fixed_Body, Chunked_Body, Until_Close_Body);
+   type Response_Engine is (HTTP_1_Response, HTTP_2_Response);
 
    type Response_Data is record
       Owner          : Client_State_Access := null;
       Connection     : Pooled_Connection_Access := null;
       Slot_Index     : Natural := 0;
+      Engine         : Response_Engine := HTTP_1_Response;
+      HTTP_2_Stream  : H2_Connections.Stream_Handle :=
+        H2_Connections.No_Stream;
       Status_Value   : Status_Code := 200;
       Reason_Value   : Unbounded_String;
       Protocol_Value : Protocol := HTTP_1_1_Protocol;
@@ -277,7 +302,9 @@ package body Flyology.HTTP.Client is
       Connection : in out Pooled_Connection_Access) is
    begin
       if Connection /= null then
-         if Scheme (Owner.Origin_Value) = Secure_HTTPS then
+         if Scheme (Owner.Origin_Value) = Secure_HTTPS
+           and then Connection.Protocol = HTTP_1_Transport
+         then
             begin
                Flyology.IO.Connections.TLS.Shutdown
                  (Connection.Channel, Timeout => 0.0);
@@ -290,6 +317,9 @@ package body Flyology.HTTP.Client is
          exception
             when others => null;
          end;
+         if Connection.HTTP_2 /= null then
+            H2_Connections.Destroy (Connection.HTTP_2);
+         end if;
          Free_Connection (Connection);
       end if;
       Owner.Pool.Finish_Close (Slot_Index);
@@ -339,6 +369,25 @@ package body Flyology.HTTP.Client is
          Close_And_Finish (Data.Owner, Positive (Index), Value);
       end if;
    end Release_Lease;
+
+   procedure Abandon_Response (Data : in out Response_Data) is
+      Reusable : Boolean := False;
+   begin
+      if Data.Connection = null then
+         return;
+      elsif Data.Engine = HTTP_2_Response then
+         Reusable := H2_Connections.Is_Usable (Data.Connection.HTTP_2.all);
+         if Data.HTTP_2_Stream /= H2_Connections.No_Stream then
+            H2_Connections.Cancel_Stream
+              (Data.Connection.HTTP_2.all, Data.HTTP_2_Stream);
+            H2_Connections.Release_Stream
+              (Data.Connection.HTTP_2.all, Data.HTTP_2_Stream);
+            Data.HTTP_2_Stream := H2_Connections.No_Stream;
+         end if;
+      end if;
+      Release_Lease
+        (Data, Reusable => Data.Engine = HTTP_2_Response and then Reusable);
+   end Abandon_Response;
 
    procedure Set_Method (Item : in out Request; Value : Method) is
    begin
@@ -436,13 +485,26 @@ package body Flyology.HTTP.Client is
       Origin_Value : Origin;
       Pool         : Pool_Configuration := Default_Pool_Configuration) is
    begin
+      Configure (Item, Origin_Value, HTTP_1_Only, Pool);
+   end Configure;
+
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Mode         : Protocol_Mode;
+      Pool         : Pool_Configuration := Default_Pool_Configuration) is
+   begin
       if Item.Control.State /= null then
          raise Program_Error with "HTTP client is already configured";
       elsif Scheme (Origin_Value) = Secure_HTTPS then
          raise Program_Error with "HTTPS client requires a TLS backend";
+      elsif Mode in Negotiate_HTTP_2 | Require_HTTP_2 then
+         raise Program_Error with
+           "HTTP/2 negotiation requires an HTTPS origin";
       end if;
       Item.Control.State := new Client_State (Item.Capacity);
       Item.Control.State.Origin_Value := Origin_Value;
+      Item.Control.State.Protocol_Policy := Mode;
       Item.Control.State.Pool.Configure (Pool);
       Item.Control.State.Is_Configured := True;
    exception
@@ -461,16 +523,43 @@ package body Flyology.HTTP.Client is
       Backend      : not null access Flyology.IO.TLS.Provider'Class;
       Pool         : Pool_Configuration := Default_Pool_Configuration)
    is
+   begin
+      Configure (Item, Origin_Value, Backend, HTTP_1_Only, Pool);
+   end Configure;
+
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Backend      : not null access Flyology.IO.TLS.Provider'Class;
+      Mode         : Protocol_Mode;
+      Pool         : Pool_Configuration := Default_Pool_Configuration)
+   is
       Retained : Flyology.IO.TLS.Provider_Access := null;
    begin
       if Item.Control.State /= null then
          raise Program_Error with "HTTP client is already configured";
+      elsif Mode in Negotiate_HTTP_2 | Require_HTTP_2
+        and then Scheme (Origin_Value) /= Secure_HTTPS
+      then
+         raise Program_Error with
+           "HTTP/2 negotiation requires an HTTPS origin";
+      elsif Mode = HTTP_2_Prior_Knowledge
+        and then Scheme (Origin_Value) /= Plain_HTTP
+      then
+         raise Program_Error with
+           "HTTP/2 prior knowledge requires a cleartext HTTP origin";
+      elsif Mode in Negotiate_HTTP_2 | Require_HTTP_2
+        and then Backend.all not in Flyology.IO.TLS.ALPN.Provider'Class
+      then
+         raise Program_Error with
+           "HTTP/2 negotiation requires an ALPN-capable TLS backend";
       end if;
       Retained := Flyology.IO.TLS.Retain (Backend.all);
       Item.Control.State := new Client_State (Item.Capacity);
       Item.Control.State.Backend := Retained;
       Retained := null;
       Item.Control.State.Origin_Value := Origin_Value;
+      Item.Control.State.Protocol_Policy := Mode;
       Item.Control.State.Pool.Configure (Pool);
       Item.Control.State.Is_Configured := True;
    exception
@@ -646,6 +735,16 @@ package body Flyology.HTTP.Client is
 
             procedure Retry_Stale (Action : Retry_Attempt_Action) is
             begin
+               if Result.Data.Engine = HTTP_2_Response
+                 and then Result.Data.Connection /= null
+                 and then Result.Data.HTTP_2_Stream /=
+                   H2_Connections.No_Stream
+               then
+                  H2_Connections.Release_Stream
+                    (Result.Data.Connection.HTTP_2.all,
+                     Result.Data.HTTP_2_Stream);
+                  Result.Data.HTTP_2_Stream := H2_Connections.No_Stream;
+               end if;
                Release_Lease (Result.Data.all, False);
                Reset_Attempt (Result.Data.all);
                if Action = Rewind_And_Retry then
@@ -662,6 +761,192 @@ package body Flyology.HTTP.Client is
                Item.Control.State.Pool.Record_Stale_Retry;
                Retried := True;
             end Retry_Stale;
+
+            procedure Wait_For_HTTP_2 is
+               Stream_FD   : Flyology.IO.Descriptor;
+               Shutdown_FD : Flyology.IO.Descriptor;
+               Token_FD    : Flyology.IO.Descriptor :=
+                 Flyology.IO.Invalid_Descriptor;
+               Ready_Now   : Boolean;
+               Stopping    : Boolean;
+               Cancelled   : Boolean := False;
+               Selected    : Natural;
+            begin
+               H2_Connections.Wait_Source
+                 (Result.Data.Connection.HTTP_2.all,
+                  Result.Data.HTTP_2_Stream, Stream_FD, Ready_Now);
+               if Ready_Now then
+                  return;
+               end if;
+               Item.Control.State.Pool.Shutdown_Source
+                 (Shutdown_FD, Stopping);
+               if Stopping then
+                  raise Client_Closed;
+               end if;
+               if Token /= null then
+                  Token.Wait_Source (Token_FD, Cancelled);
+                  if Cancelled then
+                     raise Flyology.Cancellation.Operation_Cancelled;
+                  end if;
+               end if;
+               if Token = null then
+                  declare
+                     Sources : Flyology.IO.Wait_Request_Array (1 .. 2);
+                  begin
+                     Sources (1) :=
+                       (FD => Stream_FD, Condition => Flyology.IO.For_Read);
+                     Sources (2) :=
+                       (FD => Shutdown_FD, Condition => Flyology.IO.For_Read);
+                     Selected := Flyology.IO.Wait_Any
+                       (Sources, Remaining (Started, Timeout));
+                  end;
+               else
+                  declare
+                     Sources : Flyology.IO.Wait_Request_Array (1 .. 3);
+                  begin
+                     Sources (1) :=
+                       (FD => Stream_FD, Condition => Flyology.IO.For_Read);
+                     Sources (2) :=
+                       (FD => Shutdown_FD, Condition => Flyology.IO.For_Read);
+                     Sources (3) :=
+                       (FD => Token_FD, Condition => Flyology.IO.For_Read);
+                     Selected := Flyology.IO.Wait_Any
+                       (Sources, Remaining (Started, Timeout));
+                  end;
+               end if;
+               if Selected = 0 then
+                  raise Flyology.IO.Timeout_Error;
+               elsif Selected = 2 then
+                  raise Client_Closed;
+               elsif Selected = 3 then
+                  raise Flyology.Cancellation.Operation_Cancelled;
+               end if;
+            end Wait_For_HTTP_2;
+
+            procedure Execute_HTTP_2 (Retry : out Boolean) is
+               Handle    : H2_Connections.Stream_Handle;
+               Accepted  : Boolean;
+               Head      : H2_Connections.Head_Result;
+               Finished  : Boolean;
+               Fields    : Flyology.HTTP.Headers.List;
+               Status    : Status_Code;
+
+               procedure Retry_Stream (Cause : H2_Policy.Retry_Cause) is
+                  H2_Replay : constant H2_Policy.Replay_Kind :=
+                    (if Source = null then H2_Policy.Direct_Replay
+                     elsif Source.all in
+                       Rewindable_Request_Body_Source'Class
+                     then H2_Policy.Rewindable_Stream
+                     else H2_Policy.One_Shot_Stream);
+                  Action : constant H2_Policy.Retry_Action :=
+                    H2_Policy.Classify_Retry
+                      (Cause           => Cause,
+                       Replay          => H2_Replay,
+                       Stream_Id       => H2_Connections.Identifier (Handle),
+                       Last_Stream_Id  => 0,
+                       Already_Retried => Retried,
+                       Idempotent      => Is_Idempotent (Value.Method_Value),
+                       Saw_Response    => False,
+                       Source_Failed   => False,
+                       Time_Remains    =>
+                         Timeout < 0.0
+                           or else Remaining (Started, Timeout) > 0.0);
+                  Reusable : constant Boolean :=
+                    Cause = H2_Policy.Refused_Stream
+                      and then H2_Connections.Is_Usable
+                        (Result.Data.Connection.HTTP_2.all);
+               begin
+                  H2_Connections.Release_Stream
+                    (Result.Data.Connection.HTTP_2.all, Handle);
+                  Result.Data.HTTP_2_Stream := H2_Connections.No_Stream;
+                  Release_Lease (Result.Data.all, Reusable);
+                  Reset_Attempt (Result.Data.all);
+                  if Action = H2_Policy.Propagate_Failure then
+                     raise Protocol_Error with
+                       "HTTP/2 peer rejected the request stream";
+                  elsif Action = H2_Policy.Rewind_And_Retry then
+                     Rewind
+                       (Rewindable_Request_Body_Source'Class (Source.all));
+                  end if;
+                  Item.Control.State.Pool.Record_Stale_Retry;
+                  Retried := True;
+                  Retry := True;
+               end Retry_Stream;
+            begin
+               Retry := False;
+               if Source /= null then
+                  raise Constraint_Error with
+                    "HTTP/2 streaming request bodies are not yet supported";
+               elsif Value.Expect_Continue then
+                  raise Constraint_Error with
+                    "HTTP/2 Expect: 100-continue is not yet supported";
+               end if;
+               declare
+                  Header_Block : constant Flyology.Bytes.Unbounded_Bytes :=
+                    H2_Requests.Encode_Head
+                      (Method_Text => Image (Value.Method_Value),
+                       Scheme_Text =>
+                         (if Scheme (Item.Control.State.Origin_Value) =
+                            Secure_HTTPS
+                          then "https" else "http"),
+                       Authority => Host_Field
+                         (Item.Control.State.Origin_Value),
+                       Target => To_String (Value.Target_Value),
+                       Fields => Value.Fields,
+                       Has_Content_Length => Retained_Length > 0,
+                       Content_Length => Long_Long_Integer (Retained_Length),
+                       Expect_Continue => False);
+               begin
+                  H2_Connections.Open
+                    (Result.Data.Connection.HTTP_2.all,
+                     Flyology.Bytes.To_Array (Header_Block),
+                     Flyology.Bytes.To_Array (Value.Body_Value),
+                     Image (Value.Method_Value) = "HEAD",
+                     Handle, Accepted);
+               end;
+               if not Accepted then
+                  Release_Lease (Result.Data.all, False);
+                  Reset_Attempt (Result.Data.all);
+                  Retry := True;
+                  return;
+               end if;
+               Result.Data.Engine := HTTP_2_Response;
+               Result.Data.HTTP_2_Stream := Handle;
+               loop
+                  H2_Connections.Poll_Head
+                    (Result.Data.Connection.HTTP_2.all, Handle,
+                     Head, Status, Fields, Finished);
+                  case Head is
+                     when H2_Connections.Head_Ready =>
+                        Result.Data.Status_Value := Status;
+                        Result.Data.Fields := Fields;
+                        Result.Data.Protocol_Value := HTTP_2_Protocol;
+                        Result.Data.Saw_Response_Bytes := True;
+                        if Finished then
+                           H2_Connections.Release_Stream
+                             (Result.Data.Connection.HTTP_2.all, Handle);
+                           Result.Data.HTTP_2_Stream :=
+                             H2_Connections.No_Stream;
+                           Release_Lease
+                             (Result.Data.all,
+                              H2_Connections.Is_Usable
+                                (Result.Data.Connection.HTTP_2.all));
+                        end if;
+                        return;
+                     when H2_Connections.Head_Would_Block =>
+                        Wait_For_HTTP_2;
+                     when H2_Connections.Head_Refused =>
+                        Retry_Stream (H2_Policy.Refused_Stream);
+                        return;
+                     when H2_Connections.Head_Goaway_Unprocessed =>
+                        Retry_Stream (H2_Policy.Go_Away_Unprocessed);
+                        return;
+                     when H2_Connections.Head_Connection_Failed =>
+                        raise Protocol_Error with
+                          "HTTP/2 connection failed before response headers";
+                  end case;
+               end loop;
+            end Execute_HTTP_2;
          begin
             loop
                Checkout
@@ -669,63 +954,74 @@ package body Flyology.HTTP.Client is
                Result.Data.Connection := Connection;
                Result.Data.Slot_Index := Slot;
                begin
-                  declare
-                     Head : constant String := Request_Head
-                       (Item.Control.State.all, Value,
-                        Streaming => Source /= null,
-                        Stream_Length => Length,
-                        Use_Expectation => Use_Expectation);
-                  begin
-                     Connections.Send_All
-                       (Result.Data.Connection.Channel, Byte_Array (Head),
-                        Remaining (Started, Timeout), Token => Token);
-                  end;
-                  declare
-                     Final_Ready : Boolean := False;
-                     Body_Sent   : Boolean := False;
-                  begin
-                     if Use_Expectation and then Has_Request_Body then
-                        Await_Continue
-                          (Result.Data.all, Value.Continue_Wait, Token,
-                           Final_Ready);
-                     end if;
-                     if not Final_Ready then
-                        if Retained_Length > 0 then
-                           Connections.Send_All
-                             (Result.Data.Connection.Channel,
-                              Flyology.Bytes.To_Array (Value.Body_Value),
-                              Remaining (Started, Timeout), Token => Token);
-                        elsif Source /= null then
-                           Send_Streaming_Body
-                             (Result.Data.all, Source.all, Length,
-                              Value.Trailer_Fields, Token);
+                  if Connection.Protocol = HTTP_2_Transport then
+                     declare
+                        Retry : Boolean;
+                     begin
+                        Execute_HTTP_2 (Retry);
+                        if not Retry then
+                           exit;
                         end if;
-                        Body_Sent := Has_Request_Body;
-                        Read_Final_Head (Result.Data.all, Token);
-                     end if;
-                     if Classify_Expectation_Response
-                       (Expectation_Sent => Use_Expectation,
-                        Body_Sent        => Body_Sent,
-                        Already_Retried  => Retried,
-                        Status           => Result.Data.Status_Value,
-                        Attempt_Allowed  =>
-                          (Token = null or else not Token.Requested)
-                            and then
-                              (Timeout < 0.0
-                                 or else
-                                   Remaining (Started, Timeout) > 0.0)) =
-                       Retry_Without_Expectation
-                     then
-                        Release_Lease (Result.Data.all, False);
-                        Reset_Attempt (Result.Data.all);
-                        Use_Expectation := False;
-                        Retried := True;
-                     else
-                        Select_Body_Mode
-                          (Result.Data.all, Value.Method_Value);
-                        exit;
-                     end if;
-                  end;
+                     end;
+                  else
+                     declare
+                        Head : constant String := Request_Head
+                          (Item.Control.State.all, Value,
+                           Streaming => Source /= null,
+                           Stream_Length => Length,
+                           Use_Expectation => Use_Expectation);
+                     begin
+                        Connections.Send_All
+                          (Result.Data.Connection.Channel, Byte_Array (Head),
+                           Remaining (Started, Timeout), Token => Token);
+                     end;
+                     declare
+                        Final_Ready : Boolean := False;
+                        Body_Sent   : Boolean := False;
+                     begin
+                        if Use_Expectation and then Has_Request_Body then
+                           Await_Continue
+                             (Result.Data.all, Value.Continue_Wait, Token,
+                              Final_Ready);
+                        end if;
+                        if not Final_Ready then
+                           if Retained_Length > 0 then
+                              Connections.Send_All
+                                (Result.Data.Connection.Channel,
+                                 Flyology.Bytes.To_Array (Value.Body_Value),
+                                 Remaining (Started, Timeout), Token => Token);
+                           elsif Source /= null then
+                              Send_Streaming_Body
+                                (Result.Data.all, Source.all, Length,
+                                 Value.Trailer_Fields, Token);
+                           end if;
+                           Body_Sent := Has_Request_Body;
+                           Read_Final_Head (Result.Data.all, Token);
+                        end if;
+                        if Classify_Expectation_Response
+                          (Expectation_Sent => Use_Expectation,
+                           Body_Sent        => Body_Sent,
+                           Already_Retried  => Retried,
+                           Status           => Result.Data.Status_Value,
+                           Attempt_Allowed  =>
+                             (Token = null or else not Token.Requested)
+                               and then
+                                 (Timeout < 0.0
+                                    or else
+                                      Remaining (Started, Timeout) > 0.0)) =
+                          Retry_Without_Expectation
+                        then
+                           Release_Lease (Result.Data.all, False);
+                           Reset_Attempt (Result.Data.all);
+                           Use_Expectation := False;
+                           Retried := True;
+                        else
+                           Select_Body_Mode
+                             (Result.Data.all, Value.Method_Value);
+                           exit;
+                        end if;
+                     end;
+                  end if;
                exception
                   when Protocol_Error =>
                      declare
@@ -1255,11 +1551,114 @@ package body Flyology.HTTP.Client is
       Data     : out Ada.Streams.Stream_Element_Array;
       Last     : out Ada.Streams.Stream_Element_Offset;
       Finished : out Boolean;
-      Token    : access Flyology.Cancellation.Token := null) is
+      Token    : access Flyology.Cancellation.Token := null)
+   is
+      Result : H2_Connections.Body_Result;
+
+      procedure Wait_For_Progress is
+         Stream_FD   : Flyology.IO.Descriptor;
+         Shutdown_FD : Flyology.IO.Descriptor;
+         Token_FD    : Flyology.IO.Descriptor :=
+           Flyology.IO.Invalid_Descriptor;
+         Ready_Now   : Boolean;
+         Stopping    : Boolean;
+         Cancelled   : Boolean := False;
+         Selected    : Natural;
+      begin
+         H2_Connections.Wait_Source
+           (Item.Data.Connection.HTTP_2.all, Item.Data.HTTP_2_Stream,
+            Stream_FD, Ready_Now);
+         if Ready_Now then
+            return;
+         end if;
+         Item.Data.Owner.Pool.Shutdown_Source (Shutdown_FD, Stopping);
+         if Stopping then
+            raise Client_Closed;
+         end if;
+         if Token /= null then
+            Token.Wait_Source (Token_FD, Cancelled);
+            if Cancelled then
+               raise Flyology.Cancellation.Operation_Cancelled;
+            end if;
+         end if;
+         if Token = null then
+            declare
+               Sources : Flyology.IO.Wait_Request_Array (1 .. 2);
+            begin
+               Sources (1) :=
+                 (FD => Stream_FD, Condition => Flyology.IO.For_Read);
+               Sources (2) :=
+                 (FD => Shutdown_FD, Condition => Flyology.IO.For_Read);
+               Selected := Flyology.IO.Wait_Any
+                 (Sources, Remaining (Item.Data.Started, Item.Data.Timeout));
+            end;
+         else
+            declare
+               Sources : Flyology.IO.Wait_Request_Array (1 .. 3);
+            begin
+               Sources (1) :=
+                 (FD => Stream_FD, Condition => Flyology.IO.For_Read);
+               Sources (2) :=
+                 (FD => Shutdown_FD, Condition => Flyology.IO.For_Read);
+               Sources (3) :=
+                 (FD => Token_FD, Condition => Flyology.IO.For_Read);
+               Selected := Flyology.IO.Wait_Any
+                 (Sources, Remaining (Item.Data.Started, Item.Data.Timeout));
+            end;
+         end if;
+         if Selected = 0 then
+            raise Flyology.IO.Timeout_Error;
+         elsif Selected = 2 then
+            raise Client_Closed;
+         elsif Selected = 3 then
+            raise Flyology.Cancellation.Operation_Cancelled;
+         end if;
+      end Wait_For_Progress;
    begin
       Require_Response (Item);
-      HTTP_1_Internals.Read_Response_Body
-        (Item, Data, Last, Finished, Token);
+      if Item.Data.Engine = HTTP_1_Response then
+         HTTP_1_Internals.Read_Response_Body
+           (Item, Data, Last, Finished, Token);
+         return;
+      elsif Item.Data.Complete then
+         Last := Data'First - 1;
+         Finished := True;
+         return;
+      end if;
+      loop
+         H2_Connections.Read
+           (Item.Data.Connection.HTTP_2.all, Item.Data.HTTP_2_Stream,
+            Data, Last, Finished, Result, Item.Data.Trailers);
+         case Result is
+            when H2_Connections.Body_Progress |
+                 H2_Connections.Body_Finished =>
+               if Finished then
+                  declare
+                     Reusable : constant Boolean :=
+                       H2_Connections.Is_Usable
+                         (Item.Data.Connection.HTTP_2.all);
+                  begin
+                     H2_Connections.Release_Stream
+                       (Item.Data.Connection.HTTP_2.all,
+                        Item.Data.HTTP_2_Stream);
+                     Item.Data.HTTP_2_Stream := H2_Connections.No_Stream;
+                     Release_Lease (Item.Data.all, Reusable);
+                  end;
+               end if;
+               return;
+            when H2_Connections.Body_Would_Block =>
+               Wait_For_Progress;
+            when H2_Connections.Body_Connection_Failed |
+                 H2_Connections.Body_Stream_Failed =>
+               H2_Connections.Release_Stream
+                 (Item.Data.Connection.HTTP_2.all,
+                  Item.Data.HTTP_2_Stream);
+               Item.Data.HTTP_2_Stream := H2_Connections.No_Stream;
+               Release_Lease (Item.Data.all, False);
+               raise Protocol_Error with
+                 "HTTP/2 response stream failed before body completion";
+         end case;
+      end loop;
    end Read_Body;
 
    function Body_Complete (Item : Response) return Boolean is
@@ -1293,7 +1692,7 @@ package body Flyology.HTTP.Client is
                   if Item.Data /= null
                     and then Item.Data.Connection /= null
                   then
-                     Release_Lease (Item.Data.all, False);
+                     Abandon_Response (Item.Data.all);
                   end if;
                   raise Response_Too_Large;
                end if;
@@ -1393,7 +1792,7 @@ package body Flyology.HTTP.Client is
       end if;
       Owner := Item.Data.Owner;
       if Item.Data.Connection /= null then
-         Release_Lease (Item.Data.all, False);
+         Abandon_Response (Item.Data.all);
       end if;
       if Item.Data.Retains_Owner then
          Item.Data.Retains_Owner := False;
