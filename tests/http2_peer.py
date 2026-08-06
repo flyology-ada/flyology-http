@@ -40,11 +40,14 @@ class PeerState:
     scenario: str
     log: BinaryIO
     request_count: int = 0
+    highest_stream_id: int = 0
     refused_once: bool = False
     pending_streams: list[int] = field(default_factory=list)
     flow_stream: int | None = None
     flow_offset: int = 0
     request_bytes: dict[int, int] = field(default_factory=dict)
+    request_bodies: dict[int, bytearray] = field(default_factory=dict)
+    request_headers: dict[int, dict[str, str]] = field(default_factory=dict)
 
     def record(self, event: str, **values: object) -> None:
         line = {"event": event, **values}
@@ -56,8 +59,15 @@ def send_response(connection: H2Connection, stream_id: int, body: bytes = BODY) 
     connection.send_headers(
         stream_id,
         [(":status", "200"), ("content-length", str(len(body))), ("x-peer", "h2")],
+        end_stream=not body,
     )
-    connection.send_data(stream_id, body, end_stream=True)
+    if body:
+        connection.send_data(stream_id, body, end_stream=True)
+
+
+def soak_body(identifier: str, size: int) -> bytes:
+    unit = (identifier + ":").encode()
+    return (unit * ((size + len(unit) - 1) // len(unit)))[:size]
 
 
 def flush_flow_body(connection: H2Connection, state: PeerState) -> None:
@@ -121,14 +131,23 @@ def serve_connection(
         try:
             data = channel.recv(65_535)
         except (ConnectionResetError, ssl.SSLError):
-            return False
+            return state.scenario == "soak"
         if not data:
-            return False
+            return state.scenario == "soak"
         events = connection.receive_data(data)
         for event in events:
             if isinstance(event, RequestReceived):
+                if (
+                    state.scenario == "stream-order"
+                    and event.stream_id < state.highest_stream_id
+                ):
+                    raise RuntimeError("client opened streams out of identifier order")
+                state.highest_stream_id = max(state.highest_stream_id, event.stream_id)
                 state.request_count += 1
                 headers = dict(event.headers)
+                if state.scenario == "soak":
+                    state.request_headers[event.stream_id] = headers
+                    state.request_bodies[event.stream_id] = bytearray()
                 state.record(
                     "request",
                     stream=event.stream_id,
@@ -146,12 +165,41 @@ def serve_connection(
                 state.request_bytes[event.stream_id] = (
                     state.request_bytes.get(event.stream_id, 0) + len(event.data)
                 )
+                if state.scenario == "soak":
+                    body = state.request_bodies[event.stream_id]
+                    if len(body) + len(event.data) <= 16 * 1024:
+                        body.extend(event.data)
                 connection.acknowledge_received_data(
                     event.flow_controlled_length, event.stream_id
                 )
             elif isinstance(event, StreamEnded):
                 stream_id = event.stream_id
-                if state.scenario == "upload":
+                if state.scenario == "soak":
+                    headers = state.request_headers.pop(stream_id)
+                    request_body = bytes(state.request_bodies.pop(stream_id))
+                    path = headers[":path"]
+                    if path == "/cancel":
+                        connection.send_headers(
+                            stream_id,
+                            [(":status", "200"), ("content-length", "8192")],
+                        )
+                        connection.send_data(stream_id, b"c" * 8192, end_stream=False)
+                        state.record("cancel-response", stream=stream_id)
+                    elif path == "/echo":
+                        send_response(connection, stream_id, request_body)
+                        state.record("response", stream=stream_id, bytes=len(request_body))
+                    elif path.startswith("/soak/"):
+                        size = int(path.removeprefix("/soak/"))
+                        body = soak_body(headers["x-soak-id"], size)
+                        send_response(connection, stream_id, body)
+                        state.record("response", stream=stream_id, bytes=len(body))
+                    else:
+                        connection.send_headers(
+                            stream_id,
+                            [(":status", "404"), ("content-length", "0")],
+                            end_stream=True,
+                        )
+                elif state.scenario == "upload":
                     state.record(
                         "request-body",
                         stream=stream_id,
@@ -199,6 +247,7 @@ def serve_connection(
                     "informational-end",
                     "flood",
                     "shutdown-race",
+                    "soak",
                 } or (
                     state.scenario == "reset-race" and stream_id == 1
                 ):
@@ -234,6 +283,8 @@ def serve_connection(
             elif isinstance(event, WindowUpdated):
                 flush_flow_body(connection, state)
             elif isinstance(event, StreamReset):
+                state.request_bodies.pop(event.stream_id, None)
+                state.request_headers.pop(event.stream_id, None)
                 state.record(
                     "client-reset",
                     stream=event.stream_id,
@@ -241,7 +292,7 @@ def serve_connection(
                 )
             elif isinstance(event, ConnectionTerminated):
                 state.record("client-goaway", error=int(event.error_code))
-                return False
+                return state.scenario == "soak"
 
         outbound = connection.data_to_send()
         if outbound:
@@ -284,6 +335,7 @@ def main() -> None:
             "multiplex",
             "continuation",
             "peer-capacity",
+            "stream-order",
             "flow",
             "goaway",
             "refused",
@@ -299,6 +351,7 @@ def main() -> None:
             "informational-end",
             "flood",
             "shutdown-race",
+            "soak",
         ),
     )
     parser.add_argument("--certificate", type=Path, required=True)

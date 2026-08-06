@@ -105,7 +105,9 @@ begin
           else Client.Require_HTTP_2));
    end if;
 
-   if Scenario in "multiplex" | "continuation" | "peer-capacity" then
+   if Scenario in
+     "multiplex" | "continuation" | "peer-capacity" | "stream-order"
+   then
       declare
          Results : Outcome (2);
          task type Caller (Second : Boolean) is

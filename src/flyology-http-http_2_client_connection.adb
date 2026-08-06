@@ -540,6 +540,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Available : out Boolean)
       is
          Empty_Payload : Stream_Element_Array (1 .. 0);
+         Required_Header_Slot : Natural := Continuation_Slot;
       begin
          Last := Data'First - 1;
          Available := False;
@@ -591,13 +592,33 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             return;
          end if;
 
+         --  A peer treats receipt of stream N as implicitly closing every
+         --  lower, still-idle client stream. Concurrent callers can occupy
+         --  stream-table slots in a different order from their allocated
+         --  identifiers, so start new field sections by stream ID rather than
+         --  by the round-robin slot cursor.
+         if Required_Header_Slot = 0 then
+            for Index in Streams'Range loop
+               if Streams (Index).Phase = Open
+                 and then Streams (Index).Head_Cursor = 1
+                 and then Bytes.Length (Streams (Index).Request_Head) > 0
+                 and then
+                   (Required_Header_Slot = 0
+                      or else Streams (Index).ID <
+                        Streams (Required_Header_Slot).ID)
+               then
+                  Required_Header_Slot := Index;
+               end if;
+            end loop;
+         end if;
+
          for Attempt in 1 ..
-           (if Continuation_Slot = 0 then Streams'Length else 1)
+           (if Required_Header_Slot = 0 then Streams'Length else 1)
          loop
             declare
                Index : constant Positive :=
-                 (if Continuation_Slot /= 0
-                  then Positive (Continuation_Slot)
+                 (if Required_Header_Slot /= 0
+                  then Positive (Required_Header_Slot)
                   else ((Output_Cursor + Attempt - 2) mod Streams'Length) + 1);
                Item : Stream_Record renames Streams (Index);
             begin

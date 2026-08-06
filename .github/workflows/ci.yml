@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * *"
 
 permissions:
   contents: read
@@ -39,3 +41,41 @@ jobs:
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
       - name: Run HTTP tests
         run: ./scripts/test.sh
+
+  http2-qualification:
+    name: HTTP/2 qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Install independent HTTP/2 peer
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes nghttp2-server
+          go version
+          node --version
+          nghttpd --version
+      - name: Prepare HTTP/2 tester and runtime
+        run: |
+          ./scripts/http2-test.sh prepare
+          ./scripts/test.sh
+      - name: Run HTTP/2 qualification
+        run: |
+          if [ "${{ github.event_name }}" = schedule ]; then
+            ./scripts/http2-test.sh nightly
+          else
+            ./scripts/http2-test.sh qualification
+          fi

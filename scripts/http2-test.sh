@@ -47,7 +47,7 @@ run_client () {
   require_tester
   build_test http2_client_integration http2-integration
   for model in native lightweight; do
-    for scenario in basic prior fallback require-failure multiplex continuation peer-capacity flow upload early-final reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post; do
+    for scenario in basic prior fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post; do
       run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2.XXXXXX")
       port_file="$run_dir/port"
       log_file="$run_dir/events.jsonl"
@@ -91,7 +91,7 @@ run_client () {
       fi
       wait "$peer_pid"
       case "$scenario" in
-        multiplex|continuation|peer-capacity|reset-race|goaway|refused) expected_requests=2 ;;
+        multiplex|continuation|peer-capacity|stream-order|reset-race|goaway|refused) expected_requests=2 ;;
         require-failure|bad-preface) expected_requests=0 ;;
         *) expected_requests=1 ;;
       esac
@@ -255,13 +255,36 @@ case "$command" in
   showcase)
     run_showcase
     ;;
+  interop)
+    "$http_root/scripts/http2-interop.sh" interop
+    ;;
+  faults)
+    "$http_root/scripts/http2-interop.sh" faults
+    ;;
+  soak)
+    "$http_root/scripts/http2-soak.sh"
+    ;;
+  qualification)
+    "$http_root/scripts/http2-interop.sh" all
+    "$http_root/scripts/http2-soak.sh"
+    ;;
+  nightly)
+    FLYOLOGY_HTTP2_SOAK_SECONDS=${FLYOLOGY_HTTP2_SOAK_SECONDS:-1800.0}
+    FLYOLOGY_HTTP2_SOAK_MODELS=${FLYOLOGY_HTTP2_SOAK_MODELS:-"native lightweight"}
+    FLYOLOGY_HTTP2_SOAK_SEEDS=${FLYOLOGY_HTTP2_SOAK_SEEDS:-1}
+    export FLYOLOGY_HTTP2_SOAK_SECONDS FLYOLOGY_HTTP2_SOAK_MODELS
+    export FLYOLOGY_HTTP2_SOAK_SEEDS
+    "$http_root/scripts/http2-interop.sh" all
+    "$http_root/scripts/http2-soak.sh"
+    ;;
   all)
     run_codecs
     run_client
     run_showcase
     ;;
   *)
-    printf '%s\n' "usage: $0 {prepare|codecs|client|showcase|all}" >&2
+    printf '%s\n' \
+      "usage: $0 {prepare|codecs|client|showcase|interop|faults|soak|qualification|nightly|all}" >&2
     exit 2
     ;;
 esac
