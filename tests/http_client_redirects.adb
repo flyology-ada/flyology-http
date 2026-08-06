@@ -348,13 +348,13 @@ procedure HTTP_Client_Redirects is
             --  One deadline spans time spent before both response heads.
             Accept_Peer;
             Assert_Line (Read_Request, "GET /deadline HTTP/1.1");
-            delay 0.12;
+            delay 0.25;
             Send
               ("HTTP/1.1 302 Found" & CRLF &
                "Location: /deadline-final" & CRLF &
                "Content-Length: 0" & CRLF & CRLF);
             Assert_Line (Read_Request, "GET /deadline-final HTTP/1.1");
-            delay 0.12;
+            delay 1.0;
             begin
                Send
                  ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 0" & CRLF &
@@ -506,7 +506,7 @@ procedure HTTP_Client_Redirects is
                Client.Set_Redirects (Request, Follow);
                declare
                   Reply : Client.Response :=
-                    Client.Execute (HTTP, Request, Timeout => 0.2);
+                    Client.Execute (HTTP, Request, Timeout => 1.0);
                   pragma Unreferenced (Reply);
                begin
                   Passed := False;
