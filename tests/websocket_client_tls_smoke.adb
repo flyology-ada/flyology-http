@@ -152,8 +152,8 @@ procedure WebSocket_Client_TLS_Smoke is
                   Library_Directory => Library_Directory);
                WS.Configure
                  (Item,
-                  Flyology.HTTP.Parse_Origin
-                    ("https://localhost:" &
+                  WS.Parse_Origin
+                    ("wss://localhost:" &
                      Decimal (Natural (Address.Port))),
                   Backend'Access);
             end;

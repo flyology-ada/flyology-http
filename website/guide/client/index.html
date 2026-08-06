@@ -261,9 +261,8 @@ Client.Configure
           </section>
 
           <section id="websocket-client"><span class="step-label">CLIENT 09</span><h2>Own one bounded WebSocket session.</h2>
-            <p><code>Flyology.HTTP.WebSocket_Client</code> is a separate origin-bound lifecycle rather than an HTTP pool upgrade escape hatch. Configure one <code>http://</code> origin for <code>ws</code>, or retain a TLS provider with an <code>https://</code> origin for authenticated <code>wss</code>. A client owns at most one transport, may reconnect after a completed or aborted session, and must have only one caller operating on it at a time.</p>
+            <p><code>Flyology.HTTP.WebSocket_Client</code> is a separate origin-bound lifecycle rather than an HTTP pool upgrade escape hatch. Its own <code>Parse_Origin</code> accepts <code>ws://</code> and <code>wss://</code> origins directly, with default ports 80 and 443. Configure a <code>ws</code> origin without a TLS provider, or retain a provider for authenticated <code>wss</code>. The older overloads taking <code>Flyology.HTTP.Origin</code> remain available for source compatibility. A client owns at most one transport, may reconnect after a completed or aborted session, and must have only one caller operating on it at a time.</p>
             <figure class="code-panel"><figcaption>connect, exchange, and close</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.Bytes;
-with Flyology.HTTP;
 with Flyology.HTTP.WebSocket_Client;
 
 package WebSockets renames Flyology.HTTP.WebSocket_Client;
@@ -272,7 +271,7 @@ Socket  : WebSockets.Client;
 Request : WebSockets.Request;
 
 WebSockets.Configure
-  (Socket, Flyology.HTTP.Parse_Origin ("https://example.com"),
+  (Socket, WebSockets.Parse_Origin ("wss://example.com"),
    Backend'Access);
 WebSockets.Set_Target (Request, "/events?topic=builds");
 WebSockets.Set_Origin (Request, "https://app.example");

@@ -31,6 +31,42 @@ package Flyology.HTTP.WebSocket_Client is
    --  Raised when a received message exceeds the caller's explicit bound.
    Message_Too_Large : exception;
 
+   --  Scheme represented by a WebSocket origin.
+   --  @enum Plain_WS Cleartext WebSocket
+   --  @enum Secure_WSS WebSocket over authenticated TLS
+   type WebSocket_Scheme is (Plain_WS, Secure_WSS);
+
+   --  Normalized WebSocket origin containing only scheme, host, and port.
+   type WebSocket_Origin is private;
+
+   --  Parse an absolute ws or wss origin. The input must not contain userinfo,
+   --  a path other than one trailing slash, a query, or a fragment. DNS names
+   --  are lower-cased; omitted ports become 80 or 443.
+   --  @param Value Absolute WebSocket origin text
+   --  @return Parsed normalized WebSocket origin
+   --  @exception Constraint_Error Value is not a supported ws or wss origin
+   function Parse_Origin (Value : String) return WebSocket_Origin;
+
+   --  Return the WebSocket origin scheme.
+   --  @param Value Origin to inspect
+   --  @return Plain_WS or Secure_WSS
+   function Scheme (Value : WebSocket_Origin) return WebSocket_Scheme;
+
+   --  Return the normalized DNS name or numeric address without IPv6 brackets.
+   --  @param Value Origin to inspect
+   --  @return Origin host
+   function Host (Value : WebSocket_Origin) return String;
+
+   --  Return the effective origin port, including a scheme default.
+   --  @param Value Origin to inspect
+   --  @return TCP port
+   function Port (Value : WebSocket_Origin) return Port_Number;
+
+   --  Format the normalized WebSocket origin, omitting a default port.
+   --  @param Value Origin to format
+   --  @return Absolute ws or wss origin without a trailing slash
+   function Image (Value : WebSocket_Origin) return String;
+
    --  Application data message kind.
    --  @enum Text_Message UTF-8 text data
    --  @enum Binary_Message Opaque binary data
@@ -76,16 +112,37 @@ package Flyology.HTTP.WebSocket_Client is
    --  One configured origin and at most one active WebSocket session.
    type Client is limited private;
 
-   --  Bind an unconfigured client to a cleartext ws origin represented by an
-   --  HTTP Origin. No DNS or socket work occurs here. HTTPS requires the TLS
-   --  overload.
+   --  Bind an unconfigured client to a cleartext ws origin. No DNS or socket
+   --  work occurs here. Secure wss origins require the TLS overload.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Parsed ws origin
+   --  @exception Program_Error Item is configured or Origin_Value is wss
+   procedure Configure
+     (Item : in out Client; Origin_Value : WebSocket_Origin);
+
+   --  Bind a client to a WebSocket origin and retain independent TLS provider
+   --  state. This overload is required for wss and is accepted for ws.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Parsed ws or wss origin
+   --  @param Backend Initialized provider retained by Item
+   --  @exception Program_Error Item is already configured
+   --  @exception Flyology.IO.TLS.TLS_Error Backend cannot be retained
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : WebSocket_Origin;
+      Backend      : not null access Flyology.IO.TLS.Provider'Class);
+
+   --  Bind an unconfigured client to a cleartext ws origin represented by a
+   --  compatibility HTTP Origin. No DNS or socket work occurs here. HTTPS
+   --  requires the TLS overload.
    --  @param Item Unconfigured client
    --  @param Origin_Value HTTP origin used as ws
    --  @exception Program_Error Item is configured or Origin_Value is HTTPS
    procedure Configure (Item : in out Client; Origin_Value : Origin);
 
-   --  Bind a client and retain independent TLS provider state. This overload
-   --  is required for wss and is accepted for ws.
+   --  Bind a client from a compatibility HTTP Origin and retain independent
+   --  TLS provider state. This overload is required for HTTPS-as-wss and is
+   --  accepted for HTTP-as-ws.
    --  @param Item Unconfigured client
    --  @param Origin_Value HTTP or HTTPS origin used as ws or wss
    --  @param Backend Initialized provider retained by Item
@@ -269,6 +326,10 @@ package Flyology.HTTP.WebSocket_Client is
 
 private
    use Ada.Strings.Unbounded;
+
+   type WebSocket_Origin is record
+      HTTP_Value : Flyology.HTTP.Origin;
+   end record;
 
    subtype Protocol_Count is Natural range 0 .. Max_Protocol_Count;
    type Protocol_Array is

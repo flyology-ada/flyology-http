@@ -359,15 +359,71 @@ package body Flyology.HTTP.WebSocket_Client is
       end if;
    end Random_Bytes;
 
+   function Parse_Origin (Value : String) return WebSocket_Origin is
+      use Ada.Characters.Handling;
+      First  : Natural;
+      Mapped : Unbounded_String;
+   begin
+      if Value'Length >= 5
+        and then To_Lower (Value (Value'First .. Value'First + 4)) = "ws://"
+      then
+         First := Value'First + 5;
+         Mapped := To_Unbounded_String ("http://");
+      elsif Value'Length >= 6
+        and then To_Lower (Value (Value'First .. Value'First + 5)) = "wss://"
+      then
+         First := Value'First + 6;
+         Mapped := To_Unbounded_String ("https://");
+      else
+         raise Constraint_Error with
+           "WebSocket origin requires ws:// or wss://";
+      end if;
+      Append (Mapped, Value (First .. Value'Last));
+      return
+        (HTTP_Value => Flyology.HTTP.Parse_Origin (To_String (Mapped)));
+   exception
+      when Constraint_Error =>
+         raise Constraint_Error with "invalid WebSocket origin";
+   end Parse_Origin;
+
+   function Scheme (Value : WebSocket_Origin) return WebSocket_Scheme is
+     (if Flyology.HTTP.Scheme (Value.HTTP_Value) = Plain_HTTP
+      then Plain_WS else Secure_WSS);
+
+   function Host (Value : WebSocket_Origin) return String is
+     (Flyology.HTTP.Host (Value.HTTP_Value));
+
+   function Port (Value : WebSocket_Origin) return Port_Number is
+     (Flyology.HTTP.Port (Value.HTTP_Value));
+
+   function Image (Value : WebSocket_Origin) return String is
+      Name : constant String := Host (Value);
+      Bracketed : constant String :=
+        (if Ada.Strings.Fixed.Index (Name, ":") = 0
+         then Name else "[" & Name & "]");
+      Default : constant Boolean :=
+        (Scheme (Value) = Plain_WS and then Port (Value) = 80)
+        or else (Scheme (Value) = Secure_WSS and then Port (Value) = 443);
+      Port_Text : constant String := Port_Number'Image (Port (Value));
+   begin
+      return (if Scheme (Value) = Plain_WS then "ws://" else "wss://")
+        & Bracketed
+        & (if Default then ""
+           else ":" & Port_Text (Port_Text'First + 1 .. Port_Text'Last));
+   end Image;
+
    function Host_Field (Value : Origin) return String is
-      Host_Value : constant String := Host (Value);
+      Host_Value : constant String := Flyology.HTTP.Host (Value);
       Authority : constant String :=
         (if Ada.Strings.Fixed.Index (Host_Value, ":") = 0 then Host_Value
          else "[" & Host_Value & "]");
       Default_Port : constant Boolean :=
-        (Scheme (Value) = Plain_HTTP and then Port (Value) = 80)
-        or else (Scheme (Value) = Secure_HTTPS and then Port (Value) = 443);
-      Port_Image : constant String := Port_Number'Image (Port (Value));
+        (Flyology.HTTP.Scheme (Value) = Plain_HTTP
+         and then Flyology.HTTP.Port (Value) = 80)
+        or else (Flyology.HTTP.Scheme (Value) = Secure_HTTPS
+                 and then Flyology.HTTP.Port (Value) = 443);
+      Port_Image : constant String :=
+        Port_Number'Image (Flyology.HTTP.Port (Value));
    begin
       return Authority &
         (if Default_Port then ""
@@ -446,11 +502,25 @@ package body Flyology.HTTP.WebSocket_Client is
       Flyology.HTTP.Headers.Add (Item.Fields, Name, Value);
    end Add_Header;
 
+   procedure Configure
+     (Item : in out Client; Origin_Value : WebSocket_Origin) is
+   begin
+      Configure (Item, Origin_Value.HTTP_Value);
+   end Configure;
+
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : WebSocket_Origin;
+      Backend      : not null access Flyology.IO.TLS.Provider'Class) is
+   begin
+      Configure (Item, Origin_Value.HTTP_Value, Backend);
+   end Configure;
+
    procedure Configure (Item : in out Client; Origin_Value : Origin) is
    begin
       if Item.Phase /= Unconfigured then
          raise Program_Error with "WebSocket client is already configured";
-      elsif Scheme (Origin_Value) = Secure_HTTPS then
+      elsif Flyology.HTTP.Scheme (Origin_Value) = Secure_HTTPS then
          raise Program_Error with "wss requires a retained TLS provider";
       end if;
       Item.Origin_Value := Origin_Value;
@@ -492,7 +562,7 @@ package body Flyology.HTTP.WebSocket_Client is
       Timeout : Duration;
       Token   : access Flyology.Cancellation.Token) is
    begin
-      if Scheme (Item.Origin_Value) = Secure_HTTPS then
+      if Flyology.HTTP.Scheme (Item.Origin_Value) = Secure_HTTPS then
          Flyology.IO.Connections.TLS.Shutdown
            (Item.Channel, Remaining (Started, Timeout), Token);
       end if;
@@ -531,7 +601,7 @@ package body Flyology.HTTP.WebSocket_Client is
       declare
          Addresses : constant Flyology.IO.DNS.Address_Array :=
            Flyology.IO.DNS.Resolve
-             (Host (Item.Origin_Value),
+             (Flyology.HTTP.Host (Item.Origin_Value),
               Timeout => Remaining (Started, Timeout),
               Interrupts => Interrupt (1 .. Interrupt_Count));
       begin
@@ -542,7 +612,8 @@ package body Flyology.HTTP.WebSocket_Client is
                Sockets.Connect
                  (Socket,
                   Sockets.Network_Endpoint
-                    (Address, Sockets.Port (Port (Item.Origin_Value))),
+                    (Address,
+                     Sockets.Port (Flyology.HTTP.Port (Item.Origin_Value))),
                   Remaining (Started, Timeout),
                   Interrupt (1 .. Interrupt_Count));
                Connected := True;
@@ -573,10 +644,11 @@ package body Flyology.HTTP.WebSocket_Client is
          raise Connection_Error with "all resolved WebSocket endpoints failed";
       end if;
       Connections.Take (Item.Manager, Socket, Item.Channel);
-      if Scheme (Item.Origin_Value) = Secure_HTTPS then
+      if Flyology.HTTP.Scheme (Item.Origin_Value) = Secure_HTTPS then
          Flyology.IO.Connections.TLS.Upgrade
            (Item.Channel, Item.Backend.all, Flyology.IO.TLS.Client,
-            Host (Item.Origin_Value), Remaining (Started, Timeout), Token);
+            Flyology.HTTP.Host (Item.Origin_Value),
+            Remaining (Started, Timeout), Token);
       end if;
    exception
       when Flyology.IO.DNS.Operation_Cancelled =>

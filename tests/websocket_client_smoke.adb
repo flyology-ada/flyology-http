@@ -25,6 +25,7 @@ procedure WebSocket_Client_Smoke is
    use type Sockets.Selector_Status;
    use type HTTP_Server.WebSocket_Data_Kind;
    use type WS.Data_Kind;
+   use type WS.WebSocket_Scheme;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
 
@@ -402,7 +403,7 @@ procedure WebSocket_Client_Smoke is
       Port : Sockets.Port;
       Client : WS.Client;
       Request : WS.Request;
-      Origin : Flyology.HTTP.Origin;
+      Origin : WS.WebSocket_Origin;
 
       procedure Expect_Handshake_Rejection (Mode : Server_Mode) is
          Rejected : Boolean := False;
@@ -496,9 +497,61 @@ procedure WebSocket_Client_Smoke is
       end Cancel_Send;
    begin
       Coordination.Wait_Ready (Port);
-      Origin := Flyology.HTTP.Parse_Origin
-        ("http://127.0.0.1:" & Decimal (Natural (Port)));
+      Origin := WS.Parse_Origin
+        ("WS://127.0.0.1:" & Decimal (Natural (Port)));
+      pragma Assert (WS.Scheme (Origin) = WS.Plain_WS);
+      pragma Assert (WS.Host (Origin) = "127.0.0.1");
+      pragma Assert (Natural (WS.Port (Origin)) = Natural (Port));
+      pragma Assert
+        (WS.Image (Origin) =
+           "ws://127.0.0.1:" & Decimal (Natural (Port)));
       WS.Configure (Client, Origin);
+
+      declare
+         Plain : constant WS.WebSocket_Origin :=
+           WS.Parse_Origin ("ws://Example.COM/");
+         Secure : constant WS.WebSocket_Origin :=
+           WS.Parse_Origin ("wss://[::1]");
+         Rejected : Boolean := False;
+      begin
+         pragma Assert (WS.Image (Plain) = "ws://example.com");
+         pragma Assert (Natural (WS.Port (Plain)) = 80);
+         pragma Assert (WS.Scheme (Secure) = WS.Secure_WSS);
+         pragma Assert (WS.Host (Secure) = "::1");
+         pragma Assert (Natural (WS.Port (Secure)) = 443);
+         pragma Assert (WS.Image (Secure) = "wss://[::1]");
+         begin
+            declare
+               Invalid : constant WS.WebSocket_Origin :=
+                 WS.Parse_Origin ("http://example.com");
+               pragma Unreferenced (Invalid);
+            begin
+               null;
+            end;
+         exception
+            when Constraint_Error => Rejected := True;
+         end;
+         pragma Assert (Rejected);
+      end;
+
+      declare
+         Legacy : WS.Client;
+      begin
+         WS.Configure
+           (Legacy, Flyology.HTTP.Parse_Origin ("http://127.0.0.1"));
+      end;
+
+      declare
+         Missing_TLS : WS.Client;
+         Rejected : Boolean := False;
+      begin
+         begin
+            WS.Configure (Missing_TLS, WS.Parse_Origin ("wss://localhost"));
+         exception
+            when Program_Error => Rejected := True;
+         end;
+         pragma Assert (Rejected);
+      end;
 
       declare
          Rejected : Boolean := False;
