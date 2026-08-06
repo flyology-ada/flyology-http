@@ -6,6 +6,7 @@ authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
 maintainers-logins = ["yrashk"]
 licenses = "MIT OR Apache-2.0"
+website = "https://http.flyology.org/guide/iri/"
 tags = ["ada", "uri", "iri", "url", "parser"]
 project-files = ["flyology_iri.gpr"]
 
