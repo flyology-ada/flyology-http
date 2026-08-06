@@ -65,8 +65,8 @@ project Flyology_HTTP is
             "flyology-http-server-routing.ads",
             "flyology-http-server-sse_handlers.ads",
             "flyology-http-server-tls.ads",
-            "flyology-http-server-websocket_deflate.ads",
-            "flyology-http-server-websocket_handlers.ads");
+            "flyology-http-server-websocket_handlers.ads",
+            "flyology-websocket_policy.ads");
    end case;
 
    for Object_Dir use "obj/" & Flyology_HTTP_Config.Build_Profile;

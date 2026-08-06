@@ -20,9 +20,9 @@
         <ul class="nav-links" data-nav-links>
           <li><a href="../../">Overview</a></li>
           <li><a href="../" aria-current="page">Guide</a></li>
-          <li><a href="https://flyology.org/architecture/">Architecture</a></li>
+          <li><a href="../../architecture/">Architecture</a></li>
           <li><a href="../../journal/">Journal</a></li>
-          <li><a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API</a></li>
+          <li><a href="../../api/">API</a></li>
           <li>
             <details class="nav-dropdown" data-nav-dropdown>
               <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
@@ -31,7 +31,7 @@
               </ul>
             </details>
           </li>
-          <li><a href="https://github.com/flyology-ada/flyology">GitHub</a></li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li><li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
         </ul>
         <div class="nav-tools">
           <button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button>
@@ -42,7 +42,7 @@
 
     <main id="main" class="page-shell">
       <header class="doc-hero">
-        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology Runtime</a></li><li><a href="../">Guide</a></li><li aria-current="page">Server</li></ol><h1>Build an HTTP application server.</h1></div>
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Server</li></ol><h1>Build an HTTP application server.</h1></div>
         <p class="doc-hero-copy">Own the accepted connection, add a borrowed exchange and router where useful, and keep body policy, admission, deadlines, and response framing explicit.</p>
       </header>
 
@@ -72,7 +72,7 @@
         </nav>
 
         <article class="prose">
-          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology Runtime is experimental. This guide describes implemented behavior and maintained examples; it is not a production-qualification claim. Server excerpts come from <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http_application_server.adb"><code>showcases/http_application_server.adb</code></a>, which the showcase build compile-checks. The client body adapters are exercised in both task lanes by the HTTP conformance suite.</p></aside>
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology HTTP is experimental. This guide describes implemented behavior and maintained examples; it is not a production-qualification claim. Server excerpts come from <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http_application_server.adb"><code>showcases/http_application_server.adb</code></a>, which the showcase build compile-checks. The client body adapters are exercised in both task lanes by the HTTP conformance suite.</p></aside>
 
           <section id="start"><span class="step-label">HTTP 01</span><h2>Start the HTTP server.</h2>
             <p>The maintained server owns a listening socket through <code>Flyology.IO.Structured_Servers</code>. Each admitted handler wraps its owned connection in the HTTP transport, installs a shared ingress budget, and serves persistent requests under one cancellation token. The kitchen-sink page is a real same-origin application: its HTML, CSS, JavaScript, brand mark, and variable font are read through <code>Flyology.IO.Files.Read_At</code>, while its UI drives SSE, WebSocket chat, streamed upload, middleware, structured request work, and live application introspection.</p>
@@ -353,6 +353,6 @@ HTTP_HYBRID_DURATION=30s \
       </div>
     </main>
 
-    <footer class="site-footer"><div class="footer-inner"><span>Flyology Runtime is experimental. Validate the exact host, compiler release, and operating constraints for your application.</span><div class="footer-links"><a href="../">Guide</a><a href="https://flyology.org/guide/timers/">Timers</a><a href="https://flyology.org/architecture/">Architecture</a><a href="../../journal/">Journal</a><a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API reference</a></div></div></footer>
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology HTTP is experimental. Validate the exact host, compiler release, and operating constraints for your application.</span><div class="footer-links"><a href="../">Guide</a><a href="https://flyology.org/guide/timers/">Timers</a><a href="../../architecture/">Architecture</a><a href="../../journal/">Journal</a><a href="../../api/">API reference</a></div></div></footer>
   </body>
 </html>

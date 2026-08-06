@@ -10,6 +10,8 @@ Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an or
 - Guide index: https://http.flyology.org/guide/
 - Client guide: https://http.flyology.org/guide/client/
 - Server guide: https://http.flyology.org/guide/server/
+- Architecture: https://http.flyology.org/architecture/
+- Generated API reference: https://http.flyology.org/api/
 - Source README: https://github.com/flyology-ada/flyology-http#readme
 - Source repository: https://github.com/flyology-ada/flyology-http
 - Flyology Runtime dependency: https://flyology.org/

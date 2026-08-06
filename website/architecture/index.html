@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="How Flyology HTTP separates client and server protocol state from Flyology's task-aware transport and runtime.">
+    <meta name="theme-color" content="#17213d">
+    <title>Architecture · Flyology HTTP</title>
+    <link rel="canonical" href="https://http.flyology.org/architecture/">
+    <link rel="icon" href="../assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles/site.css">
+    <script src="../assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="../" aria-label="Flyology HTTP home"><img src="../assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology HTTP</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="../">Overview</a></li>
+          <li><a href="../guide/">Guide</a></li>
+          <li><a href="./" aria-current="page">Architecture</a></li>
+          <li><a href="../journal/">Journal</a></li>
+          <li><a href="../api/">API</a></li>
+          <li><details class="nav-dropdown" data-nav-dropdown><summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary><ul class="nav-dropdown-menu"><li><a href="https://postgres.flyology.org/">Postgres</a></li></ul></details></li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li><li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
+        </ul>
+        <div class="nav-tools"><button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button><button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button></div>
+      </nav>
+    </header>
+    <main id="main" class="page-shell">
+      <header class="doc-hero">
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../">Flyology HTTP</a></li><li aria-current="page">Architecture</li></ol><h1>Protocol state stays above task-aware transport.</h1></div>
+        <p class="doc-hero-copy">Flyology HTTP owns HTTP/1.1 framing and application policy. Flyology owns sockets, TLS, cancellation, buffers, task suspension, and the native and lightweight execution lanes beneath it.</p>
+      </header>
+      <div class="docs-layout">
+        <nav class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ol><li><a href="#boundary">Library boundary</a></li><li><a href="#client">Client lifecycle</a></li><li><a href="#server">Server lifecycle</a></li><li><a href="#offload">Native offload</a></li><li><a href="#limits">Current limits</a></li></ol></nav>
+        <article class="prose">
+          <section id="boundary"><span class="step-label">ARCHITECTURE 01</span><h2>Keep the package boundary explicit.</h2><p>The HTTP crate depends on Flyology; Flyology does not depend on HTTP. Public HTTP calls remain synchronous Ada calls in either task lane. A lightweight caller may suspend while Flyology waits for socket or TLS readiness, while a native caller retains the ordinary blocking-thread path.</p><div class="decision-list"><dl><div class="decision-row"><dt>Flyology HTTP</dt><dd>Request and response framing, headers, client pools, routing, middleware, SSE, WebSockets, and application-server policy.</dd></div><div class="decision-row"><dt>Flyology</dt><dd>Task-aware sockets, TLS, connections, files, buffers, cancellation, structured scopes, execution groups, and runtime integration.</dd></div></dl></div></section>
+          <section id="client"><span class="step-label">ARCHITECTURE 02</span><h2>The client leases one response stream.</h2><p>An origin-bound client bounds open and connecting transports. One monotonic deadline covers admission, DNS, connection attempts, TLS, transmission, response-head parsing, and later body reads. The returned response retains a transport lease until its body is consumed or deliberately abandoned; only a cleanly framed connection can return to the pool.</p><p><a href="../guide/client/">Read the client guide</a> for request bodies, redirects, authentication, pooling, and HTTPS behavior.</p></section>
+          <section id="server"><span class="step-label">ARCHITECTURE 03</span><h2>The server keeps exchange ownership local.</h2><p>A connection handler parses one request, applies body policy, and owns the response framing for that exchange. Routing and deterministic middleware compose above the connection without transferring the live socket. SSE and WebSocket upgrades preserve an explicit connection lifecycle rather than creating a second hidden transport owner.</p><p><a href="../guide/server/">Read the server guide</a> for routing, middleware, request tasks, streaming, and upgrades.</p></section>
+          <section id="offload"><span class="step-label">ARCHITECTURE 04</span><h2>Only detached values cross native offload.</h2><p>A routed handler may prepare bounded, detached CPU input and submit it to Flyology's native executors. The live exchange, request body, connection, and response writer stay with the request owner. Results return as detached values and are rendered on the original owner, preserving framing and cancellation ownership.</p></section>
+          <section id="limits"><span class="step-label">ARCHITECTURE 05</span><h2>Current scope is HTTP/1.1.</h2><p>The library currently covers an HTTP/1.1 client and server, compatible HTTP/1.0 responses, streaming bodies, routing, middleware, SSE, WebSockets, and provider-neutral TLS. It does not provide HTTP/2, proxying, content decoding, challenge-driven client authentication, or production qualification.</p><p>The <a href="../api/">generated API reference</a> is authoritative for exact parameters, exceptions, ownership rules, and limits.</p></section>
+        </article>
+      </div>
+    </main>
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology HTTP is experimental. Treat limits, deadlines, and ownership as application design inputs.</span><div class="footer-links"><a href="../guide/">Guide</a><a href="../api/">API reference</a><a href="../journal/">Journal</a><a href="https://flyology.org/architecture/">Runtime architecture</a></div></div></footer>
+  </body>
+</html>

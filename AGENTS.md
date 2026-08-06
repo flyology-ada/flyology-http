@@ -10,8 +10,9 @@
   changes. Run `./scripts/prove.sh` after changing the proved policy units.
 - Keep tests under `tests/` and maintained examples and benchmarks under
   `showcases/`.
-- Use GNATdoc leading comments for public package declarations. The standalone
-  API-reference build will be added after the repository extraction.
+- Use GNATdoc leading comments for public package declarations. Run
+  `./scripts/docs.sh` after public specification or API-documentation changes;
+  it must generate `docs/api/index.html` without errors.
 - Write modest, factual prose. Flyology HTTP is experimental; do not imply
   production qualification, HTTP/2 support, or portable benchmark results.
 - Use focused Problem/Solution commit messages consistent with the parent

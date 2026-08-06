@@ -462,7 +462,7 @@ function documentHead({ title, description, canonical, depth }) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="${escapeHTML(description)}">
     <meta name="theme-color" content="#17213d">
-    <title>${escapeHTML(title)} · Flyology Runtime</title>
+    <title>${escapeHTML(title)} · Flyology HTTP</title>
     <link rel="canonical" href="${escapeHTML(canonical)}">
     <link rel="icon" href="${prefix}assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="${prefix}assets/styles/site.css">
@@ -477,9 +477,9 @@ function siteHeader(depth) {
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <nav class="site-nav" aria-label="Primary navigation">
-        <a class="brand" href="${prefix}" aria-label="Flyology Runtime home">
+        <a class="brand" href="${prefix}" aria-label="Flyology HTTP home">
           <img src="${prefix}assets/brand/flyology-mark-transparent.svg" alt="">
-          <span>Flyology Runtime</span>
+          <span>Flyology HTTP</span>
         </a>
         <ul class="nav-links" data-nav-links>
           <li><a href="${prefix}">Overview</a></li>
@@ -493,7 +493,8 @@ function siteHeader(depth) {
               <ul class="nav-dropdown-menu"><li><a href="https://postgres.flyology.org/">Postgres</a></li></ul>
             </details>
           </li>
-          <li><a href="https://github.com/flyology-ada/flyology">GitHub</a></li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li>
+          <li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
         </ul>
         <div class="nav-tools">
           <button class="icon-button" type="button" data-theme-toggle>
@@ -512,8 +513,8 @@ function siteFooter(depth) {
   const prefix = "../".repeat(depth);
   return `    <footer class="site-footer">
       <div class="footer-inner">
-        <span>Flyology Runtime is experimental. This dated report bundle records a bounded conformance campaign.</span>
-        <div class="footer-links"><a href="${prefix}journal/">Journal</a><a href="${prefix}guide/http/">HTTP guide</a><a href="${prefix}architecture/">Architecture</a><a href="${prefix}api/">API reference</a></div>
+        <span>Flyology HTTP is experimental. This dated report bundle records a bounded conformance campaign.</span>
+        <div class="footer-links"><a href="${prefix}journal/">Journal</a><a href="${prefix}guide/server/">HTTP guide</a><a href="${prefix}architecture/">Architecture</a><a href="${prefix}api/">API reference</a></div>
       </div>
     </footer>
   </body>
@@ -625,7 +626,7 @@ function overallPage(loaded, provenance) {
   ];
   return `${documentHead({
     title: "WebSocket conformance",
-    description: "Dated Autobahn framing, compression, limits, WSS, and timing results for Flyology Runtime WebSockets.",
+    description: "Dated Autobahn framing, compression, limits, WSS, and timing results for Flyology HTTP WebSockets.",
     canonical: "https://flyology.org/reports/websocket/",
     depth: 2,
   })}
@@ -633,7 +634,7 @@ ${siteHeader(2)}
     <main id="main" class="page-shell report-page">
       <header class="report-hero">
         <div>
-          <ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology Runtime</a></li><li><a href="../../journal/">Journal</a></li><li aria-current="page">WebSocket conformance</li></ol>
+          <ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../../journal/">Journal</a></li><li aria-current="page">WebSocket conformance</li></ol>
           <p class="eyebrow">Protocol evidence · ${escapeHTML(date.display)}</p>
           <h1>WebSocket framing, case by case.</h1>
         </div>
@@ -805,7 +806,7 @@ function profilePage(profile, provenance) {
   }[profile.kind] || "Four non-strict cases defer invalid UTF-8 rejection until the fragmented message is complete. Autobahn accepts that timing. Three further cases are informational.";
   return `${documentHead({
     title: profile.title,
-    description: `${profile.title}: ${profile.cases.length} Autobahn WebSocket case results for Flyology Runtime.`,
+    description: `${profile.title}: ${profile.cases.length} Autobahn WebSocket case results for Flyology HTTP.`,
     canonical: `https://flyology.org/reports/websocket/${profile.slug}/`,
     depth: 3,
   })}
@@ -813,7 +814,7 @@ ${siteHeader(3)}
     <main id="main" class="page-shell report-page report-profile-page">
       <header class="report-profile-hero">
         <div>
-          <ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../../">Flyology Runtime</a></li><li><a href="../">WebSocket conformance</a></li><li aria-current="page">${escapeHTML(profile.title)}</li></ol>
+          <ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../../">Flyology HTTP</a></li><li><a href="../">WebSocket conformance</a></li><li aria-current="page">${escapeHTML(profile.title)}</li></ol>
           <p class="eyebrow">${escapeHTML(profile.scope)} · ${escapeHTML(profile.date.display)}</p>
           <h1>${escapeHTML(profile.title)}.</h1>
         </div>

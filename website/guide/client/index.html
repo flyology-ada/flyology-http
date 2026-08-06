@@ -20,9 +20,9 @@
         <ul class="nav-links" data-nav-links>
           <li><a href="../../">Overview</a></li>
           <li><a href="../" aria-current="page">Guide</a></li>
-          <li><a href="https://flyology.org/architecture/">Architecture</a></li>
+          <li><a href="../../architecture/">Architecture</a></li>
           <li><a href="../../journal/">Journal</a></li>
-          <li><a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API</a></li>
+          <li><a href="../../api/">API</a></li>
           <li>
             <details class="nav-dropdown" data-nav-dropdown>
               <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
@@ -31,7 +31,7 @@
               </ul>
             </details>
           </li>
-          <li><a href="https://github.com/flyology-ada/flyology">GitHub</a></li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li><li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
         </ul>
         <div class="nav-tools">
           <button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button>
@@ -42,7 +42,7 @@
 
     <main id="main" class="page-shell">
       <header class="doc-hero">
-        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology Runtime</a></li><li><a href="../">Guide</a></li><li aria-current="page">Client</li></ol><h1>Make bounded HTTP requests.</h1></div>
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Client</li></ol><h1>Make bounded HTTP requests.</h1></div>
         <p class="doc-hero-copy">Configure one origin and a bounded pool, build validated request metadata, stream an optional body, and consume or deliberately abandon the response.</p>
       </header>
 
@@ -62,7 +62,7 @@
         </nav>
 
         <article class="prose">
-          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology Runtime is experimental. This guide describes implemented behavior and maintained examples; it is not a production-qualification claim. Server excerpts come from <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http_application_server.adb"><code>showcases/http_application_server.adb</code></a>, which the showcase build compile-checks. The client body adapters are exercised in both task lanes by the HTTP conformance suite.</p></aside>
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology HTTP is experimental. This guide describes implemented behavior and maintained examples; it is not a production-qualification claim. Server excerpts come from <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http_application_server.adb"><code>showcases/http_application_server.adb</code></a>, which the showcase build compile-checks. The client body adapters are exercised in both task lanes by the HTTP conformance suite.</p></aside>
 
           <section id="client-setup"><span class="step-label">CLIENT 01</span><h2>Configure one origin and a bounded pool.</h2>
             <p><code>Flyology.HTTP.Client</code> is origin-bound, concurrency-safe after configuration, and synchronous in both task lanes. Parse one normalized <code>http://</code> or <code>https://</code> origin, declare the maximum number of open plus connecting transports as the client discriminant, and call <code>Configure</code> once before concurrent use. Configuration retains policy but starts no DNS, socket, TLS, task, or event-loop work.</p>
@@ -182,7 +182,7 @@ begin
    null;
 end;</code></pre></figure>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>Do not adapt an arbitrary <code>Ada.Streams.Root_Stream_Type</code> on a lightweight task.</strong> Root streams have no readiness, deadline, or cancellation contract and may block an event-loop pthread. Implement <code>Request_Body_Source</code> directly only when its <code>Read</code> can honor the supplied remaining timeout and token, or bridge a generator through the bounded channel adapter.</p></aside>
-            <p>See the <a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API reference</a> for the complete contracts of <code>Flyology.HTTP.Client.Request_Bodies</code> and its <code>Files</code> and <code>Channels</code> children.</p>
+            <p>See the <a href="../../api/">API reference</a> for the complete contracts of <code>Flyology.HTTP.Client.Request_Bodies</code> and its <code>Files</code> and <code>Channels</code> children.</p>
           </section>
 
           <section id="client-response"><span class="step-label">CLIENT 04</span><h2>Consume or deliberately abandon the response.</h2>
@@ -263,6 +263,6 @@ Client.Configure
       </div>
     </main>
 
-    <footer class="site-footer"><div class="footer-inner"><span>Flyology Runtime is experimental. Validate the exact host, compiler release, and operating constraints for your application.</span><div class="footer-links"><a href="../">Guide</a><a href="https://flyology.org/guide/timers/">Timers</a><a href="https://flyology.org/architecture/">Architecture</a><a href="../../journal/">Journal</a><a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API reference</a></div></div></footer>
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology HTTP is experimental. Validate the exact host, compiler release, and operating constraints for your application.</span><div class="footer-links"><a href="../">Guide</a><a href="https://flyology.org/guide/timers/">Timers</a><a href="../../architecture/">Architecture</a><a href="../../journal/">Journal</a><a href="../../api/">API reference</a></div></div></footer>
   </body>
 </html>
