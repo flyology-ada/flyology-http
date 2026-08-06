@@ -16,6 +16,7 @@ private package Flyology.HTTP.HTTP_2_Settings is
 
    type State is record
       Header_Table_Size      : Setting_Value := 4_096;
+      Enable_Push            : Boolean := True;
       Maximum_Streams        : Setting_Value := Setting_Value'Last;
       Initial_Window_Size    : Setting_Value := 65_535;
       Maximum_Frame_Size     : Frames.Maximum_Frame_Size :=
@@ -33,10 +34,16 @@ private package Flyology.HTTP.HTTP_2_Settings is
    procedure Apply
      (Item    : in out State;
       Payload : Ada.Streams.Stream_Element_Array;
-      Result  : out Apply_Result);
+      Result  : out Apply_Result;
+      Peer_Is_Server : Boolean := True);
 
    --  Encode the initial client settings: disable server push and advertise
    --  bounded decoded-header and per-stream receive windows.
    function Initial_Payload return Ada.Streams.Stream_Element_Array;
+
+   --  Encode bounded server settings without the client-only ENABLE_PUSH
+   --  field.
+   function Server_Initial_Payload
+     (Maximum_Streams : Positive) return Ada.Streams.Stream_Element_Array;
 
 end Flyology.HTTP.HTTP_2_Settings;

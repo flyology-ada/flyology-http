@@ -57,6 +57,8 @@ project HTTP_Tests is
       "websocket_client_smoke.adb",
       "websocket_client_tls_smoke.adb",
       "http2_client_integration.adb",
+      "http2_server_integration.adb",
+      "http2_conformance_server.adb",
       "http2_client_soak.adb",
       "http2_interop_client.adb",
       "websocket_conformance_server.adb");

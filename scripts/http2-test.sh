@@ -119,6 +119,61 @@ run_client () {
   done
 }
 
+run_server_case () {
+  server_transport=$1
+  run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2-server.XXXXXX")
+  port_file="$run_dir/port"
+  server_log="$run_dir/server.log"
+  tls_option=
+  if [ "$server_transport" = tls ]; then
+    tls_option=--tls
+  fi
+  "$http_root/tests/bin/http2-server/http2_conformance_server" \
+    "$port_file" "$server_transport" \
+    "$http_root/tests/fixtures/tls/server-cert.pem" \
+    "$http_root/tests/fixtures/tls/server-key.pem" \
+    >"$server_log" 2>&1 &
+  server_pid=$!
+  ready=false
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if [ -s "$port_file" ]; then
+      ready=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$ready" != true ]; then
+    kill "$server_pid" 2>/dev/null || :
+    wait "$server_pid" 2>/dev/null || :
+    sed -n '1,160p' "$server_log" >&2
+    rm -rf "$run_dir"
+    printf '%s\n' "HTTP/2 server did not become ready" >&2
+    exit 1
+  fi
+  port=$(tr -d '\r\n' <"$port_file")
+  if ! PYTHONDONTWRITEBYTECODE=1 "$python" \
+    "$http_root/tests/http2_server_peer.py" \
+    --port "$port" --certificate \
+    "$http_root/tests/fixtures/tls/server-cert.pem" $tls_option
+  then
+    kill "$server_pid" 2>/dev/null || :
+    wait "$server_pid" 2>/dev/null || :
+    sed -n '1,160p' "$server_log" >&2
+    rm -rf "$run_dir"
+    exit 1
+  fi
+  wait "$server_pid"
+  rm -rf "$run_dir"
+  printf '%s\n' "HTTP/2 server: PASS $server_transport"
+}
+
+run_server () {
+  require_tester
+  build_test http2_conformance_server http2-server
+  run_server_case plain
+  run_server_case tls
+}
+
 run_showcase_case () {
   showcase_scenario=$1
   showcase_option=$2
@@ -252,6 +307,9 @@ case "$command" in
   client)
     run_client
     ;;
+  server)
+    run_server
+    ;;
   showcase)
     run_showcase
     ;;
@@ -280,11 +338,12 @@ case "$command" in
   all)
     run_codecs
     run_client
+    run_server
     run_showcase
     ;;
   *)
     printf '%s\n' \
-      "usage: $0 {prepare|codecs|client|showcase|interop|faults|soak|qualification|nightly|all}" >&2
+      "usage: $0 {prepare|codecs|client|server|showcase|interop|faults|soak|qualification|nightly|all}" >&2
     exit 2
     ;;
 esac

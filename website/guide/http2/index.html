@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Configure and use the opt-in Flyology HTTP/2 client over TLS ALPN or cleartext prior knowledge.">
+    <meta name="description" content="Configure Flyology HTTP/2 clients and application servers over TLS ALPN or cleartext prior knowledge.">
     <meta name="theme-color" content="#17213d">
-    <title>HTTP/2 client guide · Flyology HTTP</title>
+    <title>HTTP/2 guide · Flyology HTTP</title>
     <link rel="canonical" href="https://http.flyology.org/guide/http2/">
     <link rel="icon" href="../../assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="../../assets/styles/site.css">
@@ -43,8 +43,8 @@
 
     <main id="main" class="page-shell">
       <header class="doc-hero">
-        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">HTTP/2</li></ol><h1>Select HTTP/2 without changing request code.</h1></div>
-        <p class="doc-hero-copy">Opt into TLS negotiation or cleartext prior knowledge, then keep the same synchronous request, response, deadline, pool, and shutdown lifecycle.</p>
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">HTTP/2</li></ol><h1>Select HTTP/2 without changing application code.</h1></div>
+        <p class="doc-hero-copy">Clients keep the ordinary request API. Servers keep the same exchange, routes, middleware, body policies, and synchronous response helpers.</p>
       </header>
 
       <div class="docs-layout">
@@ -56,6 +56,7 @@
             <li><a href="#execute">Execute requests</a></li>
             <li><a href="#prior-knowledge">Use cleartext prior knowledge</a></li>
             <li><a href="#cli">Try the CLI</a></li>
+            <li><a href="#server">Serve routed applications</a></li>
             <li><a href="#limits">Know the limits</a></li>
             <li><a href="#verification">Run the verification</a></li>
           </ol>
@@ -148,24 +149,41 @@ Client.Configure
             <p><code>--ca-file</code> selects an additional certificate authority file for a private test endpoint. There is no option to disable certificate or hostname verification.</p>
           </section>
 
-          <section id="limits"><span class="step-label">HTTP/2 06</span><h2>Keep the current boundary visible.</h2>
+          <section id="server"><span class="step-label">HTTP/2 06</span><h2>Reuse the high-level server API.</h2>
+            <p>The existing <code>Routing.Serve</code> has an accepted-connection overload that selects HTTP/1.x, HTTP/2, or ALPN. Route registration, middleware, body policy, parameters, deadlines, response helpers, streamed bodies, and SSE remain unchanged. Each admitted HTTP/2 stream runs its synchronous handler in a lightweight task while one connection pump owns framing and flow control.</p>
+            <figure class="code-panel"><figcaption>serve an existing router over HTTP/2</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">package Routing is new
+  Flyology.HTTP.Server.Routing (Application_Context);
+
+Routes.Get ("/status", Status'Access, Name =&gt; "status");
+
+Routes.Serve
+  (State, Connection, Peer,
+   Mode    =&gt; Flyology.HTTP.Server.HTTP_2_Only,
+   Timeout =&gt; 30.0,
+   Token   =&gt; Cancellation);</code></pre></figure>
+            <p><code>HTTP_2_Only</code> accepts a cleartext prior-knowledge connection or TLS already selected as <code>h2</code>. After upgrading a server connection with an ALPN provider offering <code>h2</code> and <code>http/1.1</code>, use <code>ALPN_Negotiated</code>; <code>Routing.Serve</code> reads the selection and invokes the appropriate engine. <code>HTTP_1_Only</code> preserves explicit HTTP/1.x behavior.</p>
+            <p>The listening port is configured before this call, when the application binds its Flyology socket. <code>Routing.Serve</code> receives an already accepted connection, so changing the protocol mode does not move listener ownership or port configuration into the router.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The raw connection API is intentionally not drop-in.</strong> <code>Server.Connection</code> contains HTTP/1.x connection-scoped parser and response state. HTTP/2 has several independently blocked streams on one connection, so direct low-level HTTP/2 users implement the generic <code>HTTP_2</code> application callback with <code>Applications.Exchange</code> instead.</p></aside>
+          </section>
+
+          <section id="limits"><span class="step-label">HTTP/2 07</span><h2>Keep the current boundary visible.</h2>
             <div class="decision-list">
               <dl>
                 <div class="decision-row"><dt>Request bodies</dt><dd>Empty and retained request bodies are supported. Borrowed streaming body sources, request trailers, and <code>Expect: 100-continue</code> remain HTTP/1.1-only.</dd></div>
                 <div class="decision-row"><dt>Responses</dt><dd>Response heads and bodies remain bounded and streamable through the ordinary API. HTTP/2 has no reason phrase, so <code>Reason_Phrase</code> returns an empty string.</dd></div>
-                <div class="decision-row"><dt>Server features</dt><dd>The crate does not provide an HTTP/2 server, server push, extended CONNECT, or an HTTP/1.1 Upgrade path.</dd></div>
+                <div class="decision-row"><dt>Server features</dt><dd>The application server supports prior knowledge or an already ALPN-selected connection, up to 32 concurrent streams, bounded per-stream buffers, routing, middleware, streaming bodies, and SSE. It does not provide server push, extended CONNECT/WebSockets, h2c Upgrade, or automatic HTTP/1.1 fallback.</dd></div>
                 <div class="decision-row"><dt>Intermediaries</dt><dd>Proxying and content decoding are not implemented.</dd></div>
               </dl>
             </div>
             <p>The implementation is experimental. The API and tests establish bounded behavior, but they do not constitute a production-qualification claim.</p>
           </section>
 
-          <section id="verification"><span class="step-label">HTTP/2 07</span><h2>Run the maintained qualification commands.</h2>
+          <section id="verification"><span class="step-label">HTTP/2 08</span><h2>Run the maintained qualification commands.</h2>
             <figure class="code-panel"><figcaption>local verification</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-shell">./scripts/http2-test.sh prepare
 ./scripts/http2-test.sh all
 ./scripts/http2-test.sh qualification
 </code></pre></figure>
-            <p><code>all</code> runs codecs, the deterministic python-hyper/h2 matrix, and showcase CLI coverage. <code>qualification</code> adds Go, Node, and nghttpd interoperability, deterministic fragmentation and reset campaigns, and concurrent multi-epoch resource checks in both task lanes. The scheduled <code>nightly</code> command extends the soak duration. See the repository's <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http2-conformance.md">HTTP/2 conformance notes</a> for the maintained evidence boundary.</p>
+            <p><code>all</code> runs codecs, the deterministic python-hyper/h2 client matrix, showcase CLI coverage, the routed HTTP/2 server test, and an independent python-hyper/h2 peer against the server over prior knowledge and TLS ALPN. <code>qualification</code> adds client interoperability, fragmentation and reset campaigns, and concurrent multi-epoch resource checks in both task lanes. <code>h2spec</code> server coverage remains qualification work. See the repository's <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http2-conformance.md">HTTP/2 conformance notes</a> for the maintained evidence boundary.</p>
           </section>
         </article>
       </div>

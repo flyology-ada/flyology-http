@@ -1,5 +1,6 @@
 with Ada.Strings.Unbounded;
 with Flyology.Cancellation;
+with Flyology.IO.Connections;
 with Flyology.IO.Sockets;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Middleware;
@@ -337,6 +338,16 @@ package Flyology.HTTP.Server.Routing is
       Peer       : Flyology.IO.Sockets.Endpoint;
       Token      : access Flyology.Cancellation.Token := null);
 
+   --  Match and invoke one protocol-neutral application exchange. Protocol
+   --  engines use this overload after parsing and admitting a stream.
+   --  @param Item Router registry
+   --  @param Context Typed shared application context
+   --  @param X Borrowed request exchange
+   procedure Dispatch
+     (Item    : in out Router;
+      Context : in out App_Context;
+      X       : in out Applications.Exchange);
+
    --  Read and route persistent requests until close or upgrade. This optional
    --  adapter leaves the lower-level Connection_Handlers package available.
    --  @param Item Router registry
@@ -360,6 +371,36 @@ package Flyology.HTTP.Server.Routing is
       Max_Requests : Natural := 1_000;
       Token        : access Flyology.Cancellation.Token := null;
       Header_Timeout : Duration := -1.0);
+
+   --  Select HTTP/1.x or HTTP/2 for one accepted Flyology connection and
+   --  serve it through this router. Route registration, middleware, body
+   --  policy, and endpoint handlers are identical for both protocols.
+   --  HTTP_2_Only expects cleartext prior knowledge or TLS already selected
+   --  as h2. ALPN_Negotiated requires an upgraded ALPN-capable TLS channel and
+   --  accepts only h2, http/1.1, or an empty fallback selection.
+   --  @param Item Router registry
+   --  @param Context Typed shared application context
+   --  @param Channel Sole owning plaintext or TLS Flyology connection
+   --  @param Peer Connected peer address
+   --  @param Mode Accepted-connection protocol policy
+   --  @param Timeout Per-request or per-stream deadline interval
+   --  @param Max_Connection_Age Absolute connection lifetime bound
+   --  @param Max_Requests HTTP/1.x request limit; ignored for HTTP/2
+   --  @param Token Optional cancellation token
+   --  @param Header_Timeout HTTP/1.x slow-header budget; ignored for HTTP/2
+   --  @param Ingress Optional HTTP/1.x retained-body budget
+   procedure Serve
+     (Item               : in out Router;
+      Context            : in out App_Context;
+      Channel            : aliased in out Flyology.IO.Connections.Connection;
+      Peer               : Flyology.IO.Sockets.Endpoint;
+      Mode               : Protocol_Mode := HTTP_1_Only;
+      Timeout            : Duration := 30.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Natural := 1_000;
+      Token              : access Flyology.Cancellation.Token := null;
+      Header_Timeout     : Duration := -1.0;
+      Ingress            : access Ingress_Budget := null);
 
 private
    use Ada.Strings.Unbounded;

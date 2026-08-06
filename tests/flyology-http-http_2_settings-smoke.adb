@@ -26,6 +26,12 @@ begin
 
    Apply (Item, (0, 2, 0, 0, 0, 0), Result);
    pragma Assert (Result = Settings_Protocol_Error);
+   Apply
+     (Item, (0, 2, 0, 0, 0, 0), Result, Peer_Is_Server => False);
+   pragma Assert (Result = Settings_Accepted and then not Item.Enable_Push);
+   Apply
+     (Item, (0, 2, 0, 0, 0, 2), Result, Peer_Is_Server => False);
+   pragma Assert (Result = Settings_Protocol_Error);
    Apply (Item, (0, 4, 16#80#, 0, 0, 0), Result);
    pragma Assert (Result = Settings_Flow_Control_Error);
    Apply (Item, (0, 5, 0, 0, 16, 0), Result);
@@ -39,6 +45,17 @@ begin
       pragma Assert
         (Payload =
            (0, 2, 0, 0, 0, 0,
+            0, 6, 0, 0, 64, 0,
+            0, 4, 0, 0, 64, 0));
+   end;
+
+   declare
+      Payload : constant Ada.Streams.Stream_Element_Array :=
+        Server_Initial_Payload (32);
+   begin
+      pragma Assert
+        (Payload =
+           (0, 3, 0, 0, 0, 32,
             0, 6, 0, 0, 64, 0,
             0, 4, 0, 0, 64, 0));
    end;

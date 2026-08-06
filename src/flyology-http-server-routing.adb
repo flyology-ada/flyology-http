@@ -2,7 +2,10 @@ with Ada.Real_Time;
 with Ada.Strings.Fixed;
 with Flyology.HTTP.Decoded_Path_Policy;
 with Flyology.HTTP.Route_Parameter_Policy;
+with Flyology.HTTP.Server.Connections;
+with Flyology.HTTP.Server.HTTP_2;
 with Flyology.IO;
+with Flyology.IO.Connections.TLS;
 with Flyology.IO.TLS;
 
 package body Flyology.HTTP.Server.Routing is
@@ -767,14 +770,11 @@ package body Flyology.HTTP.Server.Routing is
    end Automatic_Response;
 
    procedure Dispatch
-     (Item       : in out Router;
-      Context    : in out App_Context;
-      Connection : aliased in out Flyology.HTTP.Server.Connection;
-      Value      : aliased in out Request;
-      Peer       : Flyology.IO.Sockets.Endpoint;
-      Token      : access Flyology.Cancellation.Token := null)
+     (Item    : in out Router;
+      Context : in out App_Context;
+      X       : in out App.Exchange)
    is
-      Target_Value : constant String := Target (Value);
+      Target_Value : constant String := X.Request_Target;
       Raw          : constant String := Raw_Path (Target_Value);
       Invalid_Path : Boolean := False;
 
@@ -789,17 +789,13 @@ package body Flyology.HTTP.Server.Routing is
 
       Path_Value   : constant String := Decode_For_Dispatch;
       Path_Segments : Segment_List;
-      Request_Method : constant String := Method (Value);
+      Request_Method : constant String := X.Request_Method;
       Selected       : Natural := 0;
       Fallback       : Natural := 0;
       Selected_Score : Natural := 0;
       Allowed        : Unbounded_String;
       Alternate      : Natural := 0;
       Preflight_Route : Natural := 0;
-      X : aliased App.Exchange := App.Create
-        (Value, Connection, Peer, Token,
-         Request_Deadline (Connection));
-
       function Matches (Index : Positive; Ignore : Boolean := False)
         return Boolean
       is (Match_Path
@@ -977,8 +973,8 @@ package body Flyology.HTTP.Server.Routing is
             end;
          end if;
          begin
-            Narrow_Body_Limit
-              (Connection, Item.Routes (Selected).Policy.Max_Body);
+            X.Narrow_Body_Limit
+              (Item.Routes (Selected).Policy.Max_Body);
          exception
             when Payload_Too_Large | Protocol_Error =>
                X.Problem (413, "body-too-large", "Request body is too large");
@@ -1024,39 +1020,53 @@ package body Flyology.HTTP.Server.Routing is
          end if;
       exception
          when Resource_Exhausted =>
-            if not Response_Started (Connection) then
+            if not X.Wire_Response_Started then
                X.Add_Header ("Retry-After", "1");
                X.Problem
                  (503, "ingress-budget-exhausted",
                   "Server ingress capacity is exhausted");
             else
-               Connection.Request_Close := True;
+               X.Mark_Failed;
             end if;
       end;
    exception
       when Route_Error =>
-         if not Response_Started (Connection) then
+         if not X.Wire_Response_Started then
             X.Problem (400, "invalid-path", "Request path is malformed");
          end if;
       when Payload_Too_Large =>
-         if not Response_Started (Connection) then
+         if not X.Wire_Response_Started then
             X.Problem (413, "body-too-large", "Request body is too large");
          else
-            Connection.Request_Close := True;
+            X.Mark_Failed;
          end if;
       when Expectation_Failed =>
-         if not Response_Started (Connection) then
+         if not X.Wire_Response_Started then
             X.Problem
               (417, "expectation-failed", "Request expectation failed");
          else
-            Connection.Request_Close := True;
+            X.Mark_Failed;
          end if;
       when Protocol_Error =>
-         if not Response_Started (Connection) then
+         if not X.Wire_Response_Started then
             X.Problem (400, "bad-request", "Request data is malformed");
          else
-            Connection.Request_Close := True;
+            X.Mark_Failed;
          end if;
+   end Dispatch;
+
+   procedure Dispatch
+     (Item       : in out Router;
+      Context    : in out App_Context;
+      Connection : aliased in out Flyology.HTTP.Server.Connection;
+      Value      : aliased in out Request;
+      Peer       : Flyology.IO.Sockets.Endpoint;
+      Token      : access Flyology.Cancellation.Token := null)
+   is
+      X : App.Exchange := App.Create
+        (Value, Connection, Peer, Token, Request_Deadline (Connection));
+   begin
+      Dispatch (Item, Context, X);
    end Dispatch;
 
    procedure Serve
@@ -1191,6 +1201,72 @@ package body Flyology.HTTP.Server.Routing is
          end;
          exit when Should_Close (Connection);
       end loop;
+   end Serve;
+
+   procedure Serve
+     (Item               : in out Router;
+      Context            : in out App_Context;
+      Channel            : aliased in out Flyology.IO.Connections.Connection;
+      Peer               : Flyology.IO.Sockets.Endpoint;
+      Mode               : Protocol_Mode := HTTP_1_Only;
+      Timeout            : Duration := 30.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Natural := 1_000;
+      Token              : access Flyology.Cancellation.Token := null;
+      Header_Timeout     : Duration := -1.0;
+      Ingress            : access Ingress_Budget := null)
+   is
+      procedure Serve_HTTP_1 is
+         Transport : aliased
+           Flyology.HTTP.Server.Connections.Connection_Transport
+             (Channel'Access);
+         Connection : aliased Flyology.HTTP.Server.Connection
+           (Transport'Access);
+      begin
+         if Ingress /= null then
+            Configure_Ingress_Budget (Connection, Ingress);
+         end if;
+         Serve
+           (Item, Context, Connection, Peer, Timeout, Max_Connection_Age,
+            Max_Requests, Token, Header_Timeout);
+      end Serve_HTTP_1;
+
+      procedure Dispatch_HTTP_2
+        (State : in out App_Context;
+         X     : in out Applications.Exchange) is
+      begin
+         Dispatch (Item, State, X);
+      end Dispatch_HTTP_2;
+
+      package HTTP_2_Engine is new
+        Flyology.HTTP.Server.HTTP_2 (App_Context, Dispatch_HTTP_2);
+
+      procedure Serve_HTTP_2 is
+      begin
+         HTTP_2_Engine.Serve
+           (Context, Channel, Peer, Timeout, Max_Connection_Age, Token);
+      end Serve_HTTP_2;
+   begin
+      case Mode is
+         when HTTP_1_Only =>
+            Serve_HTTP_1;
+         when HTTP_2_Only =>
+            Serve_HTTP_2;
+         when ALPN_Negotiated =>
+            declare
+               Selected : constant String :=
+                 Flyology.IO.Connections.TLS.Selected_Protocol (Channel);
+            begin
+               if Selected = "h2" then
+                  Serve_HTTP_2;
+               elsif Selected = "" or else Selected = "http/1.1" then
+                  Serve_HTTP_1;
+               else
+                  raise Protocol_Error with
+                    "unsupported negotiated HTTP protocol: " & Selected;
+               end if;
+            end;
+      end case;
    end Serve;
 
 end Flyology.HTTP.Server.Routing;

@@ -6,9 +6,9 @@ with Flyology.Bytes;
 with Flyology.Cancellation;
 private with Flyology.WebSocket_Policy;
 
---  Provides a bounded HTTP/1.1 connection engine over a task-aware transport.
---  The engine supports persistent requests, fixed-length and chunked request
---  bodies, fixed responses, server-sent events, and RFC 6455 WebSockets.
+--  Provides bounded HTTP server protocol and application foundations over
+--  task-aware transports. Connection is the HTTP/1.x low-level engine;
+--  Applications.Exchange is shared by HTTP/1.1 and HTTP/2 application servers.
 package Flyology.HTTP.Server is
 
    --  Maximum bytes before the terminating empty request-header line.
@@ -34,6 +34,13 @@ package Flyology.HTTP.Server is
    Payload_Too_Large : exception;
    --  Raised for an unsupported or malformed Expect request field.
    Expectation_Failed : exception;
+
+   --  Protocol selection at an accepted application-server connection.
+   --  @enum HTTP_1_Only Serve the connection as HTTP/1.x
+   --  @enum HTTP_2_Only Require prior knowledge or an already selected h2 TLS
+   --  @enum ALPN_Negotiated Select h2 or HTTP/1.x from an upgraded TLS channel
+   type Protocol_Mode is
+     (HTTP_1_Only, HTTP_2_Only, ALPN_Negotiated);
 
    --  Snapshot of shared buffered-ingress accounting.
    --  @field Limit Configured maximum reserved bytes
@@ -143,6 +150,10 @@ package Flyology.HTTP.Server is
    --  @param Item Request to inspect
    --  @return HTTP/1.0 or HTTP/1.1
    function Version (Item : Request) return HTTP_Version;
+   --  Return the negotiated protocol carrying this request.
+   --  @param Item Request to inspect
+   --  @return HTTP/1.1 for HTTP/1.x parsing or HTTP/2 for an HTTP/2 stream
+   function Request_Protocol (Item : Request) return Protocol;
    --  Return a case-insensitive header value with surrounding whitespace
    --  removed. Repeated fields are comma-joined in wire order.
    --  @param Item Request to inspect
@@ -598,6 +609,7 @@ private
       Method_Value  : Unbounded_String;
       Target_Value  : Unbounded_String;
       Version_Value : HTTP_Version := HTTP_1_1;
+      Protocol_Value : Protocol := HTTP_1_1_Protocol;
       Header_Block  : Unbounded_String;
       Body_Value    : Unbounded_String;
       Keep_Alive    : Boolean := False;

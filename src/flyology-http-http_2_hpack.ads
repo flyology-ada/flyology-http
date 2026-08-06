@@ -12,6 +12,7 @@ private package Flyology.HTTP.HTTP_2_HPACK is
      Default_Table_Size / 32;
 
    Header_List_Too_Large : exception;
+   Invalid_Request_Fields : exception;
 
    type Decoder is limited private;
 
@@ -24,6 +25,18 @@ private package Flyology.HTTP.HTTP_2_HPACK is
       Fields      : in out Flyology.HTTP.Headers.List;
       Status      : out Status_Code;
       Has_Status  : out Boolean);
+
+   --  Decode a complete request field section. Request pseudo-fields are
+   --  returned separately and regular fields retain their wire order.
+   procedure Decode_Request
+     (Item        : in out Decoder;
+      Block       : Ada.Streams.Stream_Element_Array;
+      Is_Trailers : Boolean;
+      Fields      : in out Flyology.HTTP.Headers.List;
+      Method      : out Ada.Strings.Unbounded.Unbounded_String;
+      Scheme      : out Ada.Strings.Unbounded.Unbounded_String;
+      Authority   : out Ada.Strings.Unbounded.Unbounded_String;
+      Path        : out Ada.Strings.Unbounded.Unbounded_String);
 
    --  Reset the compression context after its connection is discarded.
    procedure Reset (Item : in out Decoder);

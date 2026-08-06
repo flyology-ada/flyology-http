@@ -320,6 +320,9 @@ package body Flyology.HTTP.Server is
    function Version (Item : Request) return HTTP_Version is
      (Item.Version_Value);
 
+   function Request_Protocol (Item : Request) return Protocol is
+     (Item.Protocol_Value);
+
    function Header_Field_Count
      (Item : Request; Name : String) return Natural
    is

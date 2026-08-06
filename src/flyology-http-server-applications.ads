@@ -4,6 +4,7 @@ with Ada.Task_Identification;
 with Flyology.Bytes;
 with Flyology.Cancellation;
 with Flyology.IO.Sockets;
+private with Flyology.HTTP.Server.Exchange_Backends;
 
 --  Supplies a request-scoped application exchange above the raw HTTP engine.
 --  Exchange borrows its request, connection, application context, and optional
@@ -90,6 +91,11 @@ package Flyology.HTTP.Server.Applications is
    --  @param Item Request exchange
    --  @return Request target
    function Request_Target (Item : Exchange) return String;
+
+   --  Return the negotiated protocol carrying this request.
+   --  @param Item Request exchange
+   --  @return HTTP/1.1 or HTTP/2
+   function Request_Protocol (Item : Exchange) return Protocol;
 
    --  Return a case-insensitive request header value. Repeated fields retain
    --  the core parser's comma-joined wire order.
@@ -478,6 +484,13 @@ package Flyology.HTTP.Server.Applications is
      (Item     : in out Exchange;
       Accepted : out Boolean);
 
+   --  Reduce the decoded request-body limit through the active protocol
+   --  engine. This operation is used by routing after request-head matching.
+   --  @param Item Active request exchange
+   --  @param Maximum New decoded-body maximum
+   procedure Narrow_Body_Limit
+     (Item : in out Exchange; Maximum : Natural);
+
    --  Configure routing metadata before invoking application components.
    --  This integration operation is intended for Flyology router packages.
    --  @param Item Request exchange
@@ -525,7 +538,8 @@ private
 
    type Exchange
      (Request_Handle    : not null access Request;
-      Connection_Handle : not null access Connection;
+      Connection_Handle : access Connection;
+      Backend_Handle    : access Exchange_Backends.Backend'Class;
       Token_Handle      : access Flyology.Cancellation.Token)
    is tagged limited record
       Owner_Task        : Ada.Task_Identification.Task_Id :=

@@ -25,6 +25,7 @@ package body Flyology.HTTP.Server.Applications is
       return Result : Exchange
         (Request_Handle    => Value'Access,
          Connection_Handle => Item'Access,
+         Backend_Handle    => null,
          Token_Handle      => Token)
       do
          Result.Peer_Value := Peer;
@@ -41,6 +42,9 @@ package body Flyology.HTTP.Server.Applications is
    function Request_Target (Item : Exchange) return String is
      (Target (Item.Request_Handle.all));
 
+   function Request_Protocol (Item : Exchange) return Protocol is
+     (Flyology.HTTP.Server.Request_Protocol (Item.Request_Handle.all));
+
    function Request_Header (Item : Exchange; Name : String) return String is
      (Header (Item.Request_Handle.all, Name));
 
@@ -49,7 +53,9 @@ package body Flyology.HTTP.Server.Applications is
    is (Header_Count (Item.Request_Handle.all, Name));
 
    function Wire_Response_Started (Item : Exchange) return Boolean is
-     (Flyology.HTTP.Server.Response_Started (Item.Connection_Handle.all));
+     (if Item.Backend_Handle = null
+      then Flyology.HTTP.Server.Response_Started (Item.Connection_Handle.all)
+      else Exchange_Backends.Response_Started (Item.Backend_Handle.all));
 
    function Peer (Item : Exchange) return Flyology.IO.Sockets.Endpoint is
      (Item.Peer_Value);
@@ -87,7 +93,12 @@ package body Flyology.HTTP.Server.Applications is
       if Value > Item.Deadline_Value then
          raise Program_Error with "HTTP exchange deadline cannot be extended";
       end if;
-      Narrow_Request_Deadline (Item.Connection_Handle.all, Value);
+      if Item.Backend_Handle = null then
+         Narrow_Request_Deadline (Item.Connection_Handle.all, Value);
+      else
+         Exchange_Backends.Narrow_Deadline
+           (Item.Backend_Handle.all, Value);
+      end if;
       Item.Deadline_Value := Value;
    end Narrow_Deadline;
 
@@ -181,32 +192,32 @@ package body Flyology.HTTP.Server.Applications is
       case Item.Body_Mode is
          when Reject_Body =>
             return
-              (if Flyology.HTTP.Server.Body_Complete
-                    (Item.Connection_Handle.all)
+              (if Body_Complete (Item)
                then Body_Completed else Body_Rejected);
          when Stream_Body =>
             return
-              (if Flyology.HTTP.Server.Body_Complete
-                    (Item.Connection_Handle.all)
+              (if Body_Complete (Item)
                then Body_Completed else Body_Streaming);
          when Buffer_Body =>
             return
-              (if Flyology.HTTP.Server.Body_Complete
-                    (Item.Connection_Handle.all)
+              (if Body_Complete (Item)
                then Body_Buffered else Body_Pending);
          when Discard_Request_Body =>
             return
-              (if Flyology.HTTP.Server.Body_Complete
-                    (Item.Connection_Handle.all)
+              (if Body_Complete (Item)
                then Body_Completed else Body_Pending);
       end case;
    end Body_State;
 
    function Body_Complete (Item : Exchange) return Boolean is
-     (Flyology.HTTP.Server.Body_Complete (Item.Connection_Handle.all));
+     (if Item.Backend_Handle = null
+      then Flyology.HTTP.Server.Body_Complete (Item.Connection_Handle.all)
+      else Exchange_Backends.Body_Complete (Item.Backend_Handle.all));
 
    function Request_Body_Bytes (Item : Exchange) return Natural is
-     (Item.Connection_Handle.Body_Total);
+     (if Item.Backend_Handle = null
+      then Item.Connection_Handle.Body_Total
+      else Exchange_Backends.Body_Bytes (Item.Backend_Handle.all));
 
    procedure Read_Body
      (Item     : in out Exchange;
@@ -219,16 +230,21 @@ package body Flyology.HTTP.Server.Applications is
       if Item.Body_Mode /= Stream_Body then
          raise Program_Error with "route body policy is not streamed";
       end if;
-      Flyology.HTTP.Server.Read_Body
-        (Item.Connection_Handle.all, Data, Last, Finished,
-         Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Flyology.HTTP.Server.Read_Body
+           (Item.Connection_Handle.all, Data, Last, Finished,
+            Item.Token_Handle);
+      else
+         Exchange_Backends.Read_Body
+           (Item.Backend_Handle.all, Data, Last, Finished,
+            Item.Token_Handle);
+      end if;
    end Read_Body;
 
    function Content (Item : Exchange) return String is
    begin
       if Item.Body_Mode /= Buffer_Body
-        or else not Flyology.HTTP.Server.Body_Complete
-          (Item.Connection_Handle.all)
+        or else not Body_Complete (Item)
       then
          raise Program_Error with
            "request content is available only after buffered admission";
@@ -301,12 +317,19 @@ package body Flyology.HTTP.Server.Applications is
            "required-authentication route cannot send an unauthenticated"
            & " response";
       end if;
-      Flyology.HTTP.Server.Respond
-        (Item.Connection_Handle.all, Status, Content_Type, Payload,
-         Extra_Headers => To_String (Item.Extra_Headers),
-         Close         => Close,
-         Timeout       => Remaining (Item),
-         Token         => Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Flyology.HTTP.Server.Respond
+           (Item.Connection_Handle.all, Status, Content_Type, Payload,
+            Extra_Headers => To_String (Item.Extra_Headers),
+            Close         => Close,
+            Timeout       => Remaining (Item),
+            Token         => Item.Token_Handle);
+      else
+         Exchange_Backends.Respond
+           (Item.Backend_Handle.all, Status, Content_Type, Payload,
+            To_String (Item.Extra_Headers), Close, Remaining (Item),
+            Item.Token_Handle);
+      end if;
       Item.Status_Value := Status;
       Item.Response_Length :=
         (if Is_Head or else Status in 204 | 205 | 304
@@ -429,12 +452,19 @@ package body Flyology.HTTP.Server.Applications is
            "required-authentication route cannot start an unauthenticated"
            & " stream";
       end if;
-      Begin_Response_Stream
-        (Item.Connection_Handle.all, Status, Content_Type,
-         Extra_Headers => To_String (Item.Extra_Headers),
-         Close         => Close,
-         Timeout       => Remaining (Item),
-         Token         => Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Begin_Response_Stream
+           (Item.Connection_Handle.all, Status, Content_Type,
+            Extra_Headers => To_String (Item.Extra_Headers),
+            Close         => Close,
+            Timeout       => Remaining (Item),
+            Token         => Item.Token_Handle);
+      else
+         Exchange_Backends.Begin_Response_Stream
+           (Item.Backend_Handle.all, Status, Content_Type,
+            To_String (Item.Extra_Headers), Close, Remaining (Item),
+            Item.Token_Handle);
+      end if;
       Item.Status_Value := Status;
       Item.Response_Value := Streaming_Response;
    exception
@@ -449,9 +479,15 @@ package body Flyology.HTTP.Server.Applications is
       if Item.Response_Value /= Streaming_Response then
          raise Program_Error with "HTTP exchange stream is not active";
       end if;
-      Write_Response_Chunk
-        (Item.Connection_Handle.all, Data, Remaining (Item),
-         Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Write_Response_Chunk
+           (Item.Connection_Handle.all, Data, Remaining (Item),
+            Item.Token_Handle);
+      else
+         Exchange_Backends.Write_Response_Chunk
+           (Item.Backend_Handle.all, Data, Remaining (Item),
+            Item.Token_Handle);
+      end if;
       if Method (Item.Request_Handle.all) /= "HEAD" then
          Item.Response_Length := Item.Response_Length + Data'Length;
       end if;
@@ -469,9 +505,15 @@ package body Flyology.HTTP.Server.Applications is
       if Item.Response_Value /= Streaming_Response then
          raise Program_Error with "HTTP exchange stream is not active";
       end if;
-      Write_Response_Chunk
-        (Item.Connection_Handle.all, Data, Remaining (Item),
-         Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Write_Response_Chunk
+           (Item.Connection_Handle.all, Data, Remaining (Item),
+            Item.Token_Handle);
+      else
+         Exchange_Backends.Write_Response_Chunk
+           (Item.Backend_Handle.all, Data, Remaining (Item),
+            Item.Token_Handle);
+      end if;
       if Method (Item.Request_Handle.all) /= "HEAD" then
          Item.Response_Length := Item.Response_Length + Natural (Data'Length);
       end if;
@@ -487,8 +529,13 @@ package body Flyology.HTTP.Server.Applications is
       if Item.Response_Value /= Streaming_Response then
          raise Program_Error with "HTTP exchange stream is not active";
       end if;
-      End_Response_Stream
-        (Item.Connection_Handle.all, Remaining (Item), Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         End_Response_Stream
+           (Item.Connection_Handle.all, Remaining (Item), Item.Token_Handle);
+      else
+         Exchange_Backends.End_Response_Stream
+           (Item.Backend_Handle.all, Remaining (Item), Item.Token_Handle);
+      end if;
       Item.Response_Value := Completed;
    exception
       when others =>
@@ -509,11 +556,17 @@ package body Flyology.HTTP.Server.Applications is
       elsif Item.Upgrade_Value /= Allow_SSE then
          raise Program_Error with "route does not permit SSE";
       end if;
-      Flyology.HTTP.Server.Begin_SSE
-        (Item.Connection_Handle.all,
-         Extra_Headers => To_String (Item.Extra_Headers),
-         Timeout       => Remaining (Item),
-         Token         => Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Flyology.HTTP.Server.Begin_SSE
+           (Item.Connection_Handle.all,
+            Extra_Headers => To_String (Item.Extra_Headers),
+            Timeout       => Remaining (Item),
+            Token         => Item.Token_Handle);
+      else
+         Exchange_Backends.Begin_SSE
+           (Item.Backend_Handle.all, To_String (Item.Extra_Headers),
+            Remaining (Item), Item.Token_Handle);
+      end if;
       Item.Status_Value := 200;
       Item.Response_Value := Streaming_SSE;
    exception
@@ -536,9 +589,15 @@ package body Flyology.HTTP.Server.Applications is
       if Item.Response_Value /= Streaming_SSE then
          raise Program_Error with "HTTP exchange SSE stream is not active";
       end if;
-      Flyology.HTTP.Server.Send_Event
-        (Item.Connection_Handle.all, Data, Event, Id, Retry,
-         Remaining (Item), Item.Token_Handle, Include_Id, Include_Retry);
+      if Item.Backend_Handle = null then
+         Flyology.HTTP.Server.Send_Event
+           (Item.Connection_Handle.all, Data, Event, Id, Retry,
+            Remaining (Item), Item.Token_Handle, Include_Id, Include_Retry);
+      else
+         Exchange_Backends.Send_Event
+           (Item.Backend_Handle.all, Data, Event, Id, Retry,
+            Remaining (Item), Item.Token_Handle, Include_Id, Include_Retry);
+      end if;
       if Method (Item.Request_Handle.all) /= "HEAD" then
          Item.Response_Length := Item.Response_Length + Data'Length;
       end if;
@@ -555,9 +614,15 @@ package body Flyology.HTTP.Server.Applications is
       if Item.Response_Value /= Streaming_SSE then
          raise Program_Error with "HTTP exchange SSE stream is not active";
       end if;
-      Flyology.HTTP.Server.Send_SSE_Comment
-        (Item.Connection_Handle.all, Comment, Remaining (Item),
-         Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Flyology.HTTP.Server.Send_SSE_Comment
+           (Item.Connection_Handle.all, Comment, Remaining (Item),
+            Item.Token_Handle);
+      else
+         Exchange_Backends.Send_SSE_Comment
+           (Item.Backend_Handle.all, Comment, Remaining (Item),
+            Item.Token_Handle);
+      end if;
    exception
       when others =>
          Item.Response_Value := Failed;
@@ -570,8 +635,13 @@ package body Flyology.HTTP.Server.Applications is
       if Item.Response_Value /= Streaming_SSE then
          raise Program_Error with "HTTP exchange SSE stream is not active";
       end if;
-      Flyology.HTTP.Server.End_SSE
-        (Item.Connection_Handle.all, Remaining (Item), Item.Token_Handle);
+      if Item.Backend_Handle = null then
+         Flyology.HTTP.Server.End_SSE
+           (Item.Connection_Handle.all, Remaining (Item), Item.Token_Handle);
+      else
+         Exchange_Backends.End_SSE
+           (Item.Backend_Handle.all, Remaining (Item), Item.Token_Handle);
+      end if;
       Item.Response_Value := Completed;
    exception
       when others =>
@@ -589,6 +659,10 @@ package body Flyology.HTTP.Server.Applications is
    is
    begin
       Require_Owner (Item);
+      if Item.Backend_Handle /= null then
+         raise Program_Error with
+           "WebSocket upgrade is not available on this HTTP protocol";
+      end if;
       if Item.Response_Value /= Not_Started then
          raise Program_Error with "HTTP exchange response already started";
       elsif Item.Authentication_Value = Required_Authentication
@@ -755,7 +829,11 @@ package body Flyology.HTTP.Server.Applications is
    procedure Mark_Failed (Item : in out Exchange) is
    begin
       Require_Owner (Item);
-      Item.Connection_Handle.Request_Close := True;
+      if Item.Backend_Handle = null then
+         Item.Connection_Handle.Request_Close := True;
+      else
+         Exchange_Backends.Mark_Failed (Item.Backend_Handle.all);
+      end if;
       Item.Response_Value := Failed;
    end Mark_Failed;
 
@@ -768,27 +846,56 @@ package body Flyology.HTTP.Server.Applications is
       Accepted := False;
       case Item.Body_Mode is
          when Reject_Body =>
-            if not Flyology.HTTP.Server.Body_Complete
-              (Item.Connection_Handle.all)
+            if not Body_Complete (Item)
             then
                Item.Problem
                  (413, "body-not-accepted", "Route does not accept a body");
                return;
             end if;
          when Stream_Body =>
-            Flyology.HTTP.Server.Accept_Body
-              (Item.Connection_Handle.all, Item.Token_Handle);
+            if Item.Backend_Handle = null then
+               Flyology.HTTP.Server.Accept_Body
+                 (Item.Connection_Handle.all, Item.Token_Handle);
+            else
+               Exchange_Backends.Accept_Body
+                 (Item.Backend_Handle.all, Item.Token_Handle);
+            end if;
          when Buffer_Body =>
-            Flyology.HTTP.Server.Buffer_Request_Body
-              (Item.Connection_Handle.all,
-               Item.Request_Handle.all,
-               Item.Token_Handle);
+            if Item.Backend_Handle = null then
+               Flyology.HTTP.Server.Buffer_Request_Body
+                 (Item.Connection_Handle.all,
+                  Item.Request_Handle.all,
+                  Item.Token_Handle);
+            else
+               Exchange_Backends.Buffer_Body
+                 (Item.Backend_Handle.all, Item.Request_Handle.all,
+                  Item.Token_Handle);
+            end if;
          when Discard_Request_Body =>
-            Flyology.HTTP.Server.Discard_Body
-              (Item.Connection_Handle.all, Item.Token_Handle);
+            if Item.Backend_Handle = null then
+               Flyology.HTTP.Server.Discard_Body
+                 (Item.Connection_Handle.all, Item.Token_Handle);
+            else
+               Exchange_Backends.Discard_Body
+                 (Item.Backend_Handle.all, Item.Token_Handle);
+            end if;
       end case;
       Accepted := True;
    end Apply_Body_Policy;
+
+   procedure Narrow_Body_Limit
+     (Item : in out Exchange; Maximum : Natural)
+   is
+   begin
+      Require_Owner (Item);
+      if Item.Backend_Handle = null then
+         Flyology.HTTP.Server.Narrow_Body_Limit
+           (Item.Connection_Handle.all, Maximum);
+      else
+         Exchange_Backends.Narrow_Body_Limit
+           (Item.Backend_Handle.all, Maximum);
+      end if;
+   end Narrow_Body_Limit;
 
    procedure Configure_Route
      (Item            : in out Exchange;

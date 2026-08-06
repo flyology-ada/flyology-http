@@ -392,6 +392,196 @@ package body Flyology.HTTP.HTTP_2_HPACK is
       end if;
    end Decode_Response;
 
+   procedure Decode_Request
+     (Item        : in out Decoder;
+      Block       : Ada.Streams.Stream_Element_Array;
+      Is_Trailers : Boolean;
+      Fields      : in out Flyology.HTTP.Headers.List;
+      Method      : out Unbounded_String;
+      Scheme      : out Unbounded_String;
+      Authority   : out Unbounded_String;
+      Path        : out Unbounded_String)
+   is
+      Cursor        : Ada.Streams.Stream_Element_Offset := Block'First;
+      Saw_Field     : Boolean := False;
+      Saw_Regular   : Boolean := False;
+      Saw_Method    : Boolean := False;
+      Saw_Scheme    : Boolean := False;
+      Saw_Authority : Boolean := False;
+      Saw_Path      : Boolean := False;
+      List_Size     : Natural := 0;
+   begin
+      Flyology.HTTP.Headers.Clear (Fields);
+      Method := Null_Unbounded_String;
+      Scheme := Null_Unbounded_String;
+      Authority := Null_Unbounded_String;
+      Path := Null_Unbounded_String;
+      while Cursor in Block'Range loop
+         declare
+            First        : constant Ada.Streams.Stream_Element :=
+              Block (Cursor);
+            Index        : Natural;
+            Name_Value   : Unbounded_String;
+            Field_Value  : Unbounded_String;
+            Incremental  : Boolean := False;
+            Table_Update : Boolean := False;
+         begin
+            if (First and 16#80#) /= 0 then
+               Decode_Integer (Block, Cursor, 7, Index);
+               Lookup (Item, Index, Name_Value, Field_Value);
+            elsif (First and 16#40#) /= 0 then
+               Incremental := True;
+               Decode_Integer (Block, Cursor, 6, Index);
+               if Index = 0 then
+                  Name_Value := To_Unbounded_String
+                    (Decode_String
+                       (Block, Cursor,
+                        Flyology.HTTP.Headers.Default_Max_Bytes));
+               else
+                  declare
+                     Ignored : Unbounded_String;
+                  begin
+                     Lookup (Item, Index, Name_Value, Ignored);
+                  end;
+               end if;
+               Field_Value := To_Unbounded_String
+                 (Decode_String
+                    (Block, Cursor,
+                     Flyology.HTTP.Headers.Default_Max_Bytes));
+            elsif (First and 16#E0#) = 16#20# then
+               if Saw_Field then
+                  raise Protocol_Error with
+                    "HPACK table update follows a field representation";
+               end if;
+               Decode_Integer (Block, Cursor, 5, Index);
+               Set_Maximum (Item, Index);
+               Table_Update := True;
+            else
+               Decode_Integer (Block, Cursor, 4, Index);
+               if Index = 0 then
+                  Name_Value := To_Unbounded_String
+                    (Decode_String
+                       (Block, Cursor,
+                        Flyology.HTTP.Headers.Default_Max_Bytes));
+               else
+                  declare
+                     Ignored : Unbounded_String;
+                  begin
+                     Lookup (Item, Index, Name_Value, Ignored);
+                  end;
+               end if;
+               Field_Value := To_Unbounded_String
+                 (Decode_String
+                    (Block, Cursor,
+                     Flyology.HTTP.Headers.Default_Max_Bytes));
+            end if;
+
+            if not Table_Update then
+               Saw_Field := True;
+               declare
+                  Name  : constant String := To_String (Name_Value);
+                  Value : constant String := To_String (Field_Value);
+                  Lower : constant String :=
+                    Ada.Characters.Handling.To_Lower (Name);
+                  Added : constant Natural :=
+                    Name'Length + Value'Length + 32;
+               begin
+                  if Added > Flyology.HTTP.Headers.Default_Max_Bytes
+                    or else List_Size >
+                      Flyology.HTTP.Headers.Default_Max_Bytes - Added
+                  then
+                     raise Header_List_Too_Large;
+                  elsif Name = "" or else Name /= Lower then
+                     raise Invalid_Request_Fields with
+                       "invalid HTTP/2 field name";
+                  elsif Name (Name'First) = ':' then
+                     if Is_Trailers or else Saw_Regular then
+                        raise Invalid_Request_Fields with
+                          "invalid HTTP/2 request pseudo-field position";
+                     end if;
+                     if Name = ":method" then
+                        if Saw_Method then
+                           raise Invalid_Request_Fields with
+                             "duplicate HTTP/2 method pseudo-field";
+                        end if;
+                        Method := Field_Value;
+                        Saw_Method := True;
+                     elsif Name = ":scheme" then
+                        if Saw_Scheme then
+                           raise Invalid_Request_Fields with
+                             "duplicate HTTP/2 scheme pseudo-field";
+                        end if;
+                        Scheme := Field_Value;
+                        Saw_Scheme := True;
+                     elsif Name = ":authority" then
+                        if Saw_Authority then
+                           raise Invalid_Request_Fields with
+                             "duplicate HTTP/2 authority pseudo-field";
+                        end if;
+                        Authority := Field_Value;
+                        Saw_Authority := True;
+                     elsif Name = ":path" then
+                        if Saw_Path then
+                           raise Invalid_Request_Fields with
+                             "duplicate HTTP/2 path pseudo-field";
+                        end if;
+                        Path := Field_Value;
+                        Saw_Path := True;
+                     else
+                        raise Invalid_Request_Fields with
+                          "unsupported HTTP/2 request pseudo-field";
+                     end if;
+                  else
+                     Saw_Regular := True;
+                     if Lower in
+                       "connection" | "keep-alive" | "proxy-connection" |
+                       "transfer-encoding" | "upgrade"
+                       or else (Lower = "te" and then Value /= "trailers")
+                     then
+                        raise Invalid_Request_Fields with
+                          "connection-specific HTTP/2 request field";
+                     end if;
+                     begin
+                        Flyology.HTTP.Headers.Add (Fields, Name, Value);
+                     exception
+                        when Flyology.HTTP.Headers.Headers_Too_Large =>
+                           raise Header_List_Too_Large;
+                        when Constraint_Error =>
+                           raise Invalid_Request_Fields with
+                             "invalid HTTP/2 request field value";
+                     end;
+                  end if;
+                  List_Size := List_Size + Added;
+                  if Incremental then
+                     Insert (Item, Name, Value);
+                  end if;
+               end;
+            end if;
+         end;
+      end loop;
+
+      if Is_Trailers then
+         if Saw_Method or else Saw_Scheme or else Saw_Authority
+           or else Saw_Path
+         then
+            raise Invalid_Request_Fields with
+              "pseudo-field in HTTP/2 trailers";
+         end if;
+      elsif not Saw_Method then
+         raise Invalid_Request_Fields with "missing HTTP/2 request method";
+      elsif To_String (Method) = "CONNECT" then
+         if not Saw_Authority or else Saw_Scheme or else Saw_Path then
+            raise Invalid_Request_Fields with
+              "invalid HTTP/2 CONNECT pseudo-fields";
+         end if;
+      elsif not Saw_Scheme or else not Saw_Path
+        or else Length (Path) = 0
+      then
+         raise Invalid_Request_Fields with
+           "incomplete HTTP/2 request pseudo-fields";
+      end if;
+   end Decode_Request;
+
    procedure Reset (Item : in out Decoder) is
    begin
       for Table_Entry of Item.Entries loop

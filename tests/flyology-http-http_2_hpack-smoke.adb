@@ -1,4 +1,5 @@
 with Ada.Streams;
+with Ada.Strings.Unbounded;
 with Flyology.Bytes;
 
 procedure Flyology.HTTP.HTTP_2_HPACK.Smoke is
@@ -107,6 +108,32 @@ begin
       pragma Assert (Flyology.Bytes.Length (Encoded) > 0);
       Clear (Item);
       pragma Assert (Flyology.Bytes.Length (Bytes (Item)) = 0);
+   end;
+
+   declare
+      Encoder : Builder;
+      Item : Decoder;
+      Fields : Flyology.HTTP.Headers.List;
+      Method, Scheme, Authority, Path :
+        Ada.Strings.Unbounded.Unbounded_String;
+   begin
+      Add_Field (Encoder, ":method", "POST");
+      Add_Field (Encoder, ":scheme", "https");
+      Add_Field (Encoder, ":authority", "example.com");
+      Add_Field (Encoder, ":path", "/upload?part=1");
+      Add_Field (Encoder, "content-type", "application/octet-stream");
+      Decode_Request
+        (Item, Flyology.Bytes.To_Array (Bytes (Encoder)), False, Fields,
+         Method, Scheme, Authority, Path);
+      pragma Assert (Ada.Strings.Unbounded.To_String (Method) = "POST");
+      pragma Assert (Ada.Strings.Unbounded.To_String (Scheme) = "https");
+      pragma Assert
+        (Ada.Strings.Unbounded.To_String (Authority) = "example.com");
+      pragma Assert
+        (Ada.Strings.Unbounded.To_String (Path) = "/upload?part=1");
+      pragma Assert
+        (Flyology.HTTP.Headers.Value (Fields, "content-type") =
+           "application/octet-stream");
    end;
 
    Reject ("");

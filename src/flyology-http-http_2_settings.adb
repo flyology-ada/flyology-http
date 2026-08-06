@@ -23,7 +23,8 @@ package body Flyology.HTTP.HTTP_2_Settings is
    procedure Apply
      (Item    : in out State;
       Payload : Ada.Streams.Stream_Element_Array;
-      Result  : out Apply_Result)
+      Result  : out Apply_Result;
+      Peer_Is_Server : Boolean := True)
    is
       Cursor : Ada.Streams.Stream_Element_Offset := Payload'First;
    begin
@@ -42,9 +43,12 @@ package body Flyology.HTTP.HTTP_2_Settings is
                when Header_Table_Size_Id =>
                   Item.Header_Table_Size := Value;
                when Enable_Push_Id =>
-                  --  RFC 9113 prohibits SETTINGS_ENABLE_PUSH from a server.
-                  Result := Settings_Protocol_Error;
-                  return;
+                  if Peer_Is_Server or else Value > 1 then
+                     --  RFC 9113 prohibits SETTINGS_ENABLE_PUSH from a server.
+                     Result := Settings_Protocol_Error;
+                     return;
+                  end if;
+                  Item.Enable_Push := Value = 1;
                when Maximum_Streams_Id =>
                   Item.Maximum_Streams := Value;
                when Initial_Window_Size_Id =>
@@ -97,5 +101,38 @@ package body Flyology.HTTP.HTTP_2_Settings is
          18 => Stream_Element
            (Advertised_Initial_Window_Size and 16#FF#));
    end Initial_Payload;
+
+   function Server_Initial_Payload
+     (Maximum_Streams : Positive) return Ada.Streams.Stream_Element_Array
+   is
+      use Ada.Streams;
+      Streams : constant Setting_Value := Setting_Value (Maximum_Streams);
+   begin
+      return
+        (1 => 0, 2 => Maximum_Streams_Id,
+         3 => Stream_Element (Interfaces.Shift_Right (Streams, 24)),
+         4 => Stream_Element
+           (Interfaces.Shift_Right (Streams, 16) and 16#FF#),
+         5 => Stream_Element
+           (Interfaces.Shift_Right (Streams, 8) and 16#FF#),
+         6 => Stream_Element (Streams and 16#FF#),
+         7 => 0, 8 => Maximum_Header_List_Size_Id,
+         9 => 0,
+         10 => Stream_Element
+           (Interfaces.Shift_Right (Advertised_Header_List_Size, 16)),
+         11 => Stream_Element
+           (Interfaces.Shift_Right (Advertised_Header_List_Size, 8)
+              and 16#FF#),
+         12 => Stream_Element (Advertised_Header_List_Size and 16#FF#),
+         13 => 0, 14 => Initial_Window_Size_Id,
+         15 => 0,
+         16 => Stream_Element
+           (Interfaces.Shift_Right (Advertised_Initial_Window_Size, 16)),
+         17 => Stream_Element
+           (Interfaces.Shift_Right (Advertised_Initial_Window_Size, 8)
+              and 16#FF#),
+         18 => Stream_Element
+           (Advertised_Initial_Window_Size and 16#FF#));
+   end Server_Initial_Payload;
 
 end Flyology.HTTP.HTTP_2_Settings;

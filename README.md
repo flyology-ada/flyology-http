@@ -1,7 +1,8 @@
 # Flyology HTTP
 
-Flyology HTTP is an experimental HTTP/1.1 client and server library, with an
-opt-in HTTP/2 client, for [Flyology](https://flyology.org/) tasks. Its
+Flyology HTTP is an experimental HTTP/1.1 client and server library, with
+opt-in HTTP/2 client and application-server engines, for
+[Flyology](https://flyology.org/) tasks. Its
 synchronous Ada APIs work from native and lightweight tasks. The library
 includes bounded client pools, an origin-bound WebSocket client, streaming
 request and response bodies, routing, middleware, server-sent events,
@@ -49,15 +50,24 @@ prepare Flyology's version-matched runtime as described in the
 - HTTP/1.0 response compatibility and HTTP/1.1 client and server messages.
 - Opt-in HTTP/2 clients with ALPN fallback or requirement, cleartext prior
   knowledge, multiplexed streams, and bounded receive flow control.
+- HTTP/2 application servers over cleartext prior knowledge or an
+  ALPN-negotiated Flyology connection, with multiplexed stream handlers,
+  bounded request and response buffers, routing, middleware, SSE, and
+  flow-controlled streaming bodies.
 - Origin-bound HTTP pools with one monotonic exchange deadline and
   single-session WebSocket clients with monotonic operation deadlines.
 - Fixed-length and chunked bodies with bounded streaming adapters.
 - Optional routing, middleware, native offload, SSE, and WebSocket facilities.
 - Provider-neutral TLS integration through Flyology I/O.
 
-HTTP/2 currently supports retained request bodies; borrowed streaming request
+The HTTP/2 server uses the protocol-neutral `Applications.Exchange` and the
+same routes and middleware as HTTP/1.1. The raw HTTP/1.x `Server.Connection`
+API is not emulated because HTTP/2 has concurrent stream rather than
+connection-scoped response state. HTTP/2 does not currently provide h2c
+Upgrade, server push, extended CONNECT/WebSockets, or HTTP/1.1 fallback inside
+the HTTP/2 connection adapter. On the client, borrowed streaming request
 sources and `Expect: 100-continue` remain HTTP/1.1-only. The library does not
-provide an HTTP/2 server, proxying, or content decoding. It is experimental and
-does not claim production qualification.
+provide proxying or content decoding. It is experimental and does not claim
+production qualification.
 
 Flyology HTTP is dual-licensed under MIT or Apache-2.0.

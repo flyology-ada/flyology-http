@@ -129,6 +129,7 @@ http_client_pool_model
 http_client_redirects
 http_client_tls_closure
 http_client_tls_smoke
+http2_server_integration
 websocket_client_smoke
 websocket_client_tls_smoke'
 
