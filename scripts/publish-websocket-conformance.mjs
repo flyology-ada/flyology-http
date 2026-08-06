@@ -1138,14 +1138,17 @@ async function resolvePublishedLink(stageRoot, sourceRelative, reference) {
   const apiRoot = join(websiteRoot, "api");
   if (inside(apiRoot, virtualTarget)) return;
 
+  const installedAssetRoots = [
+    join(websiteRoot, "assets/scripts"),
+    join(websiteRoot, "assets/styles"),
+  ];
+  if (installedAssetRoots.some((root) => inside(root, virtualTarget))) return;
+
   let actualTarget;
   if (inside(expectedOutput, virtualTarget)) {
     actualTarget = join(stageRoot, relative(expectedOutput, virtualTarget));
   } else {
-    const brandRoot = join(websiteRoot, "assets/brand");
-    actualTarget = inside(brandRoot, virtualTarget)
-      ? join(projectRoot, "assets/brand", relative(brandRoot, virtualTarget))
-      : virtualTarget;
+    actualTarget = virtualTarget;
   }
 
   let info;
