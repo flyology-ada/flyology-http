@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Flyology HTTP is an experimental HTTP/1.1 client and application-server library for native and lightweight Ada tasks.">
+    <meta name="theme-color" content="#17213d">
+    <title>Flyology HTTP · Client and server library for Ada</title>
+    <link rel="canonical" href="https://http.flyology.org/">
+    <link rel="icon" href="assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="assets/styles/site.css">
+    <script src="assets/scripts/ada-highlight.js"></script>
+    <script src="assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="./" aria-label="Flyology HTTP home"><img src="assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology HTTP</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="./" aria-current="page">Overview</a></li>
+          <li><a href="guide/">Guide</a></li>
+          <li><a href="guide/client/">Client</a></li>
+          <li><a href="guide/server/">Server</a></li>
+          <li><a href="journal/">Journal</a></li>
+          <li><details class="nav-dropdown" data-nav-dropdown><summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary><ul class="nav-dropdown-menu"><li><a href="https://flyology.org/">Runtime</a></li><li><a href="https://postgres.flyology.org/">Postgres</a></li></ul></details></li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li>
+        </ul>
+        <div class="nav-tools"><button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button><button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button></div>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero page-shell" aria-labelledby="hero-title">
+        <div>
+          <p class="eyebrow">HTTP/1.1 for Flyology tasks</p>
+          <h1 id="hero-title">One protocol. Two deliberate directions.</h1>
+          <p class="hero-lede">Make bounded requests through an origin-bound client, or build an application server from routing, middleware, streaming, SSE, and WebSockets. The synchronous Ada API works from native and lightweight tasks.</p>
+          <div class="actions"><a class="button button-primary" href="guide/client/">Make a request <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10h11M11 6l4 4-4 4"/></svg></a><a class="button button-secondary" href="guide/server/">Build a server</a></div>
+        </div>
+        <div class="hero-visual" aria-label="Request and response pass through a bounded HTTP exchange">
+          <div class="code-window"><div class="code-titlebar"><div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div><span>one_exchange.adb</span></div><pre><code class="language-ada">Response := Client.Get
+  (HTTP, "/status",
+   Timeout =&gt; 2.0);
+
+App.Get
+  ("/status",
+   Status'Access,
+   Name =&gt; "status");</code></pre></div>
+          <div class="model-switcher"><div class="model-note model-note-light"><strong>Client</strong><span class="model-direction">origin · pool · deadline</span>Retains only explicitly bounded transport and response state.</div><div class="model-note model-note-native"><strong>Server</strong><span class="model-direction">route · exchange · response</span>Keeps connection ownership and framing in one handler.</div></div>
+        </div>
+      </section>
+      <div class="status-strip" aria-label="Flyology HTTP properties"><div class="status-inner"><div class="status-item"><strong>Synchronous Ada calls</strong>The same API works in both Flyology task lanes.</div><div class="status-item"><strong>Bounded retention</strong>Pools, bodies, mailboxes, and admission have declared limits.</div><div class="status-item"><strong>Explicit lifecycle</strong>Deadlines, cancellation, shutdown, and ownership remain visible.</div></div></div>
+      <section class="section page-shell" aria-labelledby="directions-title">
+        <div class="section-heading"><div><p class="eyebrow">Choose an entry point</p><h2 id="directions-title">Client and server share protocol policy, not lifecycle state.</h2></div><p>Both directions use Flyology I/O and preserve ordinary synchronous call semantics. Their connection and resource ownership remain separate.</p></div>
+        <div class="lane-stage">
+          <div class="lane"><div class="lane-copy"><span class="lane-number">01 / CLIENT</span><h3>Request one origin</h3><p>Configure a bounded pool, build validated metadata, stream an optional body, then consume or abandon the response deliberately.</p><a href="guide/client/">Read the client guide</a></div><div class="lane-flow" aria-label="Client request flow"><span class="flow-node">request</span><span class="flow-arrow" aria-hidden="true"></span><span class="flow-node flow-node-violet">bounded pool</span><span class="flow-arrow" aria-hidden="true"></span><span class="flow-node flow-node-teal">response</span></div></div>
+          <div class="lane"><div class="lane-copy"><span class="lane-number">02 / SERVER</span><h3>Own one exchange</h3><p>Start from the HTTP connection API, then add routing and deterministic middleware where the application needs them.</p><a href="guide/server/">Read the server guide</a></div><div class="lane-flow" aria-label="Server exchange flow"><span class="flow-node">connection</span><span class="flow-arrow" aria-hidden="true"></span><span class="flow-node flow-node-violet">exchange</span><span class="flow-arrow" aria-hidden="true"></span><span class="flow-node flow-node-teal">response</span></div></div>
+        </div>
+      </section>
+      <section class="section page-shell mechanics" aria-labelledby="boundary-title"><div class="mechanics-copy"><p class="eyebrow">Library boundary</p><h2 id="boundary-title">HTTP is built on Flyology.</h2><p>The library uses task-aware sockets, TLS, files, cancellation, buffers, channels, and structured task scopes from Flyology Runtime. It does not patch the Ada runtime itself.</p><a href="https://flyology.org/architecture/">Inspect the runtime architecture</a></div><ol class="mechanic-list"><li class="mechanic-item"><span class="mechanic-index">01</span><div><h3>Protocol framing</h3><p>HTTP/1.1 request and response state remains explicit, including chunking, trailers, upgrades, and close behavior.</p></div></li><li class="mechanic-item"><span class="mechanic-index">02</span><div><h3>Application policy</h3><p>Routing, body policy, middleware, admission, and native offload compose above the protocol connection.</p></div></li><li class="mechanic-item"><span class="mechanic-index">03</span><div><h3>Transport waits</h3><p>Flyology suspends a lightweight task without blocking its event-loop pthread and preserves the native-task path.</p></div></li></ol></section>
+      <section class="section page-shell" aria-labelledby="scope-title"><div class="section-heading"><div><p class="eyebrow">Current scope</p><h2 id="scope-title">Implemented boundaries are part of the interface.</h2></div><p>Flyology HTTP is experimental. Validate the exact compiler, host, TLS provider, workload, and operating limits for your application.</p></div><div class="decision-list"><dl><div class="decision-row"><dt>Available</dt><dd>HTTP/1.1 client and server, compatible HTTP/1.0 responses, streaming bodies, routing, middleware, SSE, WebSockets, and provider-neutral TLS.</dd></div><div class="decision-row"><dt>Not available</dt><dd>HTTP/2, proxying, content decoding, challenge-driven client authentication, or a production-qualification claim.</dd></div><div class="decision-row"><dt>Evidence</dt><dd>Deterministic protocol tests, native/lightweight lane parity, parser mutation campaigns, and published Autobahn WebSocket reports.</dd></div></dl></div></section>
+    </main>
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology HTTP is experimental. Treat limits, deadlines, and ownership as application design inputs.</span><div class="footer-links"><a href="guide/">Guide</a><a href="journal/">Journal</a><a href="reports/websocket/">WebSocket reports</a><a href="https://flyology.org/">Flyology Runtime</a></div></div></footer>
+  </body>
+</html>

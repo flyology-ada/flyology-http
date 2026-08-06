@@ -1,0 +1,28 @@
+# Flyology HTTP
+
+> Experimental HTTP/1.1 client and application-server library for native and lightweight Flyology tasks.
+
+Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an origin-bound client with bounded connection pools and streaming request/response bodies, plus a server foundation with optional routing, middleware, SSE, WebSockets, native offload, and provider-neutral TLS. It does not currently provide HTTP/2, proxying, or content decoding, and it makes no production-qualification claim.
+
+## Primary documentation
+
+- Overview: https://http.flyology.org/
+- Guide index: https://http.flyology.org/guide/
+- Client guide: https://http.flyology.org/guide/client/
+- Server guide: https://http.flyology.org/guide/server/
+- Source README: https://github.com/flyology-ada/flyology-http#readme
+- Source repository: https://github.com/flyology-ada/flyology-http
+- Flyology Runtime dependency: https://flyology.org/
+
+## Evidence and journal
+
+- Journal: https://http.flyology.org/journal/
+- WebSocket conformance reports: https://http.flyology.org/reports/websocket/
+- Corrected HTTP comparison: https://http.flyology.org/journal/2026-08-http-comparison-correction/
+
+## Package names
+
+- Root: Flyology.HTTP
+- Client: Flyology.HTTP.Client
+- Server protocol: Flyology.HTTP.Server
+- Server applications: Flyology.HTTP.Server.Applications

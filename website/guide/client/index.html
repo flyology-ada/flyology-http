@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Use Flyology's origin-bound HTTP client and build optional routed HTTP applications without giving up bounded streaming or explicit ownership.">
+    <meta name="theme-color" content="#17213d">
+    <title>Client guide · Flyology HTTP</title>
+    <link rel="canonical" href="https://http.flyology.org/guide/client/">
+    <link rel="icon" href="../../assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles/site.css">
+    <script src="../../assets/scripts/ada-highlight.js"></script>
+    <script src="../../assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="../../" aria-label="Flyology HTTP home"><img src="../../assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology HTTP</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="../../">Overview</a></li>
+          <li><a href="../" aria-current="page">Guide</a></li>
+          <li><a href="https://flyology.org/architecture/">Architecture</a></li>
+          <li><a href="../../journal/">Journal</a></li>
+          <li><a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API</a></li>
+          <li>
+            <details class="nav-dropdown" data-nav-dropdown>
+              <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
+              <ul class="nav-dropdown-menu">
+                <li><a href="https://postgres.flyology.org/">Postgres</a></li>
+              </ul>
+            </details>
+          </li>
+          <li><a href="https://github.com/flyology-ada/flyology">GitHub</a></li>
+        </ul>
+        <div class="nav-tools">
+          <button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button>
+          <button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main" class="page-shell">
+      <header class="doc-hero">
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology Runtime</a></li><li><a href="../">Guide</a></li><li aria-current="page">Client</li></ol><h1>Make bounded HTTP requests.</h1></div>
+        <p class="doc-hero-copy">Configure one origin and a bounded pool, build validated request metadata, stream an optional body, and consume or deliberately abandon the response.</p>
+      </header>
+
+      <div class="docs-layout">
+        <nav class="toc" aria-label="On this page">
+          <p class="toc-title">On this page</p>
+          <ol>
+            <li><a href="#client-setup">Configure a client</a></li>
+            <li><a href="#client-request">Build a request</a></li>
+            <li><a href="#client-bodies">Stream request bodies</a></li>
+            <li><a href="#client-response">Consume a response</a></li>
+            <li><a href="#client-redirects">Follow redirects</a></li>
+            <li><a href="#client-authentication">Add credentials</a></li>
+            <li><a href="#client-pool">Pool and shutdown</a></li>
+            <li><a href="#client-tls">HTTPS and limits</a></li>
+          </ol>
+        </nav>
+
+        <article class="prose">
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology Runtime is experimental. This guide describes implemented behavior and maintained examples; it is not a production-qualification claim. Server excerpts come from <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http_application_server.adb"><code>showcases/http_application_server.adb</code></a>, which the showcase build compile-checks. The client body adapters are exercised in both task lanes by the HTTP conformance suite.</p></aside>
+
+          <section id="client-setup"><span class="step-label">CLIENT 01</span><h2>Configure one origin and a bounded pool.</h2>
+            <p><code>Flyology.HTTP.Client</code> is origin-bound, concurrency-safe after configuration, and synchronous in both task lanes. Parse one normalized <code>http://</code> or <code>https://</code> origin, declare the maximum number of open plus connecting transports as the client discriminant, and call <code>Configure</code> once before concurrent use. Configuration retains policy but starts no DNS, socket, TLS, task, or event-loop work.</p>
+            <figure class="code-panel"><figcaption>origin and retention policy</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP;
+with Flyology.HTTP.Client;
+
+package Client renames Flyology.HTTP.Client;
+
+HTTP : aliased Client.Client (Capacity =&gt; 8);
+
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("http://127.0.0.1:8080"),
+   (Max_Idle                    =&gt; 4,
+    Idle_Timeout                =&gt; 30.0,
+    Max_Connection_Age          =&gt; 300.0,
+    Max_Requests_Per_Connection =&gt; 1_000));</code></pre></figure>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt><code>Capacity</code></dt><dd>Bounds open and currently connecting transports. Requests wait for admission rather than creating an unbounded number of sockets.</dd></div>
+                <div class="decision-row"><dt><code>Max_Idle</code></dt><dd>Caps retained reusable transports; zero disables reuse without disabling concurrent requests.</dd></div>
+                <div class="decision-row"><dt><code>Idle_Timeout</code></dt><dd>Rotates a connection after that many idle seconds. A negative value disables this age check.</dd></div>
+                <div class="decision-row"><dt><code>Max_Connection_Age</code></dt><dd>Bounds total reusable lifetime. A negative value disables the check.</dd></div>
+                <div class="decision-row"><dt><code>Max_Requests_Per_Connection</code></dt><dd>Rotates after a request count; zero disables count-based rotation.</dd></div>
+              </dl>
+            </div>
+            <p><code>Parse_Origin</code> accepts only a scheme, host, and optional port. It rejects user information, query, fragment, and nontrivial paths; omitted ports become 80 or 443. The client never mixes origins or TLS state, and there is no public connection checkout operation. Concurrent callers may share the configured client; mutable request values and body sources still require ordinary application synchronization or per-call ownership.</p>
+          </section>
+
+          <section id="client-request"><span class="step-label">CLIENT 02</span><h2>Build validated request metadata.</h2>
+            <p>A new <code>Request</code> is <code>GET /</code>. Use the constants in <code>Flyology.HTTP.Methods</code> for standard methods, or <code>To_Method</code> for a validated extension token. <code>Is_Safe</code> and <code>Is_Idempotent</code> classify standard methods conservatively; unknown extensions are unsafe and non-idempotent. The current client rejects <code>CONNECT</code> because it has no tunnel handoff, and rejects a body on <code>TRACE</code>.</p>
+            <figure class="code-panel"><figcaption>request metadata and a retained body</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP.Methods;
+
+Request : Client.Request;
+
+Client.Set_Method (Request, Flyology.HTTP.Methods.POST);
+Client.Set_Target (Request, "/objects?validate=true");
+Client.Add_Header (Request, "Content-Type", "application/octet-stream");
+Client.Add_Header (Request, "X-Trace", "first");
+Client.Add_Header (Request, "X-Trace", "second");
+Client.Set_Body (Request, Payload);</code></pre></figure>
+            <p>The target is HTTP origin-form; <code>*</code> is accepted only for <code>OPTIONS</code>. Absolute-form, authority-form, fragments, spaces, controls, non-ASCII bytes, and targets over 8 KiB are rejected. Repeated headers preserve insertion order. <code>Add_Header</code> rejects malformed fields and client-controlled framing, <code>Host</code>, connection, upgrade, and <code>Expect</code> fields. <code>Set_Body</code> accepts a contiguous byte array or a <code>String</code> with a one-character-to-one-octet mapping and retains owned bytes in the request.</p>
+            <p><code>Set_Expect_Continue</code> explicitly generates <code>Expect: 100-continue</code> for a nonempty retained or streamed body. The client sends the head first and waits up to the configured continue interval. A <code>100 Continue</code> sends the body, a final response suppresses it, and an interval with no response byte falls back to sending without restarting the whole deadline. A <code>417 Expectation Failed</code> received before body transmission consumes the single automatic-retry budget and is retried on a fresh transport without <code>Expect</code>. If a partial response head has arrived, the client finishes it rather than interleaving request bytes.</p>
+            <p>Call the ordinary <code>Execute</code> overload for an empty or retained body. The result is available after the final response head; the response body remains a leased stream:</p>
+            <figure class="code-panel"><figcaption>execute under one deadline</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Reply : Client.Response :=
+  Client.Execute
+    (HTTP, Request, Timeout =&gt; 5.0, Token =&gt; Cancellation'Access);</code></pre></figure>
+            <p>The monotonic timeout begins before pool admission and continues through DNS, every address attempt, connection and TLS setup, request transmission, final response-head parsing, and later response-body reads. Negative is unlimited and zero is immediate. The token passed to <code>Execute</code> is borrowed only through the final response head.</p>
+          </section>
+
+          <section id="client-bodies"><span class="step-label">CLIENT 03</span><h2>Choose a bounded request-body source.</h2>
+            <p>For a small retained body, call <code>Set_Body</code>. For an upload that should not be retained as a second complete value, pass a limited <code>Request_Body_Source</code> to the streaming <code>Execute</code> overload.</p>
+            <p>The source owns its framing declaration. <code>Execute</code> queries <code>Declared_Length</code> once before the first read: a known length emits <code>Content-Length</code>, while <code>Unknown_Length</code> selects HTTP/1.1 chunked transfer coding. The caller does not repeat the length at the <code>Execute</code> call site. A positive known-length source that ends early, produces too many bytes, or reaches the declared count without setting <code>Finished</code> raises <code>Request_Body_Error</code>; a source that returns neither bytes nor <code>Finished</code> is rejected for making no progress.</p>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt><code>Array_Source</code></dt><dd>Borrows a <code>Stream_Element_Array</code>, including arrays with nondefault bounds, and declares its exact length.</dd></div>
+                <div class="decision-row"><dt><code>Byte_String_Source</code></dt><dd>Borrows an Ada <code>String</code> using the same one-character-to-one-octet mapping as <code>Set_Body</code>. It does not perform text encoding.</dd></div>
+                <div class="decision-row"><dt><code>Bytes_Source</code></dt><dd>Borrows <code>Flyology.Bytes.Unbounded_Bytes</code> without constructing another complete payload.</dd></div>
+                <div class="decision-row"><dt><code>Buffer_Source</code></dt><dd>Borrows one acquired <code>Unique_Buffer</code>. The caller keeps its ownership token, and the adapter never releases it.</dd></div>
+                <div class="decision-row"><dt><code>Files.Range_Source</code></dt><dd>Streams an exact positional range from an open descriptor without changing its file position or closing it.</dd></div>
+                <div class="decision-row"><dt><code>Channels.Channel_Source</code></dt><dd>Consumes a bounded unique-buffer channel for generated bodies while preserving producer backpressure.</dd></div>
+              </dl>
+            </div>
+            <figure class="code-panel"><figcaption>borrow an in-memory payload</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Ada.Streams;
+with Flyology.HTTP.Client;
+with Flyology.HTTP.Client.Request_Bodies;
+
+package Client renames Flyology.HTTP.Client;
+package Bodies renames Flyology.HTTP.Client.Request_Bodies;
+
+Payload : aliased constant Ada.Streams.Stream_Element_Array := ...;
+Source  : Bodies.Array_Source (Payload'Access);
+Reply   : Client.Response :=
+  Client.Execute (HTTP, Request, Source, Timeout =&gt; 30.0);</code></pre></figure>
+            <p>Memory adapters borrow rather than copy. Their payload must outlive the source and remain unchanged until <code>Execute</code> returns; Ada access-discriminant accessibility rejects a source that would escape a local payload. Memory and file adapters implement <code>Rewindable_Request_Body_Source</code>. For an idempotent request on a stale reused transport, the client may discard that transport, call <code>Rewind</code>, and make one new attempt if no response byte arrived. A completed source otherwise stays exhausted; call <code>Rewind</code> explicitly before an application-directed later execution.</p>
+
+            <h3>Stream one file range</h3>
+            <figure class="code-panel"><figcaption>positional file upload</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP.Client.Request_Bodies.Files;
+with Flyology.IO.Files;
+
+package Body_Files renames
+  Flyology.HTTP.Client.Request_Bodies.Files;
+package Files renames Flyology.IO.Files;
+
+File   : aliased Files.File_Descriptor := Files.Open ("payload.bin");
+Source : Body_Files.Range_Source
+  (File'Access, Offset =&gt; 4_096, Count =&gt; 1_048_576);
+Reply  : Client.Response := Client.Execute (HTTP, Request, Source);
+
+Files.Close (File);</code></pre></figure>
+            <p>The descriptor remains application-owned and must stay open through <code>Execute</code>. Reads are positional and receive the remaining whole-exchange timeout and cancellation token. A lightweight timeout waits until kernel cancellation has released the staging buffer. Native <code>pread</code> cannot be interrupted after it enters the kernel, so timeout delivery may wait for that syscall to return. Reaching end of file before the configured range completes is a declared-length error.</p>
+
+            <h3>Generate under channel backpressure</h3>
+            <figure class="code-panel"><figcaption>unknown-length generated body</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.Buffers;
+with Flyology.Buffers.Channels;
+with Flyology.HTTP.Client.Request_Bodies.Channels;
+
+Pool  : aliased Flyology.Buffers.Pool
+  (Block_Size =&gt; 16 * 1_024, Capacity =&gt; 4);
+Queue : aliased Flyology.Buffers.Channels.Channel
+  (Owner =&gt; Pool'Access, Capacity =&gt; 3);
+Source : Flyology.HTTP.Client.Request_Bodies.Channels.Channel_Source
+  (Pool'Access, Queue'Access);
+
+--  A producer acquires buffers from Pool and sends them with Send_Move.
+--  It closes Queue after the final buffer.
+Reply : Client.Response := Client.Execute (HTTP, Request, Source);</code></pre></figure>
+            <p>A channel source defaults to <code>Unknown_Length</code>; close the channel after the final buffer so the adapter can emit the terminating chunk. If the total is known beforehand, call <code>Set_Declared_Length (Source, Client.Known_Length (Total))</code> before <code>Execute</code>. The length cannot change after reading starts, and producers must send exactly that many bytes—the client does not drain surplus queued buffers after the declared count. The channel and every sent buffer must belong to the supplied pool. The adapter holds at most one received buffer, copies bounded pieces into the transport staging array, and releases that buffer when consumed. Channel waits observe the exchange deadline and cancellation token without polling. Because received buffers cannot be reconstructed after release, this adapter is one-shot and never opts into streamed retry.</p>
+            <h3>Finish a chunked upload with request trailers</h3>
+            <p><code>Add_Trailer</code> retains a trailer name and value in the request. The client emits one <code>Trailer</code> declaration in the request head and the physical fields after the terminating chunk. Request trailers are therefore accepted only with an unknown-length streaming source; retained and known-length bodies are rejected. Known fields that could change framing, routing, authentication, request semantics, or payload interpretation are prohibited, and repeated names are rejected because arbitrary extension fields are not necessarily list-valued. The caller must use a field whose definition permits trailers. Trailer values are fixed before <code>Execute</code>; compute a digest before the call when it must be carried as a trailer.</p>
+            <figure class="code-panel"><figcaption>declare retained request trailers</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Client.Add_Trailer (Request, "X-Checksum", Checksum);
+Client.Add_Trailer (Request, "X-Upload-Result", "complete");
+declare
+   Reply : Client.Response :=
+     Client.Execute (HTTP, Request, Unknown_Length_Source);
+begin
+   null;
+end;</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>Do not adapt an arbitrary <code>Ada.Streams.Root_Stream_Type</code> on a lightweight task.</strong> Root streams have no readiness, deadline, or cancellation contract and may block an event-loop pthread. Implement <code>Request_Body_Source</code> directly only when its <code>Read</code> can honor the supplied remaining timeout and token, or bridge a generator through the bounded channel adapter.</p></aside>
+            <p>See the <a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API reference</a> for the complete contracts of <code>Flyology.HTTP.Client.Request_Bodies</code> and its <code>Files</code> and <code>Channels</code> children.</p>
+          </section>
+
+          <section id="client-response"><span class="step-label">CLIENT 04</span><h2>Consume or deliberately abandon the response.</h2>
+            <p><code>Response</code> is limited and owns one exchange lease until its body framing completes. Inspect the final status with <code>Status</code>, its HTTP/1.x text with <code>Reason_Phrase</code>, and the opaque negotiated protocol with <code>Negotiated_Protocol</code>. Header names and values retain wire order and repeated occurrences: iterate with <code>Header_Count</code>, <code>Header_Name</code>, and <code>Header_Value</code>, or retrieve a named occurrence with <code>Header</code>.</p>
+            <p>Use <code>Read_All</code> when retaining a bounded complete body is appropriate. <code>Maximum</code> is an application limit on decoded representation bytes, not a hint; exceeding it raises <code>Response_Too_Large</code>.</p>
+            <figure class="code-panel"><figcaption>bounded complete response</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Reply : Client.Response := Client.Execute (HTTP, Request, Timeout =&gt; 5.0);
+Body  : Flyology.Bytes.Unbounded_Bytes :=
+  Client.Read_All (Reply, Maximum =&gt; 64 * 1_024);
+
+pragma Assert (Client.Status (Reply) = 200);
+pragma Assert (Client.Body_Complete (Reply));</code></pre></figure>
+            <p>For bounded streaming, repeatedly call <code>Read_Body</code>. It removes fixed-length or chunked framing and reports <code>Finished</code> only when the complete message is safe. The original <code>Execute</code> deadline remains authoritative; it is never restarted by a body read. A token passed to <code>Read_Body</code> or <code>Read_All</code> is borrowed only for that call, and the response never retains it.</p>
+            <figure class="code-panel"><figcaption>stream decoded response bytes</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">loop
+   Client.Read_Body
+     (Reply, Buffer, Last, Finished, Token =&gt; Cancellation'Access);
+   if Last &gt;= Buffer'First then
+      Consume (Buffer (Buffer'First .. Last));
+   end if;
+   exit when Finished;
+end loop;</code></pre></figure>
+            <p>Completing a fixed-length, chunked, no-body, or valid close-delimited response releases or closes the lease as required. Chunked trailers become available only after completion through <code>Trailer_Count</code>, <code>Trailer_Name</code>, <code>Trailer_Value</code>, and <code>Trailer</code>. Finalizing an incomplete response does not drain unknown application data: it closes that transport so partial framing cannot contaminate a later exchange. Ada accessibility also rejects a response that would outlive its aliased client.</p>
+          </section>
+
+          <section id="client-redirects"><span class="step-label">CLIENT 05</span><h2>Opt into bounded same-origin redirects.</h2>
+            <p>Redirects are returned by default. Call <code>Set_Redirects (Request, Default_Same_Origin_Redirects)</code>, or provide a <code>Redirect_Configuration</code> with an explicit <code>Maximum_Hops</code>, when automatic following is appropriate. The policy recognizes 301, 302, 303, 307, and 308. Relative, query-only, scheme-relative, and absolute HTTP(S) <code>Location</code> values are resolved with fragment removal and dot-segment normalization.</p>
+            <figure class="code-panel"><figcaption>follow at most three same-origin hops</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Client.Set_Redirects
+  (Request,
+   (Mode          =&gt; Client.Follow_Same_Origin,
+    Maximum_Hops =&gt; 3));
+
+declare
+   Reply : Client.Response :=
+     Client.Execute (HTTP, Request, Timeout =&gt; 5.0);
+begin
+   null;
+end;</code></pre></figure>
+            <p>The origin-bound client never follows a redirect to a different scheme, host, or port; it returns that response unchanged, so credentials are not forwarded to another authority. For 301 and 302, POST becomes GET. A 303 becomes GET except that HEAD remains HEAD. A 307 or 308 preserves the method and body. Method rewriting removes the request body, trailers, <code>Expect</code>, and content-specific fields.</p>
+            <p>A retained body is directly replayable. A streamed body on a method-preserving redirect must implement <code>Rewindable_Request_Body_Source</code>; a one-shot source raises <code>Redirect_Error</code>. The same exception reports invalid or duplicate locations, cycles, and exhausted hop limits. Intermediate bodies are drained before their transport is reused, and one monotonic <code>Execute</code> deadline covers the complete chain.</p>
+          </section>
+
+          <section id="client-authentication"><span class="step-label">CLIENT 06</span><h2>Add explicit Basic or Bearer credentials.</h2>
+            <p><code>Flyology.HTTP.Client.Authentication</code> contains preemptive request helpers. <code>Set_Bearer</code> validates the RFC 6750 token form. <code>Set_Basic</code> rejects controls and a colon in the user-id, joins <code>user-id ":" password</code>, and applies Base64 as specified by RFC 7617. Its string inputs are already-encoded octets; supply normalized UTF-8 bytes when honoring a UTF-8 challenge.</p>
+            <figure class="code-panel"><figcaption>replace request credentials</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP.Client.Authentication;
+
+package Client_Auth renames Flyology.HTTP.Client.Authentication;
+
+Client_Auth.Set_Bearer (Request, Access_Token);
+--  Or: Client_Auth.Set_Basic (Request, User_Id, Password);
+--  Later: Client_Auth.Clear (Request);</code></pre></figure>
+            <p>Each setter atomically replaces every existing <code>Authorization</code> field; <code>Clear</code> removes them while preserving all other request fields and their order. The request retains the generated authorization value. These helpers do not discover protection spaces, parse challenges, refresh tokens, retry 401 responses, or prevent application code from logging secrets. Custom schemes remain available through <code>Add_Header</code>.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>Send Basic and Bearer credentials only over authenticated TLS or equivalent protection.</strong> Basic encodes rather than encrypts the password, and possession of a Bearer token grants its authority. Same-origin redirects retain the field. A cross-origin redirect is returned without contacting the other authority, so the credential is not forwarded. See <a href="https://www.rfc-editor.org/rfc/rfc7617.html#section-2">RFC 7617 section 2</a> and <a href="https://www.rfc-editor.org/rfc/rfc6750.html#section-2.1">RFC 6750 section 2.1</a>.</p></aside>
+          </section>
+
+          <section id="client-pool"><span class="step-label">CLIENT 07</span><h2>Observe and stop the pool explicitly.</h2>
+            <p><code>Execute</code> waits for an idle transport or a free creation slot inside the request deadline. An idempotent request may be retried once when a reused transport fails before any response byte arrives; the retry stays inside the same deadline. Empty and retained bodies can be replayed directly. A streamed body is eligible only through <code>Rewindable_Request_Body_Source</code>, whose nonblocking <code>Rewind</code> must restore exactly the same bytes and declared length. Non-idempotent and one-shot streamed requests are never replayed automatically.</p>
+            <p><code>Diagnostics</code> returns one coherent snapshot. Current counts distinguish pending transports, active exchanges, reusable and closing transports, and admission waiters. Cumulative counts report creations, reuses, closes, stale retries, and admission timeouts. Exchange and transport counts are intentionally separate so the vocabulary can survive a later multiplexed protocol.</p>
+            <figure class="code-panel"><figcaption>maintenance and terminal shutdown</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Snapshot : constant Client.Client_Diagnostics := Client.Diagnostics (HTTP);
+
+Client.Prune_Idle (HTTP);       -- active responses are unaffected
+Client.Shutdown (HTTP, 5.0);    -- reject admission and drain leases</code></pre></figure>
+            <p><code>Prune_Idle</code> closes currently idle connections without disturbing active leases. <code>Shutdown</code> is terminal: it rejects new admission, interrupts admitted transport operations, closes idle transports, and waits for connecting slots and response leases to drain. A shutdown timeout leaves the client stopping and may be retried. Finalization also requests shutdown, but an application should call <code>Shutdown</code> where a bounded, observable drain matters.</p>
+          </section>
+
+          <section id="client-tls"><span class="step-label">CLIENT 08</span><h2>Configure authenticated HTTPS and handle explicit limits.</h2>
+            <p>An HTTPS origin requires the <code>Configure</code> overload that receives an initialized provider-neutral TLS backend. The client retains independently owned provider state, so the original backend object may be finalized after configuration. With the optional OpenSSL provider, normal client initialization performs certificate-chain and hostname verification; the maintained command-line client deliberately exposes no insecure bypass.</p>
+            <figure class="code-panel"><figcaption>authenticated OpenSSL client</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Flyology.IO.TLS.OpenSSL.Initialize_Client (Backend);
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("https://example.com"),
+   Backend'Access,
+   Client.Default_Pool_Configuration);</code></pre></figure>
+            <p>Callers can distinguish pool shutdown (<code>Client_Closed</code>), resolution or address exhaustion (<code>Connection_Error</code>), source-contract failure (<code>Request_Body_Error</code>), oversized retained response data (<code>Response_Too_Large</code>), malformed protocol input (<code>Protocol_Error</code>), timeout, cancellation, established I/O failure, socket failure, and TLS failure. Source-defined exceptions propagate after the leased transport is discarded.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The current transport engine sends HTTP/1.1 requests.</strong> It accepts compatible HTTP/1.0 responses, fixed-length, chunked, no-body, and close-delimited response framing. Content decoding, proxying, challenge-driven authentication, and HTTP/2 are not yet implemented. <code>Protocol</code> remains opaque so later engines can grow without turning application code into an exhaustive case statement.</p></aside>
+            <p>The same API and outcome contracts are tested from native and lightweight tasks. Run <code>./scripts/http-client-conformance.sh</code> for deterministic request, response, parser, pooling, lifetime, cancellation, timeout, TLS, adapter, and lane-parity coverage. Address cases cover IPv4 and bracketed IPv6 literals, default and explicit ports, IPv6-to-IPv4 resolution fallback, and all-address exhaustion under one deadline. A test-only one-byte receive cap forces every response and chunk/trailer delimiter across distinct client receive calls; TLS cases distinguish an orderly <code>close_notify</code> from transport truncation while streaming fixed-length, chunked, and close-delimited bodies. The parser campaign includes 42 named RFC 9110/9112 response seeds plus 10,000 fixed-seed random or corpus-derived mutated inputs through the production parser oracle. For interactive use, <code>./showcases/run_http_client_cli.sh -v https://example.com/</code> builds and runs the maintained curl-like example with complete outbound and inbound headers on standard error.</p>
+          </section>
+
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology Runtime is experimental. Validate the exact host, compiler release, and operating constraints for your application.</span><div class="footer-links"><a href="../">Guide</a><a href="https://flyology.org/guide/timers/">Timers</a><a href="https://flyology.org/architecture/">Architecture</a><a href="../../journal/">Journal</a><a href="https://github.com/flyology-ada/flyology-http/tree/main/src">API reference</a></div></div></footer>
+  </body>
+</html>
