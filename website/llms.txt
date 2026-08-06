@@ -2,7 +2,7 @@
 
 > Experimental HTTP/1.1 client and application-server library for native and lightweight Flyology tasks.
 
-Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an origin-bound client with bounded connection pools and streaming request/response bodies, plus a server foundation with optional routing, middleware, SSE, WebSockets, native offload, and provider-neutral TLS. It does not currently provide HTTP/2, proxying, or content decoding, and it makes no production-qualification claim.
+Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an origin-bound HTTP client with bounded connection pools and streaming request/response bodies, a single-session origin-bound WebSocket client, and a server foundation with optional routing, middleware, SSE, WebSockets, native offload, and provider-neutral TLS. It does not currently provide HTTP/2, proxying, or content decoding, and it makes no production-qualification claim.
 
 ## Primary documentation
 

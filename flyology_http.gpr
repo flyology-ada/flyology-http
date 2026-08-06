@@ -33,6 +33,7 @@ project Flyology_HTTP is
          for Source_Files use
            ("flyology-http.ads",
             "flyology-http-client.ads",
+            "flyology-http-websocket_client.ads",
             "flyology-http-client-authentication.ads",
             "flyology-http-client-request_bodies.ads",
             "flyology-http-client-request_bodies-channels.ads",

@@ -19,6 +19,7 @@ cd "$http_root/proof"
   flyology-rate_limit_policy.adb \
   flyology-http_chunk_encoding.adb \
   flyology-websocket_policy.adb \
+  flyology-websocket_client_policy.adb \
   flyology-http-decoded_path_policy.adb \
   flyology-http-expect_policy.adb \
   flyology-http-client_policy.adb \

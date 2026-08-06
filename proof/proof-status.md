@@ -52,6 +52,19 @@ exact arm/cancel/clear transitions, root-minimum selection, and complete unique
 extraction of every id armed and due at the supplied monotonic-clock sample.
 Task suspension and clock sampling remain outside SPARK and require behavioral
 lane-parity coverage.
+The WebSocket client proof establishes the scalar decisions consumed by the
+production receive and send framing core: canonical short, 16-bit, and 64-bit
+length forms; rejection of reserved bits, masked server frames, unsupported
+opcodes, invalid control framing, noncanonical lengths, and frames above the
+16 MiB bound; valid fragmentation and message-capacity transitions; and the
+accepted close-code set, including registered codes 1012 through 1014. The
+fragmentation classifier has mutually exclusive and complete contract cases
+that determine its exact result for every permitted input. It does not prove
+HTTP upgrade parsing, SHA-1, Base64, operating-system entropy, masking byte
+application, UTF-8 validation,
+socket or TLS I/O, deadline delivery, or the coupling between parsed bytes and
+classifier inputs. Native/lightweight integration and boundary tests cover
+those surrounding behaviors.
 The HTTP client upload-policy review adds a production-consumed SPARK boundary
 for request/source compatibility, exact known-length pull completion,
 informational-response accounting, stale-connection replay eligibility, and
@@ -146,6 +159,12 @@ wire, adapter, ownership, and retry tests cover that integration boundary.
   - [x] `Flyology.HTTP.Client_Policy.Next_Informational_Count`
   - [x] `Flyology.HTTP.Client_Policy.Classify_Expectation_Response`
   - [x] Whole `Flyology.HTTP.Client_Policy` unit widening
+- [x] Production WebSocket client framing policy (level 1, mode all)
+  - [x] `Flyology.WebSocket_Client_Policy.Form_For`
+  - [x] `Flyology.WebSocket_Client_Policy.Validate_Header`
+  - [x] `Flyology.WebSocket_Client_Policy.Classify_Data`
+  - [x] `Flyology.WebSocket_Client_Policy.Valid_Close_Code`
+  - [x] Whole `Flyology.WebSocket_Client_Policy` unit widening
 
 ## Reviewed
 <!-- Before marking an item complete here, review it following the Review
@@ -182,6 +201,7 @@ wire, adapter, ownership, and retry tests cover that integration boundary.
 - [x] `Flyology.Timer_Set_Policy.Earliest_Deadline` (level 1, mode all)
 - [x] `Flyology.Timer_Set_Policy.Collect_Due` (level 1, mode all)
 - [x] HTTP client upload-policy proof and integration boundary
+- [x] WebSocket client framing-policy proof and integration boundary
 
 ## In Progress
 <!-- A subagent executes the Tactical Loop for the subprogram below.

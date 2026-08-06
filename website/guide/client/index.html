@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Use Flyology's origin-bound HTTP client and build optional routed HTTP applications without giving up bounded streaming or explicit ownership.">
+    <meta name="description" content="Use Flyology's origin-bound HTTP and WebSocket clients without giving up bounded streaming or explicit ownership.">
     <meta name="theme-color" content="#17213d">
     <title>Client guide · Flyology HTTP</title>
     <link rel="canonical" href="https://http.flyology.org/guide/client/">
@@ -42,8 +42,8 @@
 
     <main id="main" class="page-shell">
       <header class="doc-hero">
-        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Client</li></ol><h1>Make bounded HTTP requests.</h1></div>
-        <p class="doc-hero-copy">Configure one origin and a bounded pool, build validated request metadata, stream an optional body, and consume or deliberately abandon the response.</p>
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Client</li></ol><h1>Make bounded HTTP requests and WebSocket sessions.</h1></div>
+        <p class="doc-hero-copy">Configure one origin, keep HTTP exchange leases explicit, or own one bounded WebSocket session through its close handshake.</p>
       </header>
 
       <div class="docs-layout">
@@ -58,6 +58,7 @@
             <li><a href="#client-authentication">Add credentials</a></li>
             <li><a href="#client-pool">Pool and shutdown</a></li>
             <li><a href="#client-tls">HTTPS and limits</a></li>
+            <li><a href="#websocket-client">WebSocket client</a></li>
           </ol>
         </nav>
 
@@ -257,6 +258,42 @@ Client.Configure
             <p>Callers can distinguish pool shutdown (<code>Client_Closed</code>), resolution or address exhaustion (<code>Connection_Error</code>), source-contract failure (<code>Request_Body_Error</code>), oversized retained response data (<code>Response_Too_Large</code>), malformed protocol input (<code>Protocol_Error</code>), timeout, cancellation, established I/O failure, socket failure, and TLS failure. Source-defined exceptions propagate after the leased transport is discarded.</p>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The current transport engine sends HTTP/1.1 requests.</strong> It accepts compatible HTTP/1.0 responses, fixed-length, chunked, no-body, and close-delimited response framing. Content decoding, proxying, challenge-driven authentication, and HTTP/2 are not yet implemented. <code>Protocol</code> remains opaque so later engines can grow without turning application code into an exhaustive case statement.</p></aside>
             <p>The same API and outcome contracts are tested from native and lightweight tasks. Run <code>./scripts/http-client-conformance.sh</code> for deterministic request, response, parser, pooling, lifetime, cancellation, timeout, TLS, adapter, and lane-parity coverage. Address cases cover IPv4 and bracketed IPv6 literals, default and explicit ports, IPv6-to-IPv4 resolution fallback, and all-address exhaustion under one deadline. A test-only one-byte receive cap forces every response and chunk/trailer delimiter across distinct client receive calls; TLS cases distinguish an orderly <code>close_notify</code> from transport truncation while streaming fixed-length, chunked, and close-delimited bodies. The parser campaign includes 42 named RFC 9110/9112 response seeds plus 10,000 fixed-seed random or corpus-derived mutated inputs through the production parser oracle. For interactive use, <code>./showcases/run_http_client_cli.sh -v https://example.com/</code> builds and runs the maintained curl-like example with complete outbound and inbound headers on standard error.</p>
+          </section>
+
+          <section id="websocket-client"><span class="step-label">CLIENT 09</span><h2>Own one bounded WebSocket session.</h2>
+            <p><code>Flyology.HTTP.WebSocket_Client</code> is a separate origin-bound lifecycle rather than an HTTP pool upgrade escape hatch. Configure one <code>http://</code> origin for <code>ws</code>, or retain a TLS provider with an <code>https://</code> origin for authenticated <code>wss</code>. A client owns at most one transport, may reconnect after a completed or aborted session, and must have only one caller operating on it at a time.</p>
+            <figure class="code-panel"><figcaption>connect, exchange, and close</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.Bytes;
+with Flyology.HTTP;
+with Flyology.HTTP.WebSocket_Client;
+
+package WebSockets renames Flyology.HTTP.WebSocket_Client;
+
+Socket  : WebSockets.Client;
+Request : WebSockets.Request;
+
+WebSockets.Configure
+  (Socket, Flyology.HTTP.Parse_Origin ("https://example.com"),
+   Backend'Access);
+WebSockets.Set_Target (Request, "/events?topic=builds");
+WebSockets.Set_Origin (Request, "https://app.example");
+WebSockets.Offer_Protocol (Request, "events.v1");
+WebSockets.Add_Header (Request, "Authorization", "Bearer " & Token);
+WebSockets.Connect (Socket, Request, Timeout =&gt; 5.0);
+
+WebSockets.Send (Socket, "ready", Timeout =&gt; 5.0);
+WebSockets.Receive
+  (Socket, Kind, Data, Closed,
+   Max_Message =&gt; 256 * 1_024, Timeout =&gt; 30.0);
+
+if not Closed then
+   WebSockets.Close
+     (Socket, Code =&gt; 1_000, Reason =&gt; "complete", Timeout =&gt; 5.0);
+end if;</code></pre></figure>
+            <p>The handshake generates <code>Host</code>, upgrade fields, version 13, and a fresh operating-system-random key. <code>Add_Header</code> retains end-to-end fields such as credentials and cookies but rejects fields owned by the protocol engine. A request retains at most 16 subprotocol tokens, 256 bytes per token, and four KiB for the serialized offer; the complete serialized request head is capped at 48 KiB before a transport is opened. A present server selection must be one nonempty offered token. The response must be HTTP/1.1 status 101 with the exact accept digest, well-formed upgrade token lists, no message-body framing, no unoffered extension, and no oversized or malformed retained header block. Metadata access becomes available only after all upgrade validation succeeds. Redirects, proxying, authentication challenges, and extension negotiation are not followed implicitly.</p>
+            <p>Every client frame is masked with a fresh operating-system-random key. <code>Send</code> accepts a final text or binary message up to 16 MiB, rejects an oversized string before constructing its byte-array representation, and validates text before writing. <code>Receive</code> accepts only unmasked server frames, reassembles fragments under the caller's <code>Max_Message</code> bound, validates UTF-8 after text reassembly, answers ping, ignores pong, and limits control-frame churn within one receive. The default message bound is one MiB and the absolute supported bound is 16 MiB. Compression is not currently offered.</p>
+            <p>One monotonic deadline covers DNS, every address attempt, optional TLS, and the complete upgrade. Send, receive, and close each use their own whole-operation deadline. Timeout or cancellation during a frame or message terminates the session so partially consumed framing cannot be resumed as a different value. <code>Close</code> sends a validated masked status, discards complete data messages that crossed it before the peer observed the close, and waits for the peer close. Peer-initiated close is acknowledged automatically and retained through <code>Close_Code</code> and <code>Close_Reason</code>. <code>Abort_Connection</code> is the explicit no-handshake escape for terminal application cleanup.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>A session is intentionally single-owner.</strong> Do not call <code>Send</code>, <code>Receive</code>, <code>Close</code>, or <code>Abort_Connection</code> concurrently on the same client. The current Flyology connection lease serializes transport operations; this API does not claim independent full-duplex callers, permessage-deflate, HTTP/2 extended CONNECT, or production qualification.</p></aside>
+            <p>The behavioral suite runs the same public client from native and lightweight tasks against the production server engine. It checks Origin and subprotocol negotiation, response metadata, request and message bounds, masking, fragmented text with interleaved ping/pong, text and binary exchange, malformed server masking, negative upgrade status/digest/protocol/extension/header cases, registered close codes, crossed data during close, saturated-send deadlines, operation cancellation, partial-frame timeouts, both closing directions, and reconnection. A separate OpenSSL fixture checks authenticated WSS exchange and bidirectional TLS close notification in both task lanes. The SPARK suite proves exact fragmentation/message-bound actions as well as the scalar policy for canonical frame lengths, server masking and opcode validation, and close-code validity; socket, TLS, entropy, hashing, parsing, UTF-8, and byte I/O remain behavioral verification boundaries.</p>
           </section>
 
         </article>

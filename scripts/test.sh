@@ -99,6 +99,7 @@ fi
 ordinary_mains='flyology-rate_limit_policy_smoke
 flyology-http_chunk_encoding-smoke
 flyology-websocket_policy-smoke
+flyology-websocket_client_policy-smoke
 flyology-http-decoded_path_policy-smoke
 flyology-http-expect_policy-smoke
 flyology-http-client_policy-smoke
@@ -120,7 +121,9 @@ http_client_parser_randomized
 http_client_pool_model
 http_client_redirects
 http_client_tls_closure
-http_client_tls_smoke'
+http_client_tls_smoke
+websocket_client_smoke
+websocket_client_tls_smoke'
 
 connection_hook_mains='http_client_pool_races
 http_client_deadline_matrix
@@ -138,7 +141,8 @@ unset FLYOLOGY_TLS_TEST_HOOKS
 for main in $ordinary_mains; do
   printf '%s\n' "flyology_http test: BEGIN $main"
   case "$main" in
-    tls_smoke|http_client_tls_smoke|http_client_tls_closure)
+    tls_smoke|http_client_tls_smoke|http_client_tls_closure|\
+      websocket_client_tls_smoke)
       timeout=120
       ;;
     http_smoke)
