@@ -21,3 +21,17 @@
 /showcases/http-comparison/servers/*/config/
 /showcases/http-comparison/servers/*/obj/
 /showcases/http-comparison/servers/rust/target/
+/flyology_iri/alire/
+/flyology_iri/config/
+/flyology_iri/lib/
+/flyology_iri/obj/
+/flyology_iri/docs/api/
+/flyology_iri/tests/alire/
+/flyology_iri/tests/bin/
+/flyology_iri/tests/config/
+/flyology_iri/tests/obj/
+/flyology_iri/tests/__pycache__/
+/flyology_iri/benchmarks/alire/
+/flyology_iri/benchmarks/bin/
+/flyology_iri/benchmarks/config/
+/flyology_iri/benchmarks/obj/

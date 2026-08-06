@@ -100,7 +100,7 @@ Client.Configure
     Idle_Timeout                =&gt; 30.0,
     Max_Connection_Age          =&gt; 300.0,
     Max_Requests_Per_Connection =&gt; 0));</code></pre></figure>
-            <p>Replace <code>Negotiate_HTTP_2</code> with <code>Require_HTTP_2</code> to reject fallback. Supplying a negotiation mode for cleartext HTTP, or prior knowledge for HTTPS, is rejected during configuration.</p>
+            <p>Replace <code>Negotiate_HTTP_2</code> with <code>Require_HTTP_2</code> to reject fallback. Supplying a negotiation mode for cleartext HTTP, or prior knowledge for HTTPS, is rejected during configuration. If configuration begins with a complete endpoint URL, the <a href="../iri/#http-client">URI, IRI, and URL guide</a> shows how to derive the normalized origin passed to <code>Parse_Origin</code>.</p>
           </section>
 
           <section id="execute"><span class="step-label">HTTP/2 03</span><h2>Use the ordinary client API.</h2>
@@ -120,6 +120,7 @@ begin
 end;
 
 Client.Shutdown (HTTP, Timeout =&gt; 5.0);</code></pre></figure>
+            <p>The value passed to <code>Set_Target</code> is still HTTP origin-form. For a complete URL, derive the normalized path and optional query with <a href="../iri/#http-client"><code>Flyology_IRI.Target</code></a>; URL fragments are omitted.</p>
             <p>Concurrent callers may share the configured client. On HTTP/2, up to 32 active streams can share one transport, subject to the peer's advertised stream limit. Pool <code>Capacity</code> still bounds open plus connecting transports, while each transport can carry several exchanges. Admission waits, timeouts, cancellation, GOAWAY handling, safe retries, and explicit shutdown retain their normal client semantics.</p>
             <p>A response continues to own one exchange lease. Reading it to completion releases its stream for reuse. Finalizing an incomplete HTTP/2 response resets that stream instead of discarding unrelated streams on the same connection.</p>
           </section>
@@ -132,6 +133,7 @@ Client.Configure
    Flyology.HTTP.Parse_Origin ("http://127.0.0.1:8080"),
    Client.HTTP_2_Prior_Knowledge);
 </code></pre></figure>
+            <p>A complete cleartext endpoint can be normalized and separated into the <code>Parse_Origin</code> value and request target with the <a href="../iri/#http-client">URI, IRI, and URL guide</a>; that parsing step does not make prior knowledge secure or discover the peer's protocol.</p>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>Prior knowledge provides no transport authentication or confidentiality.</strong> Use it for a controlled cleartext hop whose protocol is known in advance. It does not probe for HTTP/1.1 and cannot fall back after sending the HTTP/2 preface.</p></aside>
           </section>
 

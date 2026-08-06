@@ -80,6 +80,7 @@ compile_and_link () {
 }
 
 cd "$http_root"
+"$http_root/flyology_iri/scripts/test.sh"
 "$http_root/scripts/prepare-test-tls.sh"
 if [ -z "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
   "$alr" build

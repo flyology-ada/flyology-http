@@ -295,7 +295,7 @@ Chat_Lifecycle.Run
    Origin_Policy  =&gt; HTTP.Require_Exact_Origin,
    Allowed_Origin =&gt; Expected_Origin,
    Metric_Output  =&gt; Metrics'Access);</code></pre></figure>
-            <p>The direct HTTP showcase derives one exact expected origin from the core-validated request authority, so the same binary works at either <code>localhost</code> or <code>127.0.0.1</code> without allowing arbitrary origins. A TLS deployment would use <code>https://</code>; applications behind a trusted proxy must derive public authority and scheme only through an explicit trusted-hop policy.</p>
+            <p>The direct HTTP showcase derives one exact expected origin from the core-validated request authority, so the same binary works at either <code>localhost</code> or <code>127.0.0.1</code> without allowing arbitrary origins. When allowed origins come from configured URLs, use the normalization and role separation described in the <a href="../iri/#websocket-client">URI, IRI, and URL guide</a>. A TLS deployment would use <code>https://</code>; applications behind a trusted proxy must derive public authority and scheme only through an explicit trusted-hop policy.</p>
             <p>The raw RFC 6455 API remains usable for applications needing a different lifecycle. Client masking, UTF-8, close codes, control frames, fragmentation, size limits, and terminal protocol failures remain core invariants.</p>
           </section>
 

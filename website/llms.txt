@@ -8,7 +8,9 @@ Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an or
 
 - Overview: https://http.flyology.org/
 - Guide index: https://http.flyology.org/guide/
+- URI, IRI, and URL guide: https://http.flyology.org/guide/iri/
 - Client guide: https://http.flyology.org/guide/client/
+- HTTP/2 guide: https://http.flyology.org/guide/http2/
 - Server guide: https://http.flyology.org/guide/server/
 - Architecture: https://http.flyology.org/architecture/
 - Generated API reference: https://http.flyology.org/api/
@@ -24,6 +26,7 @@ Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an or
 
 ## Package names
 
+- URI, IRI, and WHATWG URL parser: Flyology_IRI (separate `flyology_iri` crate)
 - Root: Flyology.HTTP
 - Client: Flyology.HTTP.Client
 - Server protocol: Flyology.HTTP.Server
