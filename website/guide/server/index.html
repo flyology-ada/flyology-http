@@ -139,12 +139,22 @@ State.Routes.Mount
 
           <section id="http2"><span class="step-label">HTTP/2</span><h2>Keep routes and exchanges when the protocol changes.</h2>
             <p>The high-level API is shared by HTTP/1.1 and HTTP/2. Pass the same router, application context, and accepted Flyology connection to the accepted-connection overload of <code>Routing.Serve</code>. Middleware, route policies, request-body reads, fixed and streamed responses, and SSE keep their synchronous Ada semantics.</p>
+            <figure class="code-panel"><figcaption>one router for h2 and HTTP/1.1 on the listener's port</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Sockets.Bind_Socket
+  (Listener,
+   Sockets.Network_Endpoint (Sockets.Loopback_IPv4, 8_443));
+
+-- Connection has already completed TLS with h2/http/1.1 ALPN offers.
+State.Routes.Serve
+  (State.Application, Connection, Peer,
+   Mode    =&gt; Flyology.HTTP.Server.ALPN_Negotiated,
+   Timeout =&gt; 30.0,
+   Token   =&gt; Cancellation);</code></pre></figure>
             <p><code>HTTP_1_Only</code> selects the HTTP/1.x engine, <code>HTTP_2_Only</code> selects prior knowledge or an already selected h2 TLS connection, and <code>ALPN_Negotiated</code> reads an upgraded TLS channel's selection and chooses h2 or HTTP/1.x. See the <a href="../http2/#server">HTTP/2 guide</a> for the complete call shape and limits.</p>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The low-level HTTP/1.x connection API is protocol-specific.</strong> Direct HTTP/2 handlers receive <code>Applications.Exchange</code>; they do not receive a shared mutable <code>Server.Connection</code>. WebSocket upgrade remains HTTP/1.1-only.</p></aside>
           </section>
 
           <section id="body-policy"><span class="step-label">HTTP 05</span><h2>Select body behavior per route.</h2>
-            <p>Every route explicitly rejects, streams, buffers, or discards a request body. Buffered bodies and retained WebSocket messages reserve from a server-wide shared ingress budget before allocation. Streaming writes directly into the caller's bounded buffer and still observes the maximum decoded size and original request deadline.</p>
+            <p>Every route explicitly rejects, streams, buffers, or discards a request body. On HTTP/1.x, buffered bodies and retained WebSocket messages reserve from a server-wide shared ingress budget before allocation. HTTP/2 uses fixed per-stream receive buffers and the same route <code>Max_Body</code> policy; the accepted-connection <code>Ingress</code> parameter does not yet account for HTTP/2 retention. Streaming writes directly into the caller's bounded buffer and still observes the maximum decoded size and original request deadline.</p>
             <figure class="code-panel"><figcaption>buffered and streamed route policy</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">State.Routes.Post
   ("/echo", Buffered_Echo'Access, Name =&gt; "echo",
    Policy =&gt;

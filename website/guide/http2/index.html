@@ -151,17 +151,24 @@ Client.Configure
 
           <section id="server"><span class="step-label">HTTP/2 06</span><h2>Reuse the high-level server API.</h2>
             <p>The existing <code>Routing.Serve</code> has an accepted-connection overload that selects HTTP/1.x, HTTP/2, or ALPN. Route registration, middleware, body policy, parameters, deadlines, response helpers, streamed bodies, and SSE remain unchanged. Each admitted HTTP/2 stream runs its synchronous handler in a lightweight task while one connection pump owns framing and flow control.</p>
-            <figure class="code-panel"><figcaption>serve an existing router over HTTP/2</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">package Routing is new
+            <figure class="code-panel"><figcaption>bind the listener, then serve the existing router</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">package Routing is new
   Flyology.HTTP.Server.Routing (Application_Context);
 
 Routes.Get ("/status", Status'Access, Name =&gt; "status");
 
+-- Listener setup owns the address and port; it is independent of routing.
+Sockets.Bind_Socket
+  (Listener,
+   Sockets.Network_Endpoint (Sockets.Loopback_IPv4, 8_443));
+Sockets.Listen_Socket (Listener, Length =&gt; 128);
+
+-- In the accepted-connection handler, after a TLS ALPN upgrade:
 Routes.Serve
   (State, Connection, Peer,
-   Mode    =&gt; Flyology.HTTP.Server.HTTP_2_Only,
+   Mode    =&gt; Flyology.HTTP.Server.ALPN_Negotiated,
    Timeout =&gt; 30.0,
    Token   =&gt; Cancellation);</code></pre></figure>
-            <p><code>HTTP_2_Only</code> accepts a cleartext prior-knowledge connection or TLS already selected as <code>h2</code>. After upgrading a server connection with an ALPN provider offering <code>h2</code> and <code>http/1.1</code>, use <code>ALPN_Negotiated</code>; <code>Routing.Serve</code> reads the selection and invokes the appropriate engine. <code>HTTP_1_Only</code> preserves explicit HTTP/1.x behavior.</p>
+            <p>The TLS provider for this example offers <code>h2</code> and <code>http/1.1</code>. <code>ALPN_Negotiated</code> reads the selected protocol and invokes the appropriate engine, so both protocols use the same registered routes on port 8443. <code>HTTP_2_Only</code> instead accepts a cleartext prior-knowledge connection or TLS already selected as <code>h2</code>. <code>HTTP_1_Only</code> preserves explicit HTTP/1.x behavior.</p>
             <p>The listening port is configured before this call, when the application binds its Flyology socket. <code>Routing.Serve</code> receives an already accepted connection, so changing the protocol mode does not move listener ownership or port configuration into the router.</p>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The raw connection API is intentionally not drop-in.</strong> <code>Server.Connection</code> contains HTTP/1.x connection-scoped parser and response state. HTTP/2 has several independently blocked streams on one connection, so direct low-level HTTP/2 users implement the generic <code>HTTP_2</code> application callback with <code>Applications.Exchange</code> instead.</p></aside>
           </section>
@@ -171,7 +178,7 @@ Routes.Serve
               <dl>
                 <div class="decision-row"><dt>Request bodies</dt><dd>Empty and retained request bodies are supported. Borrowed streaming body sources, request trailers, and <code>Expect: 100-continue</code> remain HTTP/1.1-only.</dd></div>
                 <div class="decision-row"><dt>Responses</dt><dd>Response heads and bodies remain bounded and streamable through the ordinary API. HTTP/2 has no reason phrase, so <code>Reason_Phrase</code> returns an empty string.</dd></div>
-                <div class="decision-row"><dt>Server features</dt><dd>The application server supports prior knowledge or an already ALPN-selected connection, up to 32 concurrent streams, bounded per-stream buffers, routing, middleware, streaming bodies, and SSE. It does not provide server push, extended CONNECT/WebSockets, h2c Upgrade, or automatic HTTP/1.1 fallback.</dd></div>
+                <div class="decision-row"><dt>Server features</dt><dd>The application server supports prior knowledge or an already ALPN-selected connection, up to 32 concurrent streams, bounded per-stream buffers, routing, middleware, streaming bodies, and SSE. The accepted-connection <code>Ingress</code> budget currently applies only to HTTP/1.x; HTTP/2 request retention is bounded by its fixed stream buffers and route body limits. The server does not provide server push, extended CONNECT/WebSockets, h2c Upgrade, or protocol fallback after a connection has started.</dd></div>
                 <div class="decision-row"><dt>Intermediaries</dt><dd>Proxying and content decoding are not implemented.</dd></div>
               </dl>
             </div>
@@ -181,9 +188,12 @@ Routes.Serve
           <section id="verification"><span class="step-label">HTTP/2 08</span><h2>Run the maintained qualification commands.</h2>
             <figure class="code-panel"><figcaption>local verification</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-shell">./scripts/http2-test.sh prepare
 ./scripts/http2-test.sh all
+# Run only the pinned Docker-based server protocol suite.
+./scripts/http2-test.sh h2spec
+# Full qualification also includes h2spec.
 ./scripts/http2-test.sh qualification
 </code></pre></figure>
-            <p><code>all</code> runs codecs, the deterministic python-hyper/h2 client matrix, showcase CLI coverage, the routed HTTP/2 server test, and an independent python-hyper/h2 peer against the server over prior knowledge and TLS ALPN. <code>qualification</code> adds client interoperability, fragmentation and reset campaigns, and concurrent multi-epoch resource checks in both task lanes. <code>h2spec</code> server coverage remains qualification work. See the repository's <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http2-conformance.md">HTTP/2 conformance notes</a> for the maintained evidence boundary.</p>
+            <p><code>all</code> runs codecs, the deterministic python-hyper/h2 client matrix, showcase CLI coverage, the routed HTTP/2 server test, and an independent python-hyper/h2 peer against the server over prior knowledge and TLS ALPN. The explicit <code>h2spec</code> target runs the pinned h2spec 2.6.0 image against a concurrent cleartext server adapter; the maintained baseline is 146 of 146 tests passing. <code>qualification</code> adds client interoperability, fragmentation and reset campaigns, concurrent multi-epoch resource checks in both task lanes, and h2spec. This evidence supports the experimental implementation but is not a production-qualification claim. See the repository's <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http2-conformance.md">HTTP/2 conformance notes</a> for the maintained evidence boundary.</p>
           </section>
         </article>
       </div>
