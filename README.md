@@ -8,7 +8,8 @@ request and response bodies, routing, middleware, server-sent events,
 WebSocket servers, and plain or TLS transports built on Flyology I/O.
 
 Documentation is published at [http.flyology.org](https://http.flyology.org/).
-The [client guide](https://http.flyology.org/guide/client/) and
+The [client guide](https://http.flyology.org/guide/client/), dedicated
+[HTTP/2 guide](https://http.flyology.org/guide/http2/), and
 [server guide](https://http.flyology.org/guide/server/) describe outbound and
 inbound lifecycles separately.
 

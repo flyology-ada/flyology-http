@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Configure and use the opt-in Flyology HTTP/2 client over TLS ALPN or cleartext prior knowledge.">
+    <meta name="theme-color" content="#17213d">
+    <title>HTTP/2 client guide · Flyology HTTP</title>
+    <link rel="canonical" href="https://http.flyology.org/guide/http2/">
+    <link rel="icon" href="../../assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles/site.css">
+    <script src="../../assets/scripts/ada-highlight.js"></script>
+    <script src="../../assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="../../" aria-label="Flyology HTTP home"><img src="../../assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology HTTP</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="../../">Overview</a></li>
+          <li><a href="../" aria-current="page">Guide</a></li>
+          <li><a href="../../architecture/">Architecture</a></li>
+          <li><a href="../../journal/">Journal</a></li>
+          <li><a href="../../api/">API</a></li>
+          <li>
+            <details class="nav-dropdown" data-nav-dropdown>
+              <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
+              <ul class="nav-dropdown-menu">
+                <li><a href="https://postgres.flyology.org/">Postgres</a></li>
+              </ul>
+            </details>
+          </li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li>
+          <li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
+        </ul>
+        <div class="nav-tools">
+          <button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button>
+          <button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main" class="page-shell">
+      <header class="doc-hero">
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">HTTP/2</li></ol><h1>Select HTTP/2 without changing request code.</h1></div>
+        <p class="doc-hero-copy">Opt into TLS negotiation or cleartext prior knowledge, then keep the same synchronous request, response, deadline, pool, and shutdown lifecycle.</p>
+      </header>
+
+      <div class="docs-layout">
+        <nav class="toc" aria-label="On this page">
+          <p class="toc-title">On this page</p>
+          <ol>
+            <li><a href="#choose-mode">Choose a mode</a></li>
+            <li><a href="#tls">Configure TLS</a></li>
+            <li><a href="#execute">Execute requests</a></li>
+            <li><a href="#prior-knowledge">Use cleartext prior knowledge</a></li>
+            <li><a href="#cli">Try the CLI</a></li>
+            <li><a href="#limits">Know the limits</a></li>
+            <li><a href="#verification">Run the verification</a></li>
+          </ol>
+        </nav>
+
+        <article class="prose">
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>HTTP/2 is opt-in. Existing <code>Configure</code> calls keep HTTP/1.1-only behavior, so adding this version does not silently change an application's transport policy.</p></aside>
+
+          <section id="choose-mode"><span class="step-label">HTTP/2 01</span><h2>Choose the failure behavior you need.</h2>
+            <p>Pass a <code>Client.Protocol_Mode</code> to an explicit <code>Configure</code> overload. The mode determines whether the client may fall back and whether TLS is required.</p>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt><code>HTTP_1_Only</code></dt><dd>Use HTTP/1.1 and do not offer HTTP/2. This is the behavior of existing overloads.</dd></div>
+                <div class="decision-row"><dt><code>Negotiate_HTTP_2</code></dt><dd>For an HTTPS origin, offer <code>h2</code> and then <code>http/1.1</code> through ALPN. Use HTTP/1.1 when the authenticated peer does not select HTTP/2.</dd></div>
+                <div class="decision-row"><dt><code>Require_HTTP_2</code></dt><dd>For an HTTPS origin, require the peer to select <code>h2</code>. Any other ALPN result fails the connection.</dd></div>
+                <div class="decision-row"><dt><code>HTTP_2_Prior_Knowledge</code></dt><dd>For an <code>http://</code> origin, send the HTTP/2 connection preface directly. The client does not perform the deprecated HTTP/1.1 Upgrade handshake.</dd></div>
+              </dl>
+            </div>
+            <p>Use negotiation for general HTTPS clients, requirement when HTTP/2 is part of the service contract, and prior knowledge only when the cleartext endpoint is already known to speak HTTP/2.</p>
+          </section>
+
+          <section id="tls"><span class="step-label">HTTP/2 02</span><h2>Configure authenticated TLS and ALPN.</h2>
+            <p>Initialize a TLS provider normally, then pass the provider, mode, and pool policy to <code>Configure</code>. Certificate-chain and hostname verification remain enabled. The provider must support ALPN for either HTTP/2 negotiation mode.</p>
+            <figure class="code-panel"><figcaption>prefer HTTP/2 with HTTP/1.1 fallback</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP;
+with Flyology.HTTP.Client;
+with Flyology.IO.TLS.OpenSSL;
+
+package Client renames Flyology.HTTP.Client;
+package OpenSSL renames Flyology.IO.TLS.OpenSSL;
+
+Backend : aliased OpenSSL.OpenSSL_Provider;
+HTTP    : aliased Client.Client (Capacity =&gt; 2);
+
+OpenSSL.Initialize_Client (Backend);
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("https://api.example.com"),
+   Backend'Access,
+   Client.Negotiate_HTTP_2,
+   (Max_Idle                    =&gt; 1,
+    Idle_Timeout                =&gt; 30.0,
+    Max_Connection_Age          =&gt; 300.0,
+    Max_Requests_Per_Connection =&gt; 0));</code></pre></figure>
+            <p>Replace <code>Negotiate_HTTP_2</code> with <code>Require_HTTP_2</code> to reject fallback. Supplying a negotiation mode for cleartext HTTP, or prior knowledge for HTTPS, is rejected during configuration.</p>
+          </section>
+
+          <section id="execute"><span class="step-label">HTTP/2 03</span><h2>Use the ordinary client API.</h2>
+            <p>Requests do not select their own protocol. Build a normal <code>Client.Request</code>, call <code>Execute</code>, and consume the limited response before it leaves the client's lifetime. The selected protocol is available on the response.</p>
+            <figure class="code-panel"><figcaption>execute and inspect the negotiated protocol</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Request : Client.Request;
+
+Client.Set_Target (Request, "/v1/items");
+declare
+   Reply : Client.Response :=
+     Client.Execute (HTTP, Request, Timeout =&gt; 10.0);
+begin
+   pragma Assert
+     (Client.Negotiated_Protocol (Reply) in
+        Flyology.HTTP.HTTP_1_1_Protocol |
+        Flyology.HTTP.HTTP_2_Protocol);
+   Consume (Client.Read_All (Reply, Maximum =&gt; 256 * 1_024));
+end;
+
+Client.Shutdown (HTTP, Timeout =&gt; 5.0);</code></pre></figure>
+            <p>Concurrent callers may share the configured client. On HTTP/2, up to 32 active streams can share one transport, subject to the peer's advertised stream limit. Pool <code>Capacity</code> still bounds open plus connecting transports, while each transport can carry several exchanges. Admission waits, timeouts, cancellation, GOAWAY handling, safe retries, and explicit shutdown retain their normal client semantics.</p>
+            <p>A response continues to own one exchange lease. Reading it to completion releases its stream for reuse. Finalizing an incomplete HTTP/2 response resets that stream instead of discarding unrelated streams on the same connection.</p>
+          </section>
+
+          <section id="prior-knowledge"><span class="step-label">HTTP/2 04</span><h2>Use prior knowledge only for a known cleartext peer.</h2>
+            <figure class="code-panel"><figcaption>cleartext HTTP/2</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">HTTP : aliased Client.Client (Capacity =&gt; 1);
+
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("http://127.0.0.1:8080"),
+   Client.HTTP_2_Prior_Knowledge);
+</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>Prior knowledge provides no transport authentication or confidentiality.</strong> Use it for a controlled cleartext hop whose protocol is known in advance. It does not probe for HTTP/1.1 and cannot fall back after sending the HTTP/2 preface.</p></aside>
+          </section>
+
+          <section id="cli"><span class="step-label">HTTP/2 05</span><h2>Exercise a peer with the showcase client.</h2>
+            <p>The maintained curl-like CLI exposes the same policies. Verbose output prints both the requested policy and the protocol selected for the response.</p>
+            <figure class="code-panel"><figcaption>showcase HTTP/2 modes</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-shell"># Prefer HTTP/2, allow authenticated HTTP/1.1 fallback.
+./showcases/run_http_client_cli.sh -v --http2 https://example.com/
+
+# Require h2 over authenticated TLS.
+./showcases/run_http_client_cli.sh -v --http2-only https://example.com/
+
+# Speak cleartext HTTP/2 immediately.
+./showcases/run_http_client_cli.sh -v --http2-prior-knowledge \
+  http://127.0.0.1:8080/</code></pre></figure>
+            <p><code>--ca-file</code> selects an additional certificate authority file for a private test endpoint. There is no option to disable certificate or hostname verification.</p>
+          </section>
+
+          <section id="limits"><span class="step-label">HTTP/2 06</span><h2>Keep the current boundary visible.</h2>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt>Request bodies</dt><dd>Empty and retained request bodies are supported. Borrowed streaming body sources, request trailers, and <code>Expect: 100-continue</code> remain HTTP/1.1-only.</dd></div>
+                <div class="decision-row"><dt>Responses</dt><dd>Response heads and bodies remain bounded and streamable through the ordinary API. HTTP/2 has no reason phrase, so <code>Reason_Phrase</code> returns an empty string.</dd></div>
+                <div class="decision-row"><dt>Server features</dt><dd>The crate does not provide an HTTP/2 server, server push, extended CONNECT, or an HTTP/1.1 Upgrade path.</dd></div>
+                <div class="decision-row"><dt>Intermediaries</dt><dd>Proxying and content decoding are not implemented.</dd></div>
+              </dl>
+            </div>
+            <p>The implementation is experimental. The API and tests establish bounded behavior, but they do not constitute a production-qualification claim.</p>
+          </section>
+
+          <section id="verification"><span class="step-label">HTTP/2 07</span><h2>Run the maintained qualification commands.</h2>
+            <figure class="code-panel"><figcaption>local verification</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-shell">./scripts/http2-test.sh prepare
+./scripts/http2-test.sh all
+./scripts/http2-test.sh qualification
+</code></pre></figure>
+            <p><code>all</code> runs codecs, the deterministic python-hyper/h2 matrix, and showcase CLI coverage. <code>qualification</code> adds Go, Node, and nghttpd interoperability, deterministic fragmentation and reset campaigns, and concurrent multi-epoch resource checks in both task lanes. The scheduled <code>nightly</code> command extends the soak duration. See the repository's <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http2-conformance.md">HTTP/2 conformance notes</a> for the maintained evidence boundary.</p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology HTTP is experimental. Validate the exact peer, TLS provider, workload, and operating constraints for your application.</span><div class="footer-links"><a href="../client/">Client guide</a><a href="../">Guide index</a><a href="../../architecture/">Architecture</a><a href="../../api/">API reference</a></div></div></footer>
+  </body>
+</html>

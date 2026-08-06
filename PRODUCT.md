@@ -3,9 +3,10 @@
 ## Product
 
 Flyology HTTP is an experimental HTTP/1.1 client and application-server
-library for Ada programs using Flyology. Its synchronous APIs work from native
-and lightweight tasks while keeping transport ownership, resource limits,
-deadlines, cancellation, and shutdown explicit.
+library, with an opt-in HTTP/2 client, for Ada programs using Flyology. Its
+synchronous APIs work from native and lightweight tasks while keeping
+transport ownership, resource limits, deadlines, cancellation, and shutdown
+explicit.
 
 The library has two deliberate entry points:
 
@@ -25,8 +26,10 @@ first learning the other one.
 
 ## Current boundaries
 
-Flyology HTTP supports HTTP/1.1 messages and compatible HTTP/1.0 responses. It
-does not currently provide HTTP/2, proxying, content decoding, or
+Flyology HTTP supports HTTP/1.1 messages, compatible HTTP/1.0 responses, and an
+opt-in HTTP/2 client. HTTP/2 supports TLS ALPN fallback or requirement,
+cleartext prior knowledge, multiplexing, retained request bodies, and streamed
+responses. It does not provide an HTTP/2 server, proxying, content decoding, or
 challenge-driven client authentication. It is experimental and does not claim
 production qualification.
 
