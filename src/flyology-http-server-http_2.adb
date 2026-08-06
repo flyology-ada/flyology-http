@@ -58,6 +58,16 @@ package body Flyology.HTTP.Server.HTTP_2 is
      (Read_Progress, Read_Would_Block, Read_Finished, Read_Failed,
       Read_Body_Too_Large);
    type Queue_Result is (Queue_Accepted, Queue_Would_Block, Queue_Failed);
+   type Header_Disposition is
+     (Headers_Allowed, Headers_Stream_Closed, Headers_Connection_Closed,
+      Headers_Invalid_Lower_ID);
+   --  Closed stream state may be discarded eventually, but retaining a
+   --  generous bounded history lets us distinguish recently closed streams
+   --  from stream identifiers that were skipped by the client.
+   Stream_History_Capacity : constant Positive := 4_096;
+   type Stream_History_Array is array
+     (Positive range 1 .. Stream_History_Capacity) of
+       Frames.Stream_Identifier;
 
    type Stream_Record is limited record
       Phase          : Stream_Phase := Free;
@@ -102,6 +112,10 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Accepted        : out Boolean);
       function Find (Stream_ID : Frames.Stream_Identifier) return Natural;
       function Is_Trailers
+        (Stream_ID : Frames.Stream_Identifier) return Boolean;
+      function Header_State
+        (Stream_ID : Frames.Stream_Identifier) return Header_Disposition;
+      function Is_Idle
         (Stream_ID : Frames.Stream_Identifier) return Boolean;
       procedure Publish_Data
         (Stream_ID   : Frames.Stream_Identifier;
@@ -151,10 +165,13 @@ package body Flyology.HTTP.Server.HTTP_2 is
         (Value : Settings.State; Accepted : out Boolean);
       procedure Queue_Settings_Ack;
       procedure Queue_Ping_Ack (Payload : Stream_Element_Array);
+      procedure Queue_Stream_Reset
+        (Stream_ID : Frames.Stream_Identifier; Error : Frames.Error_Code);
       procedure Window_Update
         (Stream_ID : Frames.Stream_Identifier;
          Increment : Natural;
-         Accepted  : out Boolean);
+         Accepted  : out Boolean;
+         Stream_Failure : out Boolean);
       procedure Reset_Stream
         (Stream_ID : Frames.Stream_Identifier; Slot : out Natural);
       procedure Reject_Stream
@@ -181,6 +198,10 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Output_Cursor : Positive := 1;
       Draining : Boolean := False;
       Broken   : Boolean := False;
+      Seen_Streams  : Stream_History_Array := (others => 0);
+      Seen_Cursor   : Positive := 1;
+      Reset_Streams : Stream_History_Array := (others => 0);
+      Reset_Cursor  : Positive := 1;
    end Controller;
 
    type Session_State is limited record
@@ -368,6 +389,42 @@ package body Flyology.HTTP.Server.HTTP_2 is
          end if;
       end Maybe_Complete;
 
+      procedure Remember_Reset (Stream_ID : Frames.Stream_Identifier) is
+      begin
+         Reset_Streams (Reset_Cursor) := Stream_ID;
+         Reset_Cursor := Reset_Cursor mod Reset_Streams'Length + 1;
+      end Remember_Reset;
+
+      procedure Remember_Seen (Stream_ID : Frames.Stream_Identifier) is
+      begin
+         Seen_Streams (Seen_Cursor) := Stream_ID;
+         Seen_Cursor := Seen_Cursor mod Seen_Streams'Length + 1;
+      end Remember_Seen;
+
+      function Was_Reset
+        (Stream_ID : Frames.Stream_Identifier) return Boolean
+      is
+      begin
+         for Value of Reset_Streams loop
+            if Value = Stream_ID then
+               return True;
+            end if;
+         end loop;
+         return False;
+      end Was_Reset;
+
+      function Was_Seen
+        (Stream_ID : Frames.Stream_Identifier) return Boolean
+      is
+      begin
+         for Value of Seen_Streams loop
+            if Value = Stream_ID then
+               return True;
+            end if;
+         end loop;
+         return False;
+      end Was_Seen;
+
       procedure Return_Connection_Credit (Count : Natural) is
       begin
          if Count = 0 then
@@ -423,6 +480,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
             return;
          end if;
          Last_Client_Stream := Stream_ID;
+         Remember_Seen (Stream_ID);
          for Index in Streams'Range loop
             if Streams (Index).Phase = Free and then Slot = 0 then
                Slot := Index;
@@ -434,6 +492,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
             Queue_Control_Frame
               (Frames.Reset_Stream_Frame, 0, Stream_ID,
                U31_Payload (Natural (Frames.Refused_Stream)));
+            Remember_Reset (Stream_ID);
             Slot := 0;
             Accepted := True;
             return;
@@ -442,6 +501,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
             Queue_Control_Frame
               (Frames.Reset_Stream_Frame, 0, Stream_ID,
                U31_Payload (Natural (Frames.Protocol_Error_Code)));
+            Remember_Reset (Stream_ID);
             Slot := 0;
             Accepted := True;
             return;
@@ -462,6 +522,29 @@ package body Flyology.HTTP.Server.HTTP_2 is
       begin
          return Find (Stream_ID) /= 0;
       end Is_Trailers;
+
+      function Header_State
+        (Stream_ID : Frames.Stream_Identifier) return Header_Disposition
+      is
+         Index : constant Natural := Find (Stream_ID);
+      begin
+         return
+           (if Index = 0 then
+               (if Stream_ID > Last_Client_Stream then Headers_Allowed
+               elsif Was_Reset (Stream_ID) then Headers_Stream_Closed
+               elsif Was_Seen (Stream_ID) then Headers_Connection_Closed
+               else Headers_Invalid_Lower_ID)
+            elsif Streams (Index).Failure /= No_Failure then
+              Headers_Stream_Closed
+            elsif Streams (Index).Phase = Complete then
+              Headers_Connection_Closed
+            elsif Streams (Index).Remote_End then Headers_Stream_Closed
+            else Headers_Allowed);
+      end Header_State;
+
+      function Is_Idle
+        (Stream_ID : Frames.Stream_Identifier) return Boolean is
+        (Natural (Stream_ID) mod 2 = 0 or else Stream_ID > Last_Client_Stream);
 
       procedure Publish_Data
         (Stream_ID   : Frames.Stream_Identifier;
@@ -739,6 +822,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
             Queue_Control_Frame
               (Frames.Reset_Stream_Frame, 0, Streams (Slot).ID,
                U31_Payload (Natural (Frames.Internal_Error)));
+            Remember_Reset (Streams (Slot).ID);
             Streams (Slot).Failure := Reset_Failure;
             Streams (Slot).Remote_End := True;
             Streams (Slot).Local_End := True;
@@ -1021,16 +1105,27 @@ package body Flyology.HTTP.Server.HTTP_2 is
            (Frames.Ping_Frame, Frames.Ack_Flag, 0, Payload);
       end Queue_Ping_Ack;
 
+      procedure Queue_Stream_Reset
+        (Stream_ID : Frames.Stream_Identifier; Error : Frames.Error_Code) is
+      begin
+         Queue_Control_Frame
+           (Frames.Reset_Stream_Frame, 0, Stream_ID,
+            U31_Payload (Natural (Error)));
+      end Queue_Stream_Reset;
+
       procedure Window_Update
         (Stream_ID : Frames.Stream_Identifier;
          Increment : Natural;
-         Accepted  : out Boolean)
+         Accepted  : out Boolean;
+         Stream_Failure : out Boolean)
       is
          Index : constant Natural := Find (Stream_ID);
          Increased : Policy.Window_Result;
       begin
          Accepted := Increment > 0;
+         Stream_Failure := False;
          if not Accepted then
+            Stream_Failure := Stream_ID /= 0;
             return;
          elsif Stream_ID = 0 then
             Increased := Policy.Increase
@@ -1049,6 +1144,8 @@ package body Flyology.HTTP.Server.HTTP_2 is
             if Accepted then
                Streams (Index).Send_Window := Increased.Window;
                Notify (Index);
+            else
+               Stream_Failure := True;
             end if;
          end if;
       end Window_Update;
@@ -1059,6 +1156,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
       begin
          Slot := Find (Stream_ID);
          if Slot /= 0 then
+            Remember_Reset (Stream_ID);
             Retained_Input := Streams (Slot).Input_Count;
             Streams (Slot).Failure := Reset_Failure;
             Streams (Slot).Remote_End := True;
@@ -1081,12 +1179,15 @@ package body Flyology.HTTP.Server.HTTP_2 is
       begin
          Slot := Find (Stream_ID);
          Accepted := not Broken and then Stream_ID /= 0
-           and then Natural (Stream_ID) mod 2 = 1
-           and then (Slot /= 0 or else Stream_ID > Last_Client_Stream);
+           and then Natural (Stream_ID) mod 2 = 1;
          if not Accepted then
             return;
          elsif Slot = 0 then
-            Last_Client_Stream := Stream_ID;
+            if Stream_ID > Last_Client_Stream then
+               Last_Client_Stream := Stream_ID;
+               Remember_Seen (Stream_ID);
+            end if;
+            Remember_Reset (Stream_ID);
             Queue_Control_Frame
               (Frames.Reset_Stream_Frame, 0, Stream_ID,
                U31_Payload (Natural (Error)));
@@ -1094,6 +1195,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          end if;
 
          Retained_Input := Streams (Slot).Input_Count;
+         Remember_Reset (Stream_ID);
          Queue_Control_Frame
            (Frames.Reset_Stream_Frame, 0, Stream_ID,
             U31_Payload (Natural (Error)));
@@ -1833,8 +1935,11 @@ package body Flyology.HTTP.Server.HTTP_2 is
       procedure Process_Header_Block is
          Fields : Flyology.HTTP.Headers.List;
          Method, Scheme, Authority, Path : Unbounded_String;
+         Disposition : constant Header_Disposition :=
+           State.Streams.Header_State (Header_Stream);
          Trailers : constant Boolean :=
-           State.Streams.Is_Trailers (Header_Stream);
+           Disposition = Headers_Allowed
+             and then State.Streams.Is_Trailers (Header_Stream);
          Accepted : Boolean;
          Slot : Natural;
          Has_Length : Boolean;
@@ -1843,7 +1948,16 @@ package body Flyology.HTTP.Server.HTTP_2 is
          HPACK.Decode_Request
            (Decoder, Bytes.To_Array (Header_Block), Trailers, Fields,
             Method, Scheme, Authority, Path);
-         if Trailers then
+         if Disposition = Headers_Stream_Closed then
+            Reject_Header_Block (Frames.Stream_Closed_Error);
+            return;
+         elsif Disposition = Headers_Connection_Closed then
+            Clear_Header_Block;
+            Protocol_Failure (Frames.Stream_Closed_Error);
+         elsif Disposition = Headers_Invalid_Lower_ID then
+            Clear_Header_Block;
+            Protocol_Failure (Frames.Protocol_Error_Code);
+         elsif Trailers then
             State.Streams.Publish_Trailers
               (Header_Stream, Header_End_Stream, Accepted);
          else
@@ -1896,7 +2010,18 @@ package body Flyology.HTTP.Server.HTTP_2 is
             Reject_Header_Block (Frames.Enhance_Your_Calm);
          when HPACK.Invalid_Request_Fields | Request_Message_Error |
            Constraint_Error =>
-            Reject_Header_Block (Frames.Protocol_Error_Code);
+            case Disposition is
+               when Headers_Stream_Closed =>
+                  Reject_Header_Block (Frames.Stream_Closed_Error);
+               when Headers_Connection_Closed =>
+                  Clear_Header_Block;
+                  Protocol_Failure (Frames.Stream_Closed_Error);
+               when Headers_Invalid_Lower_ID =>
+                  Clear_Header_Block;
+                  Protocol_Failure (Frames.Protocol_Error_Code);
+               when Headers_Allowed =>
+                  Reject_Header_Block (Frames.Protocol_Error_Code);
+            end case;
          when Protocol_Error =>
             Protocol_Failure (Frames.Compression_Error);
       end Process_Header_Block;
@@ -1942,6 +2067,19 @@ package body Flyology.HTTP.Server.HTTP_2 is
             if (Header.Flags and Frames.Ack_Flag) = 0 then
                State.Streams.Queue_Ping_Ack (Payload);
             end if;
+         elsif Header.Kind = Frames.Priority_Frame then
+            declare
+               Dependency : constant Natural :=
+                 Natural (Payload (Payload'First) and 16#7F#) * 16#1000000#
+                 + Natural (Payload (Payload'First + 1)) * 16#10000#
+                 + Natural (Payload (Payload'First + 2)) * 16#100#
+                 + Natural (Payload (Payload'First + 3));
+            begin
+               if Dependency = Natural (Header.Stream_ID) then
+                  State.Streams.Queue_Stream_Reset
+                    (Header.Stream_ID, Frames.Protocol_Error_Code);
+               end if;
+            end;
          elsif Header.Kind = Frames.Headers_Frame then
             declare
                View : Payloads.Fragment_View;
@@ -2000,17 +2138,41 @@ package body Flyology.HTTP.Server.HTTP_2 is
                end if;
             end;
          elsif Header.Kind = Frames.Window_Update_Frame then
-            State.Streams.Window_Update
-              (Header.Stream_ID, Payloads.Window_Increment (Payload),
-               Accepted);
+            declare
+               Increment : constant Natural :=
+                 Payloads.Window_Increment (Payload);
+               Error : constant Frames.Error_Code :=
+                 (if Increment = 0 then Frames.Protocol_Error_Code
+                  else Frames.Flow_Control_Error);
+               Stream_Failure : Boolean;
+               Slot : Natural;
+            begin
+               State.Streams.Window_Update
+                 (Header.Stream_ID, Increment, Accepted, Stream_Failure);
+               if not Accepted and then Stream_Failure then
+                  State.Streams.Reject_Stream
+                    (Header.Stream_ID, Error, Slot, Accepted);
+                  if Slot /= 0 and then Backends_By_Slot (Slot) /= null then
+                     Backends_By_Slot (Slot).Token.Request;
+                  end if;
+               end if;
+            end;
             if not Accepted then
-               Protocol_Failure (Frames.Flow_Control_Error);
+               Protocol_Failure
+                 ((if Payloads.Window_Increment (Payload) = 0
+                   then Frames.Protocol_Error_Code
+                   else Frames.Flow_Control_Error));
             end if;
          elsif Header.Kind = Frames.Reset_Stream_Frame then
             declare
                Slot : Natural;
             begin
                State.Streams.Reset_Stream (Header.Stream_ID, Slot);
+               if Slot = 0 and then
+                 State.Streams.Is_Idle (Header.Stream_ID)
+               then
+                  Protocol_Failure;
+               end if;
                if Slot /= 0 and then Backends_By_Slot (Slot) /= null then
                   Backends_By_Slot (Slot).Token.Request;
                end if;
@@ -2120,6 +2282,11 @@ package body Flyology.HTTP.Server.HTTP_2 is
                exception
                   when Stop_Parsing => null;
                end;
+            end if;
+            --  A fatal input error supersedes any application DATA already
+            --  selected for transmission.  Pull the queued GOAWAY first.
+            if Fatal and then Have_Output then
+               Have_Output := False;
             end if;
             if not Have_Output then
                State.Streams.Pull_Output

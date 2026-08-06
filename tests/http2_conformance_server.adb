@@ -1,16 +1,18 @@
 with Ada.Command_Line;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
+with Flyology;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Connections;
 with Flyology.IO.Connections.TLS;
 with Flyology.IO.Sockets;
+with Flyology.IO.Structured_Servers;
 with Flyology.IO.TLS;
 with Flyology.IO.TLS.ALPN;
 with Flyology.IO.TLS.OpenSSL;
 
---  Single-connection HTTP/2 server used by the independent Python peer test.
+--  HTTP/2 server used by the independent Python peer and h2spec tests.
 procedure HTTP2_Conformance_Server is
    package App renames Flyology.HTTP.Server.Applications;
    package Connections renames Flyology.IO.Connections;
@@ -78,37 +80,74 @@ procedure HTTP2_Conformance_Server is
      (if Ada.Command_Line.Argument_Count >= 4
       then Ada.Command_Line.Argument (4)
       else "tests/fixtures/tls/server-key.pem");
+   Connection_Limit : constant Natural :=
+     (if Ada.Command_Line.Argument_Count >= 5
+      then Natural'Value (Ada.Command_Line.Argument (5)) else 1);
    Use_TLS : constant Boolean := Transport = "tls";
 
-   Routes : Routing.Router
-     (Capacity => 6, Slashes => Routing.Strict_Slashes);
+   type Server_Context is limited record
+      Application : Context;
+      Routes : Routing.Router
+        (Capacity => 6, Slashes => Routing.Strict_Slashes);
+      Backend : OpenSSL.OpenSSL_Provider;
+   end record;
+
+   procedure Handle_Connection
+     (State        : in out Server_Context;
+      Connection   : in out Connections.Connection;
+      Peer         : Sockets.Endpoint;
+      Cancellation : not null access Connections.Cancellation_Token) is
+   begin
+      if Use_TLS then
+         Connection_TLS.Upgrade
+           (Connection, State.Backend, Flyology.IO.TLS.Server, "",
+            Protocols => ALPN.Empty_Protocol_List,
+            Timeout => 10.0,
+            Token => Cancellation);
+      end if;
+      State.Routes.Serve
+        (State.Application, Connection, Peer,
+         Mode =>
+           (if Use_TLS then Flyology.HTTP.Server.ALPN_Negotiated
+            else Flyology.HTTP.Server.HTTP_2_Only),
+         Timeout => 10.0,
+         Max_Connection_Age => 30.0,
+         Token => Cancellation);
+   end Handle_Connection;
+
+   package Concurrent_Server is new Flyology.IO.Structured_Servers
+     (Handler_Context => Server_Context,
+      Handle          => Handle_Connection,
+      Handler_Model   => Flyology.Native_Task);
+
    Manager : aliased Connections.Server (Capacity => 1);
-   Backend : OpenSSL.OpenSSL_Provider;
+   Multi_Server : aliased Concurrent_Server.Server (Capacity => 64);
+   Shared : aliased Server_Context;
    Listener : Sockets.Socket_Type;
    Address : Sockets.Endpoint;
    Channel : aliased Connections.Connection;
    Peer : Sockets.Endpoint;
-   State : Context;
+   Served : Natural := 0;
 begin
    if Use_TLS then
       OpenSSL.Initialize_Server
-        (Backend, Certificate, Private_Key,
+        (Shared.Backend, Certificate, Private_Key,
          Protocols => ALPN."&" (ALPN.Offer ("h2"), "http/1.1"));
    elsif Transport /= "plain" then
       raise Constraint_Error with "transport must be plain or tls";
    end if;
 
-   Routes.Get ("/basic", Basic'Access, Name => "basic");
-   Routes.Get ("/first", Basic'Access, Name => "first");
-   Routes.Get ("/second", Basic'Access, Name => "second");
-   Routes.Get ("/large", Large'Access, Name => "large");
-   Routes.Post
+   Shared.Routes.Get ("/basic", Basic'Access, Name => "basic");
+   Shared.Routes.Get ("/first", Basic'Access, Name => "first");
+   Shared.Routes.Get ("/second", Basic'Access, Name => "second");
+   Shared.Routes.Get ("/large", Large'Access, Name => "large");
+   Shared.Routes.Post
      ("/echo", Echo'Access, Name => "echo",
       Policy =>
         (Body_Handling => App.Buffer_Body,
          Max_Body => 200_000,
          others => <>));
-   Routes.Post
+   Shared.Routes.Post
      ("/reset", Reset_Target'Access, Name => "reset",
       Policy =>
         (Body_Handling => App.Stream_Body,
@@ -121,7 +160,8 @@ begin
    Sockets.Bind_Socket
      (Listener, Sockets.Network_Endpoint
        (Sockets.Loopback_IPv4, Sockets.Any_Port));
-   Sockets.Listen_Socket (Listener, Length => 1);
+   Sockets.Listen_Socket
+     (Listener, Length => (if Connection_Limit = 0 then 64 else 1));
    Address := Sockets.Get_Socket_Name (Listener);
    declare
       File : Ada.Text_IO.File_Type;
@@ -131,21 +171,31 @@ begin
       Ada.Text_IO.Close (File);
    end;
 
-   Connections.Accept_Connection
-     (Manager, Listener, Channel, Peer, Timeout => 15.0);
-   if Use_TLS then
-      Connection_TLS.Upgrade
-        (Channel, Backend, Flyology.IO.TLS.Server, "",
-         Protocols => ALPN.Empty_Protocol_List,
-         Timeout => 10.0);
+   if Connection_Limit = 0 then
+      Concurrent_Server.Serve (Multi_Server, Listener, Shared);
    end if;
-   Routes.Serve
-     (State, Channel, Peer,
-      Mode =>
-        (if Use_TLS then Flyology.HTTP.Server.ALPN_Negotiated
-         else Flyology.HTTP.Server.HTTP_2_Only),
-      Timeout => 10.0,
-      Max_Connection_Age => 30.0);
-   Connections.Close (Channel);
+   while Served < Connection_Limit loop
+      Connections.Accept_Connection
+        (Manager, Listener, Channel, Peer, Timeout => -1.0);
+      begin
+         if Use_TLS then
+            Connection_TLS.Upgrade
+              (Channel, Shared.Backend, Flyology.IO.TLS.Server, "",
+               Protocols => ALPN.Empty_Protocol_List,
+               Timeout => 10.0);
+         end if;
+         Shared.Routes.Serve
+           (Shared.Application, Channel, Peer,
+            Mode =>
+              (if Use_TLS then Flyology.HTTP.Server.ALPN_Negotiated
+               else Flyology.HTTP.Server.HTTP_2_Only),
+            Timeout => 10.0,
+            Max_Connection_Age => 30.0);
+      exception
+         when others => null;
+      end;
+      Connections.Close (Channel);
+      Served := Served + 1;
+   end loop;
    Sockets.Close_Socket (Listener);
 end HTTP2_Conformance_Server;

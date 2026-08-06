@@ -174,6 +174,71 @@ run_server () {
   run_server_case tls
 }
 
+run_h2spec () {
+  if ! command -v docker >/dev/null 2>&1; then
+    printf '%s\n' "Docker is required for the pinned h2spec run" >&2
+    exit 2
+  fi
+  if [ ! -d "$http_root/build/rts/adalib" ]; then
+    printf '%s\n' \
+      "prepared test runtime is unavailable; run: ./scripts/test.sh" >&2
+    exit 2
+  fi
+
+  build_test http2_conformance_server http2-server
+  run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-h2spec.XXXXXX")
+  port_file="$run_dir/port"
+  server_log="$run_dir/server.log"
+  server_pid=
+
+  cleanup_h2spec () {
+    if [ -n "$server_pid" ]; then
+      kill "$server_pid" 2>/dev/null || :
+      wait "$server_pid" 2>/dev/null || :
+    fi
+    rm -rf "$run_dir"
+  }
+  trap cleanup_h2spec EXIT HUP INT TERM
+
+  "$http_root/tests/bin/http2-server/http2_conformance_server" \
+    "$port_file" plain \
+    "$http_root/tests/fixtures/tls/server-cert.pem" \
+    "$http_root/tests/fixtures/tls/server-key.pem" 0 \
+    >"$server_log" 2>&1 &
+  server_pid=$!
+  ready=false
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if [ -s "$port_file" ]; then
+      ready=true
+      break
+    fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$ready" != true ]; then
+    sed -n '1,160p' "$server_log" >&2
+    printf '%s\n' "HTTP/2 h2spec server did not become ready" >&2
+    exit 1
+  fi
+
+  port=$(tr -d '\r\n' <"$port_file")
+  h2spec_image=${FLYOLOGY_HTTP2_H2SPEC_IMAGE:-summerwind/h2spec:2.6.0}
+  if [ "$(uname -s)" = Linux ]; then
+    docker run --rm --platform linux/amd64 --network host \
+      "$h2spec_image" -h 127.0.0.1 -p "$port" -o 5
+  else
+    docker run --rm --platform linux/amd64 \
+      --add-host host.docker.internal:host-gateway \
+      "$h2spec_image" -h host.docker.internal -p "$port" -o 5
+  fi
+
+  cleanup_h2spec
+  trap - EXIT HUP INT TERM
+  printf '%s\n' "HTTP/2 server h2spec: PASS"
+}
+
 run_showcase_case () {
   showcase_scenario=$1
   showcase_option=$2
@@ -310,6 +375,9 @@ case "$command" in
   server)
     run_server
     ;;
+  h2spec)
+    run_h2spec
+    ;;
   showcase)
     run_showcase
     ;;
@@ -325,6 +393,7 @@ case "$command" in
   qualification)
     "$http_root/scripts/http2-interop.sh" all
     "$http_root/scripts/http2-soak.sh"
+    run_h2spec
     ;;
   nightly)
     FLYOLOGY_HTTP2_SOAK_SECONDS=${FLYOLOGY_HTTP2_SOAK_SECONDS:-1800.0}
@@ -334,6 +403,7 @@ case "$command" in
     export FLYOLOGY_HTTP2_SOAK_SEEDS
     "$http_root/scripts/http2-interop.sh" all
     "$http_root/scripts/http2-soak.sh"
+    run_h2spec
     ;;
   all)
     run_codecs
@@ -343,7 +413,7 @@ case "$command" in
     ;;
   *)
     printf '%s\n' \
-      "usage: $0 {prepare|codecs|client|server|showcase|interop|faults|soak|qualification|nightly|all}" >&2
+      "usage: $0 {prepare|codecs|client|server|h2spec|showcase|interop|faults|soak|qualification|nightly|all}" >&2
     exit 2
     ;;
 esac

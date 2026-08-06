@@ -21,13 +21,17 @@ alr build
 ./scripts/test.sh
 ./scripts/http2-test.sh prepare
 ./scripts/http2-test.sh all
+# Optional Docker-based server protocol qualification:
+./scripts/http2-test.sh h2spec
 ```
 
 The test runner prepares a version-matched Flyology runtime, builds the HTTP
 library as a separate GPR library, and runs its client, server, WebSocket, TLS,
 policy, and negative lifetime tests. The separate HTTP/2 command uses a pinned
 python-hyper/h2 peer for ALPN, prior-knowledge, multiplexing, flow-control, and
-retry interoperability, plus differential HPACK testing.
+retry interoperability, plus differential HPACK testing. The explicit
+`h2spec` target runs the pinned h2spec 2.6.0 image against the cleartext server
+adapter; it requires Docker and is also part of `qualification` and `nightly`.
 
 ## Use with Alire
 
@@ -65,9 +69,14 @@ same routes and middleware as HTTP/1.1. The raw HTTP/1.x `Server.Connection`
 API is not emulated because HTTP/2 has concurrent stream rather than
 connection-scoped response state. HTTP/2 does not currently provide h2c
 Upgrade, server push, extended CONNECT/WebSockets, or HTTP/1.1 fallback inside
-the HTTP/2 connection adapter. On the client, borrowed streaming request
-sources and `Expect: 100-continue` remain HTTP/1.1-only. The library does not
-provide proxying or content decoding. It is experimental and does not claim
-production qualification.
+the HTTP/2 connection adapter. Cleartext deployments can use HTTP/2 prior
+knowledge, while TLS deployments can use ALPN and route HTTP/1.1 and HTTP/2
+through the same `Routing.Router`. Server push is deliberately not exposed;
+the client disables it and applications should use ordinary routed responses.
+Extended CONNECT needs a stream-oriented tunnel API rather than the existing
+HTTP/1.1 connection-borrowing WebSocket API. On the client, borrowed streaming
+request sources and `Expect: 100-continue` remain HTTP/1.1-only. The library
+does not provide proxying or content decoding. It is experimental and does not
+claim production qualification.
 
 Flyology HTTP is dual-licensed under MIT or Apache-2.0.
