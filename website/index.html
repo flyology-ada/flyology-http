@@ -37,16 +37,43 @@
           <p class="hero-lede">Make bounded requests through an origin-bound client, or build an application server from routing, middleware, streaming, SSE, and WebSockets. The synchronous Ada API works from native and lightweight tasks.</p>
           <div class="actions"><a class="button button-primary" href="guide/client/">Make a request <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10h11M11 6l4 4-4 4"/></svg></a><a class="button button-secondary" href="guide/server/">Build a server</a></div>
         </div>
-        <div class="hero-visual" aria-label="Request and response pass through a bounded HTTP exchange">
-          <div class="code-window"><div class="code-titlebar"><div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div><span>one_exchange.adb</span></div><pre><code class="language-ada">Response := Client.Get
-  (HTTP, "/status",
-   Timeout =&gt; 2.0);
+        <div class="hero-visual" data-code-preview aria-label="Switch between Flyology HTTP client and server examples">
+          <div class="orbit" aria-hidden="true">
+            <div class="orbit-ring"></div>
+            <img class="orbit-mark" src="assets/brand/flyology-mark-transparent.svg" alt="">
+          </div>
+          <div class="model-switcher" role="group" aria-label="Preview a Flyology HTTP direction">
+            <button class="model-note model-note-light" type="button" data-preview-sample="client" data-preview-file="http_client.adb" aria-pressed="true" aria-controls="hero-code-preview">
+              <strong>Client</strong>
+              <span class="model-direction">Origin · pool · deadline</span>
+              Retains only explicitly bounded transport and response state.
+            </button>
+            <button class="model-note model-note-native" type="button" data-preview-sample="server" data-preview-file="http_server.adb" aria-pressed="false" aria-controls="hero-code-preview">
+              <strong>Server</strong>
+              <span class="model-direction">Route · exchange · response</span>
+              Keeps connection ownership and framing in one handler.
+            </button>
+          </div>
+          <div class="code-window" id="hero-code-preview">
+            <div class="code-titlebar">
+              <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <span data-preview-filename aria-live="polite">http_client.adb</span>
+            </div>
+            <pre class="hero-code-sample" data-preview-code="client"><code class="language-ada">Response : Client.Response :=
+  Client.Get
+    (HTTP, "/status",
+     Timeout =&gt; 2.0);
 
-App.Get
+Body := Client.Read_All
+  (Response, Maximum =&gt; 64 * 1_024);</code></pre>
+            <pre class="hero-code-sample" data-preview-code="server" hidden><code class="language-ada">State.Routes.Get
   ("/status",
    Status'Access,
-   Name =&gt; "status");</code></pre></div>
-          <div class="model-switcher"><div class="model-note model-note-light"><strong>Client</strong><span class="model-direction">origin · pool · deadline</span>Retains only explicitly bounded transport and response state.</div><div class="model-note model-note-native"><strong>Server</strong><span class="model-direction">route · exchange · response</span>Keeps connection ownership and framing in one handler.</div></div>
+   Name =&gt; "status");
+
+Server_Instance.Serve
+  (Server, Listener, State);</code></pre>
+          </div>
         </div>
       </section>
       <div class="status-strip" aria-label="Flyology HTTP properties"><div class="status-inner"><div class="status-item"><strong>Synchronous Ada calls</strong>The same API works in both Flyology task lanes.</div><div class="status-item"><strong>Bounded retention</strong>Pools, bodies, mailboxes, and admission have declared limits.</div><div class="status-item"><strong>Explicit lifecycle</strong>Deadlines, cancellation, shutdown, and ownership remain visible.</div></div></div>
