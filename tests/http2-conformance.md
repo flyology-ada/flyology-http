@@ -28,6 +28,9 @@ python-hyper/h2 rather than Flyology HTTP code and exercises:
 
 The peer requires `h2==4.3.0`. It uses the repository's generated TLS fixture
 and writes JSON-lines wire observations for assertions by the Ada test runner.
+The same peer also exercises the maintained `http_client_cli` showcase over
+required TLS HTTP/2, negotiated HTTP/1.1 fallback, and cleartext prior
+knowledge, including its reported negotiated protocol.
 It can be complemented by an `nghttpd` interoperability run when that tool is
 available. `h2spec` targets servers, so it is useful for a future Flyology
 HTTP/2 server but is not the primary client tester.

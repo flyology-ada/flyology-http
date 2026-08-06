@@ -24,6 +24,17 @@ build_test () {
     -P "$http_root/tests/http_tests.gpr" "$main.adb"
 }
 
+build_showcase_client () {
+  alr=$("$http_root/scripts/find-alr.sh")
+  "$http_root/showcases/prepare-alire.sh" >/dev/null
+  (
+    cd "$http_root/showcases"
+    "$alr" exec -- env -u GPR_CONFIG gprbuild \
+      --RTS="$http_root/build/rts" \
+      -P showcases.gpr http_client_cli.adb
+  )
+}
+
 run_codecs () {
   require_tester
   build_test flyology-http-http_2_hpack-differential http2-differential
@@ -108,6 +119,122 @@ run_client () {
   done
 }
 
+run_showcase_case () {
+  showcase_scenario=$1
+  showcase_option=$2
+  showcase_scheme=$3
+  showcase_expected=$4
+  run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2-cli.XXXXXX")
+  port_file="$run_dir/port"
+  log_file="$run_dir/events.jsonl"
+  error_file="$run_dir/stderr"
+  cleartext=
+  if [ "$showcase_scheme" = http ]; then
+    cleartext=--cleartext
+  fi
+  "$python" "$http_root/tests/http2_peer.py" "$showcase_scenario" \
+    --certificate "$http_root/tests/fixtures/tls/server-cert.pem" \
+    --private-key "$http_root/tests/fixtures/tls/server-key.pem" \
+    --port-file "$port_file" --log-file "$log_file" $cleartext &
+  peer_pid=$!
+  ready=false
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if [ -s "$port_file" ]; then
+      ready=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$ready" != true ]; then
+    kill "$peer_pid" 2>/dev/null || :
+    wait "$peer_pid" 2>/dev/null || :
+    rm -rf "$run_dir"
+    printf '%s\n' "HTTP/2 showcase peer did not become ready" >&2
+    exit 1
+  fi
+  port=$(tr -d '\r\n' <"$port_file")
+  if [ "$showcase_scheme" = https ]; then
+    if ! showcase_output=$("$http_root/showcases/bin/http_client_cli" \
+      -v "$showcase_option" \
+      --ca-file "$http_root/tests/fixtures/tls/server-cert.pem" \
+      "$showcase_scheme://localhost:$port/" 2>"$error_file")
+    then
+      kill "$peer_pid" 2>/dev/null || :
+      wait "$peer_pid" 2>/dev/null || :
+      sed -n '1,120p' "$error_file" >&2
+      sed -n '1,120p' "$log_file" >&2
+      rm -rf "$run_dir"
+      exit 1
+    fi
+  else
+    if ! showcase_output=$("$http_root/showcases/bin/http_client_cli" \
+      -v "$showcase_option" \
+      "$showcase_scheme://localhost:$port/" 2>"$error_file")
+    then
+      kill "$peer_pid" 2>/dev/null || :
+      wait "$peer_pid" 2>/dev/null || :
+      sed -n '1,120p' "$error_file" >&2
+      sed -n '1,120p' "$log_file" >&2
+      rm -rf "$run_dir"
+      exit 1
+    fi
+  fi
+  wait "$peer_pid"
+  test "$showcase_output" = "$showcase_expected"
+  if [ "$showcase_scenario" = fallback ]; then
+    grep -q '^< HTTP/1.1 200 OK$' "$error_file"
+    expected_alpn=http/1.1
+  else
+    grep -q '^< HTTP/2 200$' "$error_file"
+    expected_alpn=$(if [ "$showcase_scheme" = http ]; then printf h2c; else printf h2; fi)
+  fi
+  PYTHONDONTWRITEBYTECODE=1 "$python" -c \
+    'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; connected=[e for e in events if e["event"]=="connected"]; assert len(connected)==1; assert connected[0]["alpn"]==sys.argv[2]; assert sum(e["event"]=="request" for e in events)==1' \
+    "$log_file" "$expected_alpn"
+  rm -rf "$run_dir"
+  printf '%s\n' "HTTP/2 showcase CLI: PASS $showcase_option/$showcase_scenario"
+}
+
+run_showcase_usage () {
+  usage_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2-cli-usage.XXXXXX")
+  "$http_root/showcases/bin/http_client_cli" --help >"$usage_dir/help"
+  grep -q -- '--http2-only' "$usage_dir/help"
+  grep -q -- '--http2-prior-knowledge' "$usage_dir/help"
+  if "$http_root/showcases/bin/http_client_cli" \
+    --http1.1 --http2 https://localhost/ \
+    >"$usage_dir/output" 2>"$usage_dir/error"
+  then
+    rm -rf "$usage_dir"
+    printf '%s\n' "conflicting showcase HTTP modes were accepted" >&2
+    exit 1
+  fi
+  grep -q 'conflicts with another HTTP version option' "$usage_dir/error"
+  if "$http_root/showcases/bin/http_client_cli" \
+    --http2 http://localhost/ >"$usage_dir/output" 2>"$usage_dir/error"
+  then
+    rm -rf "$usage_dir"
+    printf '%s\n' "TLS HTTP/2 mode accepted a cleartext URL" >&2
+    exit 1
+  fi
+  grep -q -- '--http2-prior-knowledge' "$usage_dir/error"
+  rm -rf "$usage_dir"
+  printf '%s\n' "HTTP/2 showcase CLI: PASS option validation"
+}
+
+run_showcase () {
+  require_tester
+  if [ ! -d "$http_root/build/rts/adalib" ]; then
+    printf '%s\n' \
+      "prepared test runtime is unavailable; run: ./scripts/test.sh" >&2
+    exit 2
+  fi
+  build_showcase_client
+  run_showcase_usage
+  run_showcase_case basic --http2-only https flyology-http2
+  run_showcase_case fallback --http2 https fallback
+  run_showcase_case prior --http2-prior-knowledge http flyology-http2
+}
+
 case "$command" in
   prepare)
     python3 -m venv "$environment"
@@ -125,12 +252,16 @@ case "$command" in
   client)
     run_client
     ;;
+  showcase)
+    run_showcase
+    ;;
   all)
     run_codecs
     run_client
+    run_showcase
     ;;
   *)
-    printf '%s\n' "usage: $0 {prepare|codecs|client|all}" >&2
+    printf '%s\n' "usage: $0 {prepare|codecs|client|showcase|all}" >&2
     exit 2
     ;;
 esac

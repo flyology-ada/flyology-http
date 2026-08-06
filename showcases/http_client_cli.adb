@@ -22,6 +22,7 @@ procedure HTTP_Client_CLI is
 
    use type Ada.Streams.Stream_Element_Offset;
    use type Flyology.HTTP.Origin_Scheme;
+   use type Flyology.HTTP.Client.Protocol_Mode;
 
    Usage_Error : exception;
 
@@ -114,6 +115,14 @@ procedure HTTP_Client_CLI is
          "      --max-body BYTES     output bound; zero is unlimited" &
            ASCII.LF &
          "      --ca-file PATH       PEM trust file for HTTPS" & ASCII.LF &
+         "      --http1.1            require HTTP/1.1 (default)" &
+           ASCII.LF &
+         "      --http2              negotiate HTTP/2 with HTTP/1.1 fallback" &
+           ASCII.LF &
+         "      --http2-only         require HTTP/2 over HTTPS" & ASCII.LF &
+         "      --http2-prior-knowledge" & ASCII.LF &
+         "                           use HTTP/2 directly over cleartext HTTP" &
+           ASCII.LF &
          "  -f, --fail               fail without output for HTTP >= 400" &
            ASCII.LF &
          "  -v, --verbose            trace headers and transport diagnostics" &
@@ -138,6 +147,8 @@ procedure HTTP_Client_CLI is
       Fail_On_Status  : Boolean := False;
       HTTP_Failed     : Boolean := False;
       Verbose         : Boolean := False;
+      Protocol_Mode   : Client.Protocol_Mode := Client.HTTP_1_Only;
+      Protocol_Set    : Boolean := False;
       Index           : Positive := 1;
 
       function Next_Value (Option : String) return String is
@@ -164,6 +175,35 @@ procedure HTTP_Client_CLI is
             Trim_OWS (Value (Value'First .. Colon - 1)),
             Trim_OWS (Value (Colon + 1 .. Value'Last)));
       end Add_Header;
+
+      procedure Select_Protocol
+        (Value  : Client.Protocol_Mode;
+         Option : String)
+      is
+      begin
+         if Protocol_Set and then Protocol_Mode /= Value then
+            raise Usage_Error with
+              Option & " conflicts with another HTTP version option";
+         end if;
+         Protocol_Mode := Value;
+         Protocol_Set := True;
+      end Select_Protocol;
+
+      function Protocol_Selection return String is
+        (case Protocol_Mode is
+           when Client.HTTP_1_Only => "HTTP/1.1",
+           when Client.Negotiate_HTTP_2 =>
+             "HTTP/2 over ALPN with HTTP/1.1 fallback",
+           when Client.Require_HTTP_2 => "HTTP/2 over ALPN (required)",
+           when Client.HTTP_2_Prior_Knowledge =>
+             "HTTP/2 cleartext prior knowledge");
+
+      function Request_Protocol return String is
+        (case Protocol_Mode is
+           when Client.HTTP_1_Only => "HTTP/1.1",
+           when Client.Negotiate_HTTP_2 => "HTTP/2-or-HTTP/1.1",
+           when Client.Require_HTTP_2 | Client.HTTP_2_Prior_Knowledge =>
+             "HTTP/2");
    begin
       while Index <= CLI.Argument_Count loop
          declare
@@ -209,6 +249,14 @@ procedure HTTP_Client_CLI is
             elsif Argument = "--ca-file" then
                CA_File := Unbounded.To_Unbounded_String
                  (Next_Value (Argument));
+            elsif Argument = "--http1.1" then
+               Select_Protocol (Client.HTTP_1_Only, Argument);
+            elsif Argument = "--http2" then
+               Select_Protocol (Client.Negotiate_HTTP_2, Argument);
+            elsif Argument = "--http2-only" then
+               Select_Protocol (Client.Require_HTTP_2, Argument);
+            elsif Argument = "--http2-prior-knowledge" then
+               Select_Protocol (Client.HTTP_2_Prior_Knowledge, Argument);
             elsif Argument in "-f" | "--fail" then
                Fail_On_Status := True;
             elsif Argument in "-v" | "--verbose" then
@@ -231,18 +279,35 @@ procedure HTTP_Client_CLI is
 
       declare
          Parts : constant URL_Parts := Parse_URL (Unbounded.To_String (URL));
+         Secure : constant Boolean :=
+           Flyology.HTTP.Scheme (Parts.Origin_Value) =
+             Flyology.HTTP.Secure_HTTPS;
          Pool  : constant Client.Pool_Configuration :=
            (Max_Idle                    => 0,
             Idle_Timeout                => 0.0,
             Max_Connection_Age          => 0.0,
             Max_Requests_Per_Connection => 1);
       begin
+         if Secure and then Protocol_Mode = Client.HTTP_2_Prior_Knowledge then
+            raise Usage_Error with
+              "--http2-prior-knowledge requires an http:// URL";
+         elsif not Secure
+           and then Protocol_Mode in
+             Client.Negotiate_HTTP_2 | Client.Require_HTTP_2
+         then
+            raise Usage_Error with
+              "--http2 and --http2-only require an https:// URL; " &
+              "use --http2-prior-knowledge for cleartext HTTP/2";
+         end if;
          Client.Set_Target (Request, Unbounded.To_String (Parts.Target));
          if Verbose then
             Text_IO.Put_Line
               (Text_IO.Standard_Error,
+               "* protocol selection: " & Protocol_Selection);
+            Text_IO.Put_Line
+              (Text_IO.Standard_Error,
                "> " & Unbounded.To_String (Trace_Method) & " " &
-                 Unbounded.To_String (Parts.Target) & " HTTP/1.1");
+                 Unbounded.To_String (Parts.Target) & " " & Request_Protocol);
             Text_IO.Put_Line
               (Text_IO.Standard_Error,
                "> Host: " & Host_Field (Parts.Origin_Value));
@@ -263,15 +328,22 @@ procedure HTTP_Client_CLI is
             end if;
             Text_IO.Put_Line (Text_IO.Standard_Error, ">");
          end if;
-         if Flyology.HTTP.Scheme (Parts.Origin_Value) =
-           Flyology.HTTP.Secure_HTTPS
-         then
+         if Secure then
             OpenSSL.Initialize_Client
               (Backend, CA_File => Unbounded.To_String (CA_File));
-            Client.Configure
-              (HTTP, Parts.Origin_Value, Backend'Access, Pool);
-         else
+            if Protocol_Mode = Client.HTTP_1_Only then
+               Client.Configure
+                 (HTTP, Parts.Origin_Value, Backend'Access, Pool);
+            else
+               Client.Configure
+                 (HTTP, Parts.Origin_Value, Backend'Access, Protocol_Mode,
+                  Pool);
+            end if;
+         elsif Protocol_Mode = Client.HTTP_1_Only then
             Client.Configure (HTTP, Parts.Origin_Value, Pool);
+         else
+            Client.Configure
+              (HTTP, Parts.Origin_Value, Protocol_Mode, Pool);
          end if;
 
          declare
