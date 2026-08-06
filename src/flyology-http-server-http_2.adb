@@ -2187,6 +2187,14 @@ package body Flyology.HTTP.Server.HTTP_2 is
       end Process_Frame;
 
       procedure Parse_Input is
+         procedure Consume_Input (Count : Natural) is
+         begin
+            Input_Head := Input_Head + Count;
+            Input_Count := Input_Count - Count;
+            if Input_Count = 0 then
+               Input_Head := 0;
+            end if;
+         end Consume_Input;
       begin
          if not Preface_Received then
             if Input_Count < Client_Preface'Length then
@@ -2220,9 +2228,24 @@ package body Flyology.HTTP.Server.HTTP_2 is
                   Header : constant Frames.Header := Frames.Decode (Wire);
                   Total : constant Natural :=
                     Frames.Frame_Header_Size + Header.Length;
+                  Validity : constant Frames.Header_Validity :=
+                    Frames.Validate (Header);
                begin
-                  if Frames.Validate (Header) /= Frames.Valid_Header then
-                     Protocol_Failure;
+                  if Validity /= Frames.Valid_Header then
+                     --  For a malformed frame that fits the bounded input
+                     --  buffer, wait for and consume its declared payload.
+                     --  Closing a Linux socket while those bytes remain
+                     --  unread can replace the queued GOAWAY with TCP RST.
+                     if Total <= Input'Length and then Input_Count < Total then
+                        return;
+                     elsif Input_Count >= Total then
+                        Consume_Input (Total);
+                     end if;
+                     Protocol_Failure
+                       ((if Validity in
+                            Frames.Frame_Too_Large | Frames.Invalid_Length
+                         then Frames.Frame_Size_Error
+                         else Frames.Protocol_Error_Code));
                   elsif Input_Count < Total then
                      return;
                   end if;
@@ -2243,11 +2266,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
                      end if;
                      Process_Frame (Header, Payload);
                   end;
-                  Input_Head := Input_Head + Total;
-                  Input_Count := Input_Count - Total;
-                  if Input_Count = 0 then
-                     Input_Head := 0;
-                  end if;
+                  Consume_Input (Total);
                end;
             end;
          end loop;

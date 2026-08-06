@@ -391,6 +391,7 @@ case "$command" in
     "$http_root/scripts/http2-soak.sh"
     ;;
   qualification)
+    run_server
     "$http_root/scripts/http2-interop.sh" all
     "$http_root/scripts/http2-soak.sh"
     run_h2spec
@@ -401,6 +402,7 @@ case "$command" in
     FLYOLOGY_HTTP2_SOAK_SEEDS=${FLYOLOGY_HTTP2_SOAK_SEEDS:-1}
     export FLYOLOGY_HTTP2_SOAK_SECONDS FLYOLOGY_HTTP2_SOAK_MODELS
     export FLYOLOGY_HTTP2_SOAK_SEEDS
+    run_server
     "$http_root/scripts/http2-interop.sh" all
     "$http_root/scripts/http2-soak.sh"
     run_h2spec

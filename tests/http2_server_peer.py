@@ -90,6 +90,26 @@ class Peer:
                 raise AssertionError(f"timed out waiting for reset {stream_id}")
             self.pump()
 
+    def expect_connection_error(self, wire: bytes, error_code: int) -> None:
+        self.socket.sendall(wire)
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            try:
+                payload = self.socket.recv(65535)
+            except ConnectionResetError as error:
+                raise AssertionError(
+                    "server reset TCP before delivering GOAWAY"
+                ) from error
+            if not payload:
+                break
+            for event in self.connection.receive_data(payload):
+                if isinstance(event, h2.events.ConnectionTerminated):
+                    assert event.error_code == error_code
+                    return
+        raise AssertionError(
+            f"server did not deliver GOAWAY error code {error_code}"
+        )
+
     def upload(self, path: str, body: bytes) -> int:
         stream_id = self.request("POST", path, end_stream=False)
         offset = 0
@@ -176,7 +196,12 @@ def run(port: int, tls: bool, certificate: str) -> None:
     assert status(peer.headers[echoed]) == "200"
     assert bytes(peer.bodies[echoed]) == b"e" * (96 * 1024)
 
-    peer.close()
+    #  Invalid PING length is a connection FRAME_SIZE_ERROR. Include the full
+    #  malformed payload and require GOAWAY to be observable before TCP close;
+    #  Linux otherwise exposes unread payload at close as ECONNRESET.
+    malformed_ping = b"\x00\x00\x07\x06\x00\x00\x00\x00\x00" + b"x" * 7
+    peer.expect_connection_error(malformed_ping, error_code=6)
+    peer.socket.close()
 
 
 def main() -> None:
