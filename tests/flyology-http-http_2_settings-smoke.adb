@@ -37,6 +37,9 @@ begin
       Payload : constant Ada.Streams.Stream_Element_Array := Initial_Payload;
    begin
       pragma Assert
-        (Payload = (0, 2, 0, 0, 0, 0, 0, 6, 0, 0, 64, 0));
+        (Payload =
+           (0, 2, 0, 0, 0, 0,
+            0, 6, 0, 0, 64, 0,
+            0, 4, 0, 0, 64, 0));
    end;
 end Flyology.HTTP.HTTP_2_Settings.Smoke;

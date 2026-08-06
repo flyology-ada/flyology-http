@@ -105,7 +105,7 @@ begin
           else Client.Require_HTTP_2));
    end if;
 
-   if Scenario = "multiplex" then
+   if Scenario in "multiplex" | "continuation" | "peer-capacity" then
       declare
          Results : Outcome (2);
          task type Caller (Second : Boolean) is
@@ -117,6 +117,9 @@ begin
          begin
             Client.Set_Target
               (Value, (if Second then "/second" else "/first"));
+            if Scenario = "continuation" then
+               Client.Add_Header (Value, "x-large", (1 .. 16_000 => 'x'));
+            end if;
             declare
                Reply : Client.Response :=
                  Client.Execute (Item, Value, Timeout => 30.0);
@@ -127,8 +130,9 @@ begin
                  (Client.Negotiated_Protocol (Reply) =
                     Flyology.HTTP.HTTP_2_Protocol
                     and then
-                      (Content = "first-response"
-                         or else Content = "second"));
+                      (if Scenario = "multiplex"
+                       then Content in "first-response" | "second"
+                       else Content = "flyology-http2"));
             end;
          exception
             when Event : others =>
@@ -144,6 +148,112 @@ begin
             raise Program_Error with Results.Detail;
          end if;
       end;
+   elsif Scenario = "shutdown-race" then
+      declare
+         protected type Gate is
+            procedure Mark_Ready;
+            entry Await_Ready;
+            procedure Release;
+            entry Await_Release;
+         private
+            Ready    : Boolean := False;
+            Released : Boolean := False;
+         end Gate;
+
+         protected body Gate is
+            procedure Mark_Ready is
+            begin
+               Ready := True;
+            end Mark_Ready;
+
+            entry Await_Ready when Ready is
+            begin
+               null;
+            end Await_Ready;
+
+            procedure Release is
+            begin
+               Released := True;
+            end Release;
+
+            entry Await_Release when Released is
+            begin
+               null;
+            end Await_Release;
+         end Gate;
+
+         Sync    : Gate;
+         Results : Outcome (2);
+
+         task Caller is
+            pragma Task_Info (Model);
+         end Caller;
+
+         task body Caller is
+            Value : Client.Request;
+         begin
+            Client.Set_Target (Value, "/shutdown-race");
+            declare
+               Reply : constant Client.Response :=
+                 Client.Execute (Item, Value, Timeout => 30.0);
+            begin
+               pragma Assert (Client.Status (Reply) = 200);
+               Sync.Mark_Ready;
+               Sync.Await_Release;
+            end;
+            Results.Report (True);
+         exception
+            when Event : others =>
+               Sync.Mark_Ready;
+               Sync.Release;
+               Results.Report
+                 (False, Ada.Exceptions.Exception_Information (Event));
+         end Caller;
+
+         task Stopper is
+            pragma Task_Info (Model);
+         end Stopper;
+
+         task body Stopper is
+         begin
+            Sync.Await_Ready;
+            Sync.Release;
+            Client.Shutdown (Item, Timeout => 5.0);
+            Results.Report (True);
+         exception
+            when Event : others =>
+               Results.Report
+                 (False, Ada.Exceptions.Exception_Information (Event));
+         end Stopper;
+      begin
+         Results.Await_All;
+         if not Results.Passed then
+            raise Program_Error with Results.Detail;
+         end if;
+      end;
+   elsif Scenario = "reset-race" then
+      declare
+         First : Client.Request;
+      begin
+         Client.Set_Target (First, "/reset-race");
+         declare
+            Reply : constant Client.Response :=
+              Client.Execute (Item, First, Timeout => 30.0);
+         begin
+            pragma Assert (Client.Status (Reply) = 200);
+         end;
+      end;
+      declare
+         Second : Client.Request;
+      begin
+         Client.Set_Target (Second, "/after-reset");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (Item, Second, Timeout => 30.0);
+         begin
+            Check_Body (Reply, "flyology-http2");
+         end;
+      end;
    else
       declare
          Results : Outcome (1);
@@ -155,7 +265,7 @@ begin
             Value : Client.Request;
          begin
             Client.Set_Target (Value, "/" & Scenario);
-            if Scenario = "upload" then
+            if Scenario in "upload" | "early-final" then
                declare
                   type Payload_Access is access
                     Ada.Streams.Stream_Element_Array;
@@ -171,10 +281,17 @@ begin
                   Client.Set_Body (Value, Payload.all);
                   Free (Payload);
                end;
+               if Scenario = "early-final" then
+                  Client.Set_Method
+                    (Value, Flyology.HTTP.To_Method ("POST"));
+               end if;
             elsif Scenario = "refused-post" then
                Client.Set_Method (Value, Flyology.HTTP.To_Method ("POST"));
             end if;
-            if Scenario in "require-failure" | "refused-post" then
+            if Scenario in
+              "require-failure" | "refused-post" | "bad-preface" |
+              "informational-end"
+            then
                begin
                   declare
                      Reply : Client.Response :=
@@ -195,6 +312,21 @@ begin
                begin
                   if Scenario = "flow" then
                      Check_Flow (Reply);
+                  elsif Scenario = "early-final" then
+                     pragma Assert (Client.Status (Reply) = 413);
+                     pragma Assert
+                       (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
+                  elsif Scenario = "zero-read" then
+                     declare
+                        Empty : Ada.Streams.Stream_Element_Array (1 .. 0);
+                        Last : Ada.Streams.Stream_Element_Offset;
+                        Finished : Boolean;
+                     begin
+                        Client.Read_Body (Reply, Empty, Last, Finished);
+                        pragma Assert (Last = Empty'First - 1);
+                        pragma Assert (not Finished);
+                     end;
+                     Check_Body (Reply, "flyology-http2");
                   elsif Scenario = "fallback" then
                      pragma Assert
                        (Client.Negotiated_Protocol (Reply) =

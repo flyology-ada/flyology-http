@@ -31,6 +31,10 @@ protected body Pool_Controller is
             if Slots (Index).Phase = Shared
               and then Slots (Index).Active_Streams <
                 H2_Connections.Maximum_Concurrent_Streams
+              and then Slots (Index).Connection /= null
+              and then Slots (Index).Connection.HTTP_2 /= null
+              and then H2_Connections.Can_Open
+                (Slots (Index).Connection.HTTP_2.all)
             then
                declare
                   Idle_Age : constant Duration := Ada.Real_Time.To_Duration
@@ -141,7 +145,11 @@ protected body Pool_Controller is
               or else
                 (Item.Phase = Shared
                    and then Item.Active_Streams <
-                     H2_Connections.Maximum_Concurrent_Streams)
+                     H2_Connections.Maximum_Concurrent_Streams
+                   and then Item.Connection /= null
+                   and then Item.Connection.HTTP_2 /= null
+                   and then H2_Connections.Can_Open
+                     (Item.Connection.HTTP_2.all))
             then
                Available_After := True;
                exit;

@@ -73,7 +73,8 @@ package body Flyology.HTTP.HTTP_2_Settings is
    end Apply;
 
    function Initial_Payload return Ada.Streams.Stream_Element_Array is
-      --  SETTINGS_ENABLE_PUSH = 0 and the retained response-list bound.
+      --  SETTINGS_ENABLE_PUSH = 0, the retained response-list bound, and a
+      --  per-stream window that reserves connection credit for other streams.
       use Ada.Streams;
    begin
       return
@@ -85,7 +86,16 @@ package body Flyology.HTTP.HTTP_2_Settings is
          11 => Stream_Element
            (Interfaces.Shift_Right (Advertised_Header_List_Size, 8)
               and 16#FF#),
-         12 => Stream_Element (Advertised_Header_List_Size and 16#FF#));
+         12 => Stream_Element (Advertised_Header_List_Size and 16#FF#),
+         13 => 0, 14 => Initial_Window_Size_Id,
+         15 => 0,
+         16 => Stream_Element
+           (Interfaces.Shift_Right (Advertised_Initial_Window_Size, 16)),
+         17 => Stream_Element
+           (Interfaces.Shift_Right (Advertised_Initial_Window_Size, 8)
+              and 16#FF#),
+         18 => Stream_Element
+           (Advertised_Initial_Window_Size and 16#FF#));
    end Initial_Payload;
 
 end Flyology.HTTP.HTTP_2_Settings;

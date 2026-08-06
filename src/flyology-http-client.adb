@@ -296,6 +296,23 @@ package body Flyology.HTTP.Client is
          else ":" & Decimal (Natural (Port (Value))));
    end Host_Field;
 
+   procedure Dispose_Connection
+     (Connection : in out Pooled_Connection_Access) is
+   begin
+      if Connection = null then
+         return;
+      end if;
+      begin
+         Connections.Close (Connection.Channel);
+      exception
+         when others => null;
+      end;
+      if Connection.HTTP_2 /= null then
+         H2_Connections.Destroy (Connection.HTTP_2);
+      end if;
+      Free_Connection (Connection);
+   end Dispose_Connection;
+
    procedure Close_And_Finish
      (Owner      : not null Client_State_Access;
       Slot_Index : Positive;
@@ -312,15 +329,7 @@ package body Flyology.HTTP.Client is
                when others => null;
             end;
          end if;
-         begin
-            Connections.Close (Connection.Channel);
-         exception
-            when others => null;
-         end;
-         if Connection.HTTP_2 /= null then
-            H2_Connections.Destroy (Connection.HTTP_2);
-         end if;
-         Free_Connection (Connection);
+         Dispose_Connection (Connection);
       end if;
       Owner.Pool.Finish_Close (Slot_Index);
    end Close_And_Finish;
@@ -344,7 +353,7 @@ package body Flyology.HTTP.Client is
          Owner.Pool.Finish_Interrupt
            (Positive (Slot_Index), Release_Ownership, Released);
          if Release_Ownership and then Released /= null then
-            Free_Connection (Released);
+            Dispose_Connection (Released);
          end if;
       end loop;
    end Interrupt_Active;
@@ -900,12 +909,15 @@ package body Flyology.HTTP.Client is
                   H2_Connections.Open
                     (Result.Data.Connection.HTTP_2.all,
                      Flyology.Bytes.To_Array (Header_Block),
-                     Flyology.Bytes.To_Array (Value.Body_Value),
+                     Value.Body_Value,
                      Image (Value.Method_Value) = "HEAD",
                      Handle, Accepted);
                end;
                if not Accepted then
-                  Release_Lease (Result.Data.all, False);
+                  Release_Lease
+                    (Result.Data.all,
+                     H2_Connections.Is_Usable
+                       (Result.Data.Connection.HTTP_2.all));
                   Reset_Attempt (Result.Data.all);
                   Retry := True;
                   return;

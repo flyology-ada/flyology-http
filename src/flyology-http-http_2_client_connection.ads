@@ -1,4 +1,5 @@
 with Ada.Streams;
+with Flyology.Bytes;
 with Flyology.HTTP.Headers;
 with Flyology.IO;
 with Flyology.IO.Connections;
@@ -44,13 +45,17 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
    --  Return whether the peer still permits new locally initiated streams.
    function Is_Usable (Item : Session) return Boolean;
 
+   --  Return whether the connection currently has both local and peer stream
+   --  capacity for one more request.
+   function Can_Open (Item : Session) return Boolean;
+
    --  Open one request stream.  Header_Block is a complete HPACK field
    --  section.  Retained_Body remains copied into bounded protocol state until
    --  it is emitted under peer flow control.
    procedure Open
      (Item          : in out Session;
       Header_Block  : Ada.Streams.Stream_Element_Array;
-      Retained_Body : Ada.Streams.Stream_Element_Array;
+      Retained_Body : Flyology.Bytes.Unbounded_Bytes;
       Head_Request  : Boolean;
       Handle        : out Stream_Handle;
       Accepted      : out Boolean);

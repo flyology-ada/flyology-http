@@ -36,7 +36,7 @@ run_client () {
   require_tester
   build_test http2_client_integration http2-integration
   for model in native lightweight; do
-    for scenario in basic prior fallback require-failure multiplex flow upload goaway refused refused-post; do
+    for scenario in basic prior fallback require-failure multiplex continuation peer-capacity flow upload early-final reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post; do
       run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2.XXXXXX")
       port_file="$run_dir/port"
       log_file="$run_dir/events.jsonl"
@@ -80,13 +80,23 @@ run_client () {
       fi
       wait "$peer_pid"
       case "$scenario" in
-        multiplex|goaway|refused) expected_requests=2 ;;
-        require-failure) expected_requests=0 ;;
+        multiplex|continuation|peer-capacity|reset-race|goaway|refused) expected_requests=2 ;;
+        require-failure|bad-preface) expected_requests=0 ;;
         *) expected_requests=1 ;;
       esac
       PYTHONDONTWRITEBYTECODE=1 "$python" -c \
         'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; connected=[e for e in events if e["event"]=="connected"]; assert connected; assert sys.argv[3] in ("fallback","require-failure") or connected[0]["alpn"] in ("h2","h2c"); assert sum(e["event"]=="request" for e in events)==int(sys.argv[2])' \
         "$log_file" "$expected_requests" "$scenario"
+      if [ "$scenario" = reset-race ]; then
+        PYTHONDONTWRITEBYTECODE=1 "$python" -c \
+          'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; assert sum(e["event"]=="connected" for e in events)==1; assert any(e["event"]=="late-data" for e in events)' \
+          "$log_file"
+      fi
+      if [ "$scenario" = early-final ]; then
+        PYTHONDONTWRITEBYTECODE=1 "$python" -c \
+          'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; assert any(e["event"]=="client-reset" for e in events)' \
+          "$log_file"
+      fi
       if [ "$scenario" = upload ]; then
         PYTHONDONTWRITEBYTECODE=1 "$python" -c \
           'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; assert any(e["event"]=="request-body" and e["bytes"]==256*1024 for e in events)' \

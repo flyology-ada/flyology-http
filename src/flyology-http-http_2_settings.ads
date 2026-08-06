@@ -11,6 +11,8 @@ private package Flyology.HTTP.HTTP_2_Settings is
    subtype Setting_Value is Interfaces.Unsigned_32;
    Advertised_Header_List_Size : constant Setting_Value :=
      Setting_Value (Flyology.HTTP.Headers.Default_Max_Bytes);
+   Advertised_Initial_Window_Size : constant Setting_Value :=
+     Setting_Value (16_384);
 
    type State is record
       Header_Table_Size      : Setting_Value := 4_096;
@@ -34,7 +36,7 @@ private package Flyology.HTTP.HTTP_2_Settings is
       Result  : out Apply_Result);
 
    --  Encode the initial client settings: disable server push and advertise
-   --  the bounded decoded header-list size.
+   --  bounded decoded-header and per-stream receive windows.
    function Initial_Payload return Ada.Streams.Stream_Element_Array;
 
 end Flyology.HTTP.HTTP_2_Settings;

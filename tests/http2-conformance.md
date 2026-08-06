@@ -11,8 +11,18 @@ python-hyper/h2 rather than Flyology HTTP code and exercises:
 - cleartext HTTP/2 prior knowledge without Upgrade;
 - a basic request and response;
 - two multiplexed streams with interleaved response DATA;
+- concurrent request field sections that require CONTINUATION frames;
+- peer-advertised single-stream capacity and pool backpressure;
 - a response larger than the initial flow-control window;
 - a retained upload larger than the initial flow-control window;
+- an early final response that cancels an unfinished retained upload;
+- DATA racing with a locally reset stream while another request reuses the
+  connection;
+- zero-length application reads without invalid flow-control updates;
+- rejection of a non-SETTINGS server preface and an informational response
+  carrying END_STREAM;
+- bounded processing of an 8,000-frame PING and extension-frame flood;
+- concurrent response finalization and client shutdown;
 - graceful GOAWAY with a provably unprocessed stream; and
 - REFUSED_STREAM retry behavior, including the no-retry rule for POST.
 

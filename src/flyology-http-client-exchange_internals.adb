@@ -336,7 +336,7 @@ package body Exchange_Internals is
                         Item.Control.State.Pool.Creation_Failed
                           (Positive (Index), Failure);
                         if Failure = Failure_Free and then Value /= null then
-                           Free_Connection (Value);
+                           Dispose_Connection (Value);
                         end if;
                      end;
                      if Waiting then

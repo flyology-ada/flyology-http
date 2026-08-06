@@ -12,6 +12,7 @@ import argparse
 import json
 import socket
 import ssl
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
@@ -90,6 +91,18 @@ def serve_connection(
     if not cleartext and channel.selected_alpn_protocol() != "h2":
         raise RuntimeError("client did not negotiate h2")
 
+    if state.scenario == "bad-preface":
+        state.record(
+            "connected", alpn="h2c" if cleartext else channel.selected_alpn_protocol()
+        )
+        channel.sendall(b"\x00\x00\x08\x06\x00\x00\x00\x00\x00badfirst")
+        state.record("bad-preface")
+        try:
+            channel.recv(65_535)
+        except (ConnectionResetError, ssl.SSLError):
+            pass
+        return False
+
     connection = H2Connection(
         config=H2Configuration(client_side=False, header_encoding="utf-8")
     )
@@ -97,6 +110,8 @@ def serve_connection(
     # default. RFC 9113 forbids a server from sending this setting.
     del connection.local_settings[SettingCodes.ENABLE_PUSH]
     connection.initiate_connection()
+    if state.scenario == "peer-capacity":
+        connection.update_settings({SettingCodes.MAX_CONCURRENT_STREAMS: 1})
     channel.sendall(connection.data_to_send())
     state.record(
         "connected", alpn="h2c" if cleartext else channel.selected_alpn_protocol()
@@ -120,6 +135,13 @@ def serve_connection(
                     method=headers.get(":method"),
                     path=headers.get(":path"),
                 )
+                if state.scenario == "early-final":
+                    connection.send_headers(
+                        event.stream_id,
+                        [(":status", "413"), ("content-length", "0")],
+                        end_stream=True,
+                    )
+                    state.record("early-final", stream=event.stream_id)
             elif isinstance(event, DataReceived):
                 state.request_bytes[event.stream_id] = (
                     state.request_bytes.get(event.stream_id, 0) + len(event.data)
@@ -135,14 +157,53 @@ def serve_connection(
                         stream=stream_id,
                         bytes=state.request_bytes.get(stream_id, 0),
                     )
-                if state.scenario == "goaway" and state.request_count == 1:
+                if state.scenario == "early-final":
+                    pass
+                elif state.scenario == "informational-end":
+                    # Literal :status 103, carried in an invalid final
+                    # informational HEADERS frame.
+                    block = b"\x08\x03\x31\x30\x33"
+                    frame = bytes((0, 0, len(block), 1, 5, 0, 0, 0, stream_id))
+                    channel.sendall(frame + block)
+                    state.record("informational-end", stream=stream_id)
+                elif state.scenario == "reset-race" and state.request_count == 1:
+                    connection.send_headers(stream_id, [(":status", "200")])
+                    connection.send_data(stream_id, b"buffered", end_stream=False)
+                    channel.sendall(connection.data_to_send())
+                    time.sleep(0.1)
+                    connection.send_data(stream_id, b"late", end_stream=True)
+                    channel.sendall(connection.data_to_send())
+                    state.record("late-data", stream=stream_id)
+                elif state.scenario == "flood":
+                    unknown = b"\x00\x00\x00\x0f\x00\x00\x00\x00\x00"
+                    ping = b"\x00\x00\x08\x06\x00\x00\x00\x00\x00flooding"
+                    channel.sendall((unknown + ping) * 4_000)
+                    send_response(connection, stream_id)
+                    state.record("flood", frames=8_000)
+                elif state.scenario == "shutdown-race":
+                    connection.send_headers(
+                        stream_id,
+                        [(":status", "200"), ("content-length", str(len(BODY)))],
+                    )
+                    connection.send_data(stream_id, b"held", end_stream=False)
+                    state.record("shutdown-race", stream=stream_id)
+                elif state.scenario == "goaway" and state.request_count == 1:
                     connection.close_connection(
                         error_code=ErrorCodes.NO_ERROR, last_stream_id=0
                     )
                     state.record("goaway", last_stream=0)
                     channel.sendall(connection.data_to_send())
                     return True
-                if state.scenario == "refused" and not state.refused_once:
+                if state.scenario in {
+                    "early-final",
+                    "informational-end",
+                    "flood",
+                    "shutdown-race",
+                } or (
+                    state.scenario == "reset-race" and stream_id == 1
+                ):
+                    pass
+                elif state.scenario == "refused" and not state.refused_once:
                     state.refused_once = True
                     connection.reset_stream(stream_id, ErrorCodes.REFUSED_STREAM)
                     state.record("refused", stream=stream_id)
@@ -221,6 +282,8 @@ def main() -> None:
         choices=(
             "basic",
             "multiplex",
+            "continuation",
+            "peer-capacity",
             "flow",
             "goaway",
             "refused",
@@ -229,6 +292,13 @@ def main() -> None:
             "require-failure",
             "upload",
             "refused-post",
+            "early-final",
+            "reset-race",
+            "zero-read",
+            "bad-preface",
+            "informational-end",
+            "flood",
+            "shutdown-race",
         ),
     )
     parser.add_argument("--certificate", type=Path, required=True)
