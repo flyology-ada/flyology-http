@@ -43,7 +43,13 @@ is
       Truncated : Interfaces.Unsigned_64;
       Length    : Encoded_Length) return Packet_Number
    is
-      Expected  : constant Interfaces.Unsigned_64 := Largest + 1;
+     (Reconstruct_From_Expected (Largest + 1, Truncated, Length));
+
+   function Reconstruct_From_Expected
+     (Expected  : Packet_Number;
+      Truncated : Interfaces.Unsigned_64;
+      Length    : Encoded_Length) return Packet_Number
+   is
       PN_Window : constant Interfaces.Unsigned_64 := Window (Length);
       Half      : constant Interfaces.Unsigned_64 := PN_Window / 2;
       Candidate : Interfaces.Unsigned_64 :=
@@ -60,5 +66,5 @@ is
          Candidate := Candidate - PN_Window;
       end if;
       return Packet_Number (Candidate);
-   end Reconstruct;
+   end Reconstruct_From_Expected;
 end Flyology.QUIC.Packet_Number_Policy;

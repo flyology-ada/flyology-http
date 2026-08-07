@@ -17,4 +17,5 @@ begin
    pragma Assert (Reconstruct (16#01F0#, 16#10#, 1) = 16#0210#);
    pragma Assert (Reconstruct (16#01FF#, 16#F0#, 1) = 16#01F0#);
    pragma Assert (Reconstruct (16#00FF#, 16#80#, 1) = 16#0180#);
+   pragma Assert (Reconstruct_From_Expected (0, 2, 4) = 2);
 end Flyology.QUIC.Packet_Number_Policy.Smoke;

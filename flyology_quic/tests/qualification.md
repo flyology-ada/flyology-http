@@ -16,6 +16,14 @@ for the next layer.
   number gap representable by QUIC's four-byte packet-number field.
 - RFC 9001 Appendix A covers both v1 Initial traffic secrets, keys, IVs,
   header-protection keys, AES-GCM output, authentication tag, and header mask.
+- The complete RFC 9001 server Initial packet covers receive-side envelope
+  parsing, header unprotection, packet-number reconstruction, AAD and nonce
+  construction, AES-GCM authentication, and exact plaintext recovery.
+- Client payload encryption and decryption use the RFC 9001 client Initial
+  header, plaintext, ciphertext sample, authentication tag, and header mask.
+  Tag corruption and an incorrect reconstructed packet number are rejected
+  without releasing candidate plaintext; an authenticated packet with a set
+  reserved bit is rejected separately as a protocol violation.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

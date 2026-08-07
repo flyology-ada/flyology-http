@@ -1,6 +1,5 @@
 procedure Flyology.QUIC.Crypto_OpenSSL.Smoke is
    use type Ada.Streams.Stream_Element;
-   use type Ada.Streams.Stream_Element_Array;
    use type Ada.Streams.Stream_Element_Offset;
 
    function Nibble (Value : Character) return Natural is
@@ -77,6 +76,9 @@ begin
       Plaintext  : Ada.Streams.Stream_Element_Array (1 .. 1_162) :=
         (others => 0);
       Ciphertext : Ada.Streams.Stream_Element_Array (1 .. 1_178);
+      Decoded    : Ada.Streams.Stream_Element_Array (Plaintext'Range);
+      Tampered   : Ada.Streams.Stream_Element_Array (Ciphertext'Range);
+      Authenticated : Boolean;
       Nonce      : AES_GCM_IV := Keys.Client_IV;
       Sample     : Header_Sample;
       Mask       : Header_Mask;
@@ -93,6 +95,18 @@ begin
       pragma Assert
         (Ciphertext (Ciphertext'Last - 15 .. Ciphertext'Last) =
            Hex ("e221af44860018ab0856972e194cd934"));
+
+      Unprotect
+        (Backend, Keys.Client_Key, Nonce, Header, Ciphertext, Decoded,
+         Authenticated);
+      pragma Assert (Authenticated and then Decoded = Plaintext);
+      Tampered := Ciphertext;
+      Tampered (Tampered'Last) := Tampered (Tampered'Last) xor 1;
+      Unprotect
+        (Backend, Keys.Client_Key, Nonce, Header, Tampered, Decoded,
+         Authenticated);
+      pragma Assert (not Authenticated);
+      pragma Assert (Decoded = (Decoded'Range => 0));
 
       Make_Header_Mask (Backend, Keys.Client_HP, Sample, Mask);
       pragma Assert (Mask = Hex ("437b9aec36"));

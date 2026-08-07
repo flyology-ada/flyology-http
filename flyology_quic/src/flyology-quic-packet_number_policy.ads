@@ -51,4 +51,12 @@ is
      Pre =>
        Largest < Packet_Number'Last
        and then Truncated < Window (Length);
+
+   function Reconstruct_From_Expected
+     (Expected  : Packet_Number;
+      Truncated : Interfaces.Unsigned_64;
+      Length    : Encoded_Length) return Packet_Number
+   with
+     Global => null,
+     Pre => Truncated < Window (Length);
 end Flyology.QUIC.Packet_Number_Policy;

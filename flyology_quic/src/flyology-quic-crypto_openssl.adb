@@ -51,6 +51,20 @@ package body Flyology.QUIC.Crypto_OpenSSL is
       Error_Size        : C.size_t) return C.int;
    pragma Import (C, C_Protect, "flyology_quic_openssl_protect");
 
+   function C_Unprotect
+     (Handle            : System.Address;
+      Key               : System.Address;
+      Nonce             : System.Address;
+      Header            : System.Address;
+      Header_Length     : C.size_t;
+      Ciphertext        : System.Address;
+      Ciphertext_Length : C.size_t;
+      Plaintext         : System.Address;
+      Plaintext_Length  : C.size_t;
+      Error             : System.Address;
+      Error_Size        : C.size_t) return C.int;
+   pragma Import (C, C_Unprotect, "flyology_quic_openssl_unprotect");
+
    function C_Header_Mask
      (Handle     : System.Address;
       Key        : System.Address;
@@ -172,6 +186,42 @@ package body Flyology.QUIC.Crypto_OpenSSL is
          raise Crypto_Error with "OpenSSL: " & Image (Error);
       end if;
    end Protect;
+
+   procedure Unprotect
+     (Item          : Provider;
+      Key           : AES_128_Key;
+      Nonce         : AES_GCM_IV;
+      Header        : Ada.Streams.Stream_Element_Array;
+      Ciphertext    : Ada.Streams.Stream_Element_Array;
+      Plaintext     : out Ada.Streams.Stream_Element_Array;
+      Authenticated : out Boolean)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Plaintext := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Unprotect
+          (Item.Handle, Key (Key'First)'Address, Nonce (Nonce'First)'Address,
+           (if Header'Length = 0 then System.Null_Address
+            else Header (Header'First)'Address),
+           C.size_t (Header'Length), Ciphertext (Ciphertext'First)'Address,
+           C.size_t (Ciphertext'Length),
+           (if Plaintext'Length = 0 then System.Null_Address
+            else Plaintext (Plaintext'First)'Address),
+           C.size_t (Plaintext'Length), Error (Error'First)'Address,
+           C.size_t (Error'Length));
+      if Status = 0 then
+         Authenticated := True;
+      elsif Status = 1 then
+         Authenticated := False;
+      else
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Unprotect;
 
    procedure Make_Header_Mask
      (Item   : Provider;

@@ -35,6 +35,11 @@ struct quic_crypto_module {
    int (*EVP_EncryptUpdate)(EVP_CIPHER_CTX *, unsigned char *, int *,
                             const unsigned char *, int);
    int (*EVP_EncryptFinal_ex)(EVP_CIPHER_CTX *, unsigned char *, int *);
+   int (*EVP_DecryptInit_ex)(EVP_CIPHER_CTX *, const EVP_CIPHER *, void *,
+                             const unsigned char *, const unsigned char *);
+   int (*EVP_DecryptUpdate)(EVP_CIPHER_CTX *, unsigned char *, int *,
+                            const unsigned char *, int);
+   int (*EVP_DecryptFinal_ex)(EVP_CIPHER_CTX *, unsigned char *, int *);
 };
 
 static void set_error(char *buffer, size_t size, const char *message)
@@ -131,6 +136,9 @@ static struct quic_crypto_module *load_from_directory
    LOAD(module, EVP_EncryptInit_ex);
    LOAD(module, EVP_EncryptUpdate);
    LOAD(module, EVP_EncryptFinal_ex);
+   LOAD(module, EVP_DecryptInit_ex);
+   LOAD(module, EVP_DecryptUpdate);
+   LOAD(module, EVP_DecryptFinal_ex);
    return module;
 
 fail:
@@ -283,6 +291,7 @@ done:
 
 #define EVP_CTRL_AEAD_SET_IVLEN 0x9
 #define EVP_CTRL_AEAD_GET_TAG 0x10
+#define EVP_CTRL_AEAD_SET_TAG 0x11
 
 int flyology_quic_openssl_protect
   (void *handle, const unsigned char key[16], const unsigned char nonce[12],
@@ -333,6 +342,77 @@ int flyology_quic_openssl_protect
 done:
    if (context != NULL) module->EVP_CIPHER_CTX_free(context);
    return success ? 0 : -1;
+}
+
+int flyology_quic_openssl_unprotect
+  (void *handle, const unsigned char key[16], const unsigned char nonce[12],
+   const unsigned char *header, size_t header_length,
+   const unsigned char *ciphertext, size_t ciphertext_length,
+   unsigned char *plaintext, size_t plaintext_length,
+   char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   EVP_CIPHER_CTX *context = NULL;
+   unsigned char empty_output[1];
+   unsigned char *output;
+   size_t encrypted_length;
+   int produced = 0;
+   int final_length = 0;
+   int final_status;
+   int status = -1;
+
+   if (module == NULL || key == NULL || nonce == NULL ||
+       ciphertext == NULL || ciphertext_length < 16 ||
+       ciphertext_length - 16 > INT32_MAX || header_length > INT32_MAX ||
+       plaintext_length != ciphertext_length - 16 ||
+       (header_length != 0 && header == NULL) ||
+       (plaintext_length != 0 && plaintext == NULL)) {
+      set_error(error, error_size,
+                "invalid QUIC payload-unprotection arguments");
+      return -1;
+   }
+   encrypted_length = ciphertext_length - 16;
+   output = plaintext_length == 0 ? empty_output : plaintext;
+   module->ERR_clear_error();
+   context = module->EVP_CIPHER_CTX_new();
+   if (context == NULL ||
+       module->EVP_DecryptInit_ex(context, module->EVP_aes_128_gcm(), NULL,
+                                  NULL, NULL) != 1 ||
+       module->EVP_CIPHER_CTX_ctrl(context, EVP_CTRL_AEAD_SET_IVLEN,
+                                   12, NULL) != 1 ||
+       module->EVP_DecryptInit_ex(context, NULL, NULL, key, nonce) != 1 ||
+       (header_length != 0 &&
+        module->EVP_DecryptUpdate(context, NULL, &produced, header,
+                                  (int)header_length) != 1) ||
+       (encrypted_length != 0 &&
+        module->EVP_DecryptUpdate(context, output, &produced, ciphertext,
+                                  (int)encrypted_length) != 1) ||
+       module->EVP_CIPHER_CTX_ctrl
+         (context, EVP_CTRL_AEAD_SET_TAG, 16,
+          (void *)(ciphertext + encrypted_length)) != 1) {
+      provider_error(module, error, error_size,
+                     "OpenSSL QUIC payload unprotection failed");
+      goto done;
+   }
+
+   final_status = module->EVP_DecryptFinal_ex
+     (context, output + produced, &final_length);
+   if (final_status == 0) {
+      status = 1;
+      goto done;
+   }
+   if (final_status != 1 ||
+       (size_t)(produced + final_length) != plaintext_length) {
+      provider_error(module, error, error_size,
+                     "OpenSSL QUIC payload unprotection failed");
+      goto done;
+   }
+   status = 0;
+done:
+   if (status != 0 && plaintext != NULL)
+      module->OPENSSL_cleanse(plaintext, plaintext_length);
+   if (context != NULL) module->EVP_CIPHER_CTX_free(context);
+   return status;
 }
 
 int flyology_quic_openssl_header_mask

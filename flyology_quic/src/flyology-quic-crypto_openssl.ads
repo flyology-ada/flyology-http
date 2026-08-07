@@ -6,6 +6,8 @@ with System;
 --  OpenSSL supplies cryptography only; protocol state and wire handling remain
 --  in Ada.
 private package Flyology.QUIC.Crypto_OpenSSL is
+   use type Ada.Streams.Stream_Element_Array;
+
    subtype SHA256_Secret is Ada.Streams.Stream_Element_Array (1 .. 32);
    subtype AES_128_Key is Ada.Streams.Stream_Element_Array (1 .. 16);
    subtype AES_GCM_IV is Ada.Streams.Stream_Element_Array (1 .. 12);
@@ -49,6 +51,22 @@ private package Flyology.QUIC.Crypto_OpenSSL is
       Plaintext  : Ada.Streams.Stream_Element_Array;
       Ciphertext : out Ada.Streams.Stream_Element_Array)
    with Pre => Ciphertext'Length = Plaintext'Length + 16;
+
+   procedure Unprotect
+     (Item          : Provider;
+      Key           : AES_128_Key;
+      Nonce         : AES_GCM_IV;
+      Header        : Ada.Streams.Stream_Element_Array;
+      Ciphertext    : Ada.Streams.Stream_Element_Array;
+      Plaintext     : out Ada.Streams.Stream_Element_Array;
+      Authenticated : out Boolean)
+   with
+     Pre =>
+       Ciphertext'Length >= 16
+       and then Plaintext'Length = Ciphertext'Length - 16,
+     Post =>
+       Authenticated
+       or else Plaintext = (Plaintext'Range => 0);
 
    procedure Make_Header_Mask
      (Item   : Provider;
