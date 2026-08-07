@@ -948,6 +948,8 @@ package body Flyology.HTTP.Server is
       end if;
       Release_Buffered (Item);
       Item.Response_Begun := False;
+      Item.Current_Is_Head := False;
+      Item.Current_Version := HTTP_1_1;
       Peer_Closed := False;
       Value.Body_Value := Null_Unbounded_String;
       Item.Body_Mode := No_Body;
@@ -1018,6 +1020,7 @@ package body Flyology.HTTP.Server is
             "HTTP method");
          Value.Method_Value := To_Unbounded_String
            (Request_Line (Request_Line'First .. First_Space - 1));
+         Item.Current_Is_Head := Method (Value) = "HEAD";
          Value.Target_Value := To_Unbounded_String
            (Request_Line (First_Space + 1 .. Second_Space - 1));
          for Item of To_String (Value.Target_Value) loop
@@ -1037,6 +1040,7 @@ package body Flyology.HTTP.Server is
             else
                raise Protocol_Error with "unsupported HTTP version";
             end if;
+            Item.Current_Version := Value.Version_Value;
          end;
          Value.Header_Block :=
            (if Header_First > Head'Last
@@ -1154,8 +1158,6 @@ package body Flyology.HTTP.Server is
          else Header_Has_Token (Value, "Connection", "keep-alive")
            and then not Header_Has_Token (Value, "Connection", "close"));
       Item.Request_Close := not Value.Keep_Alive;
-      Item.Current_Is_Head := Method (Value) = "HEAD";
-      Item.Current_Version := Value.Version_Value;
    end Read_Request_Head;
 
    function Body_Time_Left (Item : Connection) return Duration is
