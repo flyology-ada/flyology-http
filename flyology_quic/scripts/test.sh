@@ -30,6 +30,7 @@ for test in \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
   flyology-quic-qpack_integer_policy-smoke \
+  flyology-quic-qpack_static_table-smoke \
   flyology-quic-stream_frame_policy-smoke \
   flyology-quic-tls_authentication_policy-smoke \
   flyology-quic-tls_extension_policy-smoke \
