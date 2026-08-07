@@ -18,6 +18,7 @@ for test in \
   flyology-quic-http_3_control_policy-smoke \
   flyology-quic-http_3_frame_policy-smoke \
   flyology-quic-http_3_header_policy-smoke \
+  flyology-quic-http_3_message_policy-smoke \
   flyology-quic-http_3_settings_policy-smoke \
   flyology-quic-http_3_stream_policy-smoke \
   flyology-quic-initial_frame_policy-smoke \

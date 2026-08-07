@@ -23,6 +23,7 @@ alr gnatprove \
   flyology-quic-http_3_control_policy.adb \
   flyology-quic-http_3_frame_policy.adb \
   flyology-quic-http_3_header_policy.adb \
+  flyology-quic-http_3_message_policy.adb \
   flyology-quic-http_3_settings_policy.adb \
   flyology-quic-http_3_stream_policy.adb \
   flyology-quic-initial_frame_policy.adb \
