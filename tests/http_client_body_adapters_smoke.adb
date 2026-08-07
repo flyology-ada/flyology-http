@@ -317,16 +317,12 @@ procedure HTTP_Client_Body_Adapters_Smoke is
          declare
             Buffer : Stream_Element_Array (1 .. 1);
             Last   : Stream_Element_Offset;
-            Raised : Boolean := False;
          begin
-            begin
-               Files.Read_At
-                 (File, 0, Buffer, Last, Timeout => 0.0);
-            exception
-               when Flyology.IO.Timeout_Error =>
-                  Raised := True;
-            end;
-            pragma Assert (Raised);
+            Files.Read_At (File, 0, Buffer, Last, Timeout => 0.0);
+            pragma Assert
+              (Last = Buffer'Last
+                 and then Buffer (Buffer'First) =
+                   Stream_Element (Character'Pos ('x')));
          end;
          Files.Close (File);
       exception
