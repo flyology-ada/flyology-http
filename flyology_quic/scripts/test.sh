@@ -17,6 +17,7 @@ for test in \
   flyology-quic-handshake_sender-smoke \
   flyology-quic-http_3_frame_policy-smoke \
   flyology-quic-http_3_settings_policy-smoke \
+  flyology-quic-http_3_stream_policy-smoke \
   flyology-quic-initial_frame_policy-smoke \
   flyology-quic-initial_connection-smoke \
   flyology-quic-initial_receiver-smoke \
