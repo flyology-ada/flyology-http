@@ -85,6 +85,10 @@ package body Exchange_Internals is
    is
       Socket    : Sockets.Socket_Type;
       Connected : Boolean := False;
+      --  Whether the connect policy refused an address, and whether any
+      --  address survived it far enough to open a socket.
+      Refused   : Boolean := False;
+      Attempted : Boolean := False;
 
       procedure Cleanup is
       begin
@@ -124,45 +128,63 @@ package body Exchange_Internals is
                  Interrupts => Sources (1 .. Count));
          begin
             for Address of Addresses loop
-               begin
-                  Sockets.Create_Socket (Socket, Address.Family);
+               --  The application sees every resolved address before a
+               --  socket exists for it, which is the only point at which a
+               --  name that resolves to a private destination can be
+               --  refused.
+               if State.Connect_Policy = null
+                 or else State.Connect_Policy.all
+                   (Host (State.Origin_Value),
+                    Sockets.Image (Address),
+                    Port (State.Origin_Value))
+               then
+                  begin
+                     Attempted := True;
+                     Sockets.Create_Socket (Socket, Address.Family);
 #if FLYOLOGY_CONNECTION_TEST_HOOKS then
-                  Test_Barrier (16);
+                     Test_Barrier (16);
 #end if;
-                  Interrupt_Sources (State, Token, Sources, Count);
-                  Check_Deadline (Started, Timeout);
-                  Sockets.Connect
-                    (Socket,
-                     Sockets.Network_Endpoint
-                       (Address, Sockets.Port (Port (State.Origin_Value))),
-                     Remaining (Started, Timeout), Sources (1 .. Count));
-                  Connected := True;
-               exception
-                  when Sockets.Operation_Interrupted =>
-                     if Sockets.Is_Open (Socket) then
-                        Sockets.Close_Socket (Socket);
-                     end if;
-                     Translate_Interruption (State, Token);
-                  when Flyology.IO.Timeout_Error =>
-                     if Sockets.Is_Open (Socket) then
-                        Sockets.Close_Socket (Socket);
-                     end if;
-                     raise;
-                  when Sockets.Socket_Error | Flyology.IO.Device_Error =>
-                     if Sockets.Is_Open (Socket) then
-                        begin
+                     Interrupt_Sources (State, Token, Sources, Count);
+                     Check_Deadline (Started, Timeout);
+                     Sockets.Connect
+                       (Socket,
+                        Sockets.Network_Endpoint
+                          (Address, Sockets.Port (Port (State.Origin_Value))),
+                        Remaining (Started, Timeout), Sources (1 .. Count));
+                     Connected := True;
+                  exception
+                     when Sockets.Operation_Interrupted =>
+                        if Sockets.Is_Open (Socket) then
                            Sockets.Close_Socket (Socket);
-                        exception
-                           when others => null;
-                        end;
-                     end if;
-               end;
+                        end if;
+                        Translate_Interruption (State, Token);
+                     when Flyology.IO.Timeout_Error =>
+                        if Sockets.Is_Open (Socket) then
+                           Sockets.Close_Socket (Socket);
+                        end if;
+                        raise;
+                     when Sockets.Socket_Error | Flyology.IO.Device_Error =>
+                        if Sockets.Is_Open (Socket) then
+                           begin
+                              Sockets.Close_Socket (Socket);
+                           exception
+                              when others => null;
+                           end;
+                        end if;
+                  end;
+               else
+                  Refused := True;
+               end if;
                exit when Connected;
             end loop;
          end;
       end;
 
       if not Connected then
+         if Refused and then not Attempted then
+            raise Connection_Error with
+              "HTTP connect policy refused every resolved endpoint";
+         end if;
          raise Connection_Error with "all resolved HTTP endpoints failed";
       end if;
 

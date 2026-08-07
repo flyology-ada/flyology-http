@@ -17,6 +17,9 @@
 --             the header fields present.
 --  Finding 36 An intermediate redirect body must be drained under a byte
 --             bound, destroying the transport when the bound is reached.
+--  Finding 38 An application must be able to veto a resolved connect target
+--             before a socket exists for it, and a client configured without
+--             that policy must behave exactly as before.
 --
 --  Each finding runs on its own listener so a desynchronized script cannot
 --  contaminate the evidence of the next one.
@@ -34,14 +37,17 @@ with Flyology.HTTP.Client;
 with Flyology.HTTP.Methods;
 with Flyology.IO;
 with Flyology.IO.Sockets;
+with HTTP_Client_Audit_Filters;
 
 procedure HTTP_Client_Audit is
    package Client renames Flyology.HTTP.Client;
+   package Filters renames HTTP_Client_Audit_Filters;
    package Sockets renames Flyology.IO.Sockets;
 
    use Ada.Streams;
    use Ada.Strings.Unbounded;
    use type Ada.Real_Time.Time;
+   use type Flyology.HTTP.Port_Number;
    use type Sockets.Selector_Status;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
@@ -893,7 +899,7 @@ procedure HTTP_Client_Audit is
       Client.Configure (HTTP, Origin, Client.HTTP_2_Prior_Knowledge);
       Client.Set_Target (Request, "/hold");
       declare
-         Held : Client.Response :=
+         Held : constant Client.Response :=
            Client.Execute (HTTP, Request, Timeout => 5.0);
       begin
          Require_Status ("finding 10 held stream", Held, 200);
@@ -943,11 +949,133 @@ procedure HTTP_Client_Audit is
 
    procedure Run_Capacity is new Run_Lane
      (Capacity_Script, Capacity_Exercise);
+
+   ------------------------------------------------------------------
+   --  Finding 38. Connect-target policy on the initial connect
+   ------------------------------------------------------------------
+
+   procedure Connect_Policy_Script is
+   begin
+      Accept_Peer;
+      declare
+         Head : constant String := Read_Head ("GET /allowed HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send
+           ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 2" & CRLF & CRLF &
+            "ok");
+      end;
+      Close_Peer;
+
+      Accept_Peer;
+      declare
+         Head : constant String := Read_Head ("GET /default HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send
+           ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 7" & CRLF & CRLF &
+            "default");
+      end;
+   end Connect_Policy_Script;
+
+   procedure Connect_Policy_Exercise (Origin : Flyology.HTTP.Origin) is
+      --  A name origin, so the address the policy observes is the resolver's
+      --  answer rather than the configured host text.
+      Named : constant Flyology.HTTP.Origin := Flyology.HTTP.Parse_Origin
+        ("http://localhost:" &
+         Decimal (Natural (Flyology.HTTP.Port (Origin))));
+   begin
+      Filters.Reset;
+      declare
+         HTTP    : aliased Client.Client (Capacity => 1);
+         Request : Client.Request;
+      begin
+         Client.Configure
+           (HTTP, Named, Connect_Policy => Filters.Refuse_Loopback'Access);
+         Client.Set_Target (Request, "/refused");
+         begin
+            declare
+               Reply : Client.Response :=
+                 Client.Execute (HTTP, Request, Timeout => 5.0);
+               pragma Unreferenced (Reply);
+            begin
+               Report ("finding 38: a refused loopback target connected");
+            end;
+         exception
+            when Client.Connection_Error =>
+               null;
+         end;
+         if Filters.Observed_Calls = 0 then
+            Report ("finding 38: the connect policy was never consulted");
+         elsif Filters.Observed_Host /= "localhost" then
+            Report
+              ("finding 38: the policy saw host " & Filters.Observed_Host);
+         elsif Filters.Observed_Address /= "127.0.0.1"
+           and then Filters.Observed_Address /= "::1"
+         then
+            Report
+              ("finding 38: the policy saw address " &
+               Filters.Observed_Address);
+         elsif Filters.Observed_Port /= Flyology.HTTP.Port (Origin) then
+            Report ("finding 38: the policy saw the wrong port");
+         elsif Client.Diagnostics (HTTP).Transports_Created /= 0 then
+            Report ("finding 38: a refused target opened a transport");
+         end if;
+         Client.Shutdown (HTTP);
+      end;
+
+      Filters.Reset;
+      declare
+         HTTP    : aliased Client.Client (Capacity => 1);
+         Request : Client.Request;
+      begin
+         Client.Configure
+           (HTTP, Named, Connect_Policy => Filters.Allow_Everything'Access);
+         Client.Set_Target (Request, "/allowed");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 5.0);
+         begin
+            Require_Status ("finding 38 allowed", Reply, 200);
+            Require_Body ("finding 38 allowed", Reply, "ok");
+         end;
+         if Filters.Observed_Address /= "127.0.0.1" then
+            Report
+              ("finding 38: the connected address was " &
+               Filters.Observed_Address);
+         end if;
+         Client.Shutdown (HTTP);
+      end;
+
+      Filters.Reset;
+      declare
+         HTTP    : aliased Client.Client (Capacity => 1);
+         Request : Client.Request;
+      begin
+         Client.Configure (HTTP, Named);
+         Client.Set_Target (Request, "/default");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 5.0);
+         begin
+            Require_Status ("finding 38 default", Reply, 200);
+            Require_Body ("finding 38 default", Reply, "default");
+         end;
+         if Filters.Observed_Calls /= 0 then
+            Report ("finding 38: an unset connect policy was consulted");
+         end if;
+         Client.Shutdown (HTTP);
+      end;
+   end Connect_Policy_Exercise;
+
+   procedure Run_Connect_Policy is new Run_Lane
+     (Connect_Policy_Script, Connect_Policy_Exercise);
 begin
    Run_Expectation ("finding 6");
    Run_Bodyless ("finding 18");
    Run_Redirect ("finding 36");
    Run_Capacity ("finding 10");
+   Run_Connect_Policy ("finding 38");
    pragma Assert (Ledger.Failures = 0);
    Ada.Text_IO.Put_Line ("HTTP client audit passed");
 end HTTP_Client_Audit;

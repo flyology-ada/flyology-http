@@ -176,6 +176,7 @@ package body Flyology.HTTP.Client is
       Backend       : Flyology.IO.TLS.Provider_Access := null;
       Origin_Value  : Origin;
       Protocol_Policy : Protocol_Mode := HTTP_1_Only;
+      Connect_Policy : Connect_Target_Filter := null;
       Is_Configured : Boolean := False;
    end record;
 
@@ -511,16 +512,18 @@ package body Flyology.HTTP.Client is
    procedure Configure
      (Item         : in out Client;
       Origin_Value : Origin;
-      Pool         : Pool_Configuration := Default_Pool_Configuration) is
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null) is
    begin
-      Configure (Item, Origin_Value, HTTP_1_Only, Pool);
+      Configure (Item, Origin_Value, HTTP_1_Only, Pool, Connect_Policy);
    end Configure;
 
    procedure Configure
      (Item         : in out Client;
       Origin_Value : Origin;
       Mode         : Protocol_Mode;
-      Pool         : Pool_Configuration := Default_Pool_Configuration) is
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null) is
    begin
       if Item.Control.State /= null then
          raise Program_Error with "HTTP client is already configured";
@@ -533,6 +536,7 @@ package body Flyology.HTTP.Client is
       Item.Control.State := new Client_State (Item.Capacity);
       Item.Control.State.Origin_Value := Origin_Value;
       Item.Control.State.Protocol_Policy := Mode;
+      Item.Control.State.Connect_Policy := Connect_Policy;
       Item.Control.State.Pool.Configure (Pool);
       Item.Control.State.Is_Configured := True;
    exception
@@ -549,10 +553,12 @@ package body Flyology.HTTP.Client is
      (Item         : in out Client;
       Origin_Value : Origin;
       Backend      : not null access Flyology.IO.TLS.Provider'Class;
-      Pool         : Pool_Configuration := Default_Pool_Configuration)
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null)
    is
    begin
-      Configure (Item, Origin_Value, Backend, HTTP_1_Only, Pool);
+      Configure
+        (Item, Origin_Value, Backend, HTTP_1_Only, Pool, Connect_Policy);
    end Configure;
 
    procedure Configure
@@ -560,7 +566,8 @@ package body Flyology.HTTP.Client is
       Origin_Value : Origin;
       Backend      : not null access Flyology.IO.TLS.Provider'Class;
       Mode         : Protocol_Mode;
-      Pool         : Pool_Configuration := Default_Pool_Configuration)
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null)
    is
       Retained : Flyology.IO.TLS.Provider_Access := null;
    begin
@@ -588,6 +595,7 @@ package body Flyology.HTTP.Client is
       Retained := null;
       Item.Control.State.Origin_Value := Origin_Value;
       Item.Control.State.Protocol_Policy := Mode;
+      Item.Control.State.Connect_Policy := Connect_Policy;
       Item.Control.State.Pool.Configure (Pool);
       Item.Control.State.Is_Configured := True;
    exception

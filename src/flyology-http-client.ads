@@ -89,6 +89,26 @@ package Flyology.HTTP.Client is
       Require_HTTP_2,
       HTTP_2_Prior_Knowledge);
 
+   --  Optional veto over one resolved connect target. Configure retains it and
+   --  the client consults it once for every address the origin host resolves
+   --  to, before any socket is created for that address, so an application can
+   --  refuse loopback, link-local, or private destinations that a name
+   --  resolves to. Returning False skips that address and the client tries the
+   --  next one; refusing every resolved address raises Connection_Error and
+   --  opens no socket. The default is no filter, which retains the existing
+   --  behavior of connecting to the first address that accepts. The filter
+   --  runs on the requesting task inside the exchange deadline and must not
+   --  block. Only the initial connect is filtered; this client is bound to one
+   --  origin and never follows a redirect that leaves it.
+   --  @param Host Configured origin host
+   --  @param Address Canonical numeric text of one resolved address
+   --  @param Port Origin port the client would connect to
+   --  @return True to allow a connection attempt to Address
+   type Connect_Target_Filter is access function
+     (Host    : String;
+      Address : String;
+      Port    : Port_Number) return Boolean;
+
    --  Coherent client counters. Exchange and transport counts are separate so
    --  multiplexed protocols can report several exchanges on one transport
    --  without changing this record's meaning.
@@ -279,11 +299,13 @@ package Flyology.HTTP.Client is
    --  @param Item Unconfigured client
    --  @param Origin_Value Normalized origin
    --  @param Pool Pool retention policy
+   --  @param Connect_Policy Optional veto over each resolved connect target
    --  @exception Program_Error Item is configured or arguments are invalid
    procedure Configure
      (Item         : in out Client;
       Origin_Value : Origin;
-      Pool         : Pool_Configuration := Default_Pool_Configuration);
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null);
 
    --  Bind a client with an explicit cleartext protocol mode. Negotiated modes
    --  require TLS and are rejected here; HTTP_2_Prior_Knowledge is cleartext
@@ -292,12 +314,14 @@ package Flyology.HTTP.Client is
    --  @param Origin_Value Normalized cleartext origin
    --  @param Mode HTTP/1.1 or HTTP/2 prior-knowledge behavior
    --  @param Pool Pool retention policy
+   --  @param Connect_Policy Optional veto over each resolved connect target
    --  @exception Program_Error Item is configured or arguments are invalid
    procedure Configure
      (Item         : in out Client;
       Origin_Value : Origin;
       Mode         : Protocol_Mode;
-      Pool         : Pool_Configuration := Default_Pool_Configuration);
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null);
 
    --  Bind a new client to one origin using an explicit TLS provider. The
    --  client retains independently owned provider state, so Backend may be
@@ -307,13 +331,15 @@ package Flyology.HTTP.Client is
    --  @param Origin_Value Normalized origin
    --  @param Backend Initialized TLS provider retained by Item
    --  @param Pool Pool retention policy
+   --  @param Connect_Policy Optional veto over each resolved connect target
    --  @exception Program_Error Item is configured or arguments are invalid
    --  @exception Flyology.IO.TLS.TLS_Error Backend cannot be retained
    procedure Configure
      (Item         : in out Client;
       Origin_Value : Origin;
       Backend      : not null access Flyology.IO.TLS.Provider'Class;
-      Pool         : Pool_Configuration := Default_Pool_Configuration);
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null);
 
    --  Bind a client with a retained TLS provider and explicit protocol mode.
    --  Negotiate_HTTP_2 permits HTTP/1.1 fallback; Require_HTTP_2 rejects any
@@ -324,6 +350,7 @@ package Flyology.HTTP.Client is
    --  @param Backend Initialized TLS provider retained by Item
    --  @param Mode TLS protocol selection behavior
    --  @param Pool Pool retention policy
+   --  @param Connect_Policy Optional veto over each resolved connect target
    --  @exception Program_Error Item is configured, arguments are invalid, or
    --     an HTTP/2 negotiation mode receives a backend without ALPN support
    --  @exception Flyology.IO.TLS.TLS_Error Backend cannot be retained
@@ -332,7 +359,8 @@ package Flyology.HTTP.Client is
       Origin_Value : Origin;
       Backend      : not null access Flyology.IO.TLS.Provider'Class;
       Mode         : Protocol_Mode;
-      Pool         : Pool_Configuration := Default_Pool_Configuration);
+      Pool         : Pool_Configuration := Default_Pool_Configuration;
+      Connect_Policy : Connect_Target_Filter := null);
 
    --  Limited response owning one exchange lease until its body is consumed.
    --  Reading the complete body returns an HTTP/1.1 transport lease or an
@@ -359,7 +387,8 @@ package Flyology.HTTP.Client is
    --  peer explicitly leaves unprocessed with GOAWAY or REFUSED_STREAM.
    --  @return Response head with a streaming body lease
    --  @exception Client_Closed Client is stopping
-   --  @exception Connection_Error Resolution or all address attempts fail
+   --  @exception Connection_Error Resolution fails, the connect policy
+   --     refuses every resolved address, or all address attempts fail
    --  @exception Constraint_Error Request fields, target, or method-body
    --     combination is unsupported; CONNECT is not implemented
    --  @exception Protocol_Error Response framing is malformed or unsupported
@@ -391,7 +420,8 @@ package Flyology.HTTP.Client is
    --  @param Token Optional cancellation source
    --  @return Response head with a streaming response body lease
    --  @exception Client_Closed Client is stopping
-   --  @exception Connection_Error Resolution or all address attempts fail
+   --  @exception Connection_Error Resolution fails, the connect policy
+   --     refuses every resolved address, or all address attempts fail
    --  @exception Constraint_Error Request metadata is unsupported or already
    --     contains a retained body
    --  @exception Request_Body_Error Source violates its progress contract or
