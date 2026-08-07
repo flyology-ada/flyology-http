@@ -19,7 +19,10 @@ authentication and reserved-bit validation. A proved, allocation-free frame
 cursor validates Initial-level PADDING, PING, ACK/ACK_ECN, CRYPTO, and transport
 CONNECTION_CLOSE frames and reports borrowed payload bounds. A proved 64 KiB
 CRYPTO buffer reassembles out-of-order handshake fragments, accepts matching
-retransmissions, and rejects conflicting overlaps atomically.
+retransmissions, and rejects conflicting overlaps atomically. The Initial
+transmit path encodes packet envelopes and packet numbers, applies AES-GCM and
+header protection, and supports token-bearing packets and arbitrary Ada array
+bounds.
 
 ## Build and test
 

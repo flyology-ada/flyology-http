@@ -33,6 +33,11 @@ for the next layer.
   deliver it in reverse order. Matching retransmissions are idempotent,
   conflicting overlaps are rejected without partial insertion, and the
   configured 64 KiB receive boundary is enforced.
+- Initial transmit tests reproduce the complete RFC 9001 client and server
+  packets byte-for-byte, including the 1,200-byte padded client datagram, then
+  authenticate the client packet through the receive path. Token encoding,
+  non-1-based output arrays, undersized output, insufficient header protection
+  samples, and the maximum packet boundary are covered separately.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 
