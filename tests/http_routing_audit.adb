@@ -6,6 +6,7 @@ with Ada.Streams;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Interfaces;
 with Flyology.Cancellation;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
@@ -14,6 +15,7 @@ with Flyology.HTTP.Server.Middleware_Authentication;
 with Flyology.HTTP.Server.Middleware_Bulkheads;
 with Flyology.HTTP.Server.Middleware_CORS;
 with Flyology.HTTP.Server.Middleware_Rate_Limits;
+with Flyology.HTTP.Server.Middleware_Request_IDs;
 with Flyology.HTTP.Server.Middleware_Security_Headers;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO;
@@ -1124,6 +1126,138 @@ procedure HTTP_Routing_Audit is
       end;
    end Check_Response_Header_Replacement;
 
+   --  Finding 29. Default request IDs were fly-<N> from one process-wide
+   --  monotonic counter and were echoed to the client, so subtracting two
+   --  observed values reported how many requests the server handled in
+   --  between.
+   procedure Check_Request_ID_Unpredictability is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      use type Interfaces.Unsigned_64;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      package IDs is new Flyology.HTTP.Server.Middleware_Request_IDs
+        (Context, Routing.Components);
+
+      procedure Plain
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "plain");
+      end Plain;
+
+      Traced : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+
+      function Next_Identifier return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /traced HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Traced.Serve (State, Client, Test_Peer);
+         end;
+         return Field_Value (To_String (Wire.Output), "X-Request-ID");
+      end Next_Identifier;
+
+      Samples : array (1 .. 8) of Unbounded_String;
+   begin
+      Traced.Get ("/traced", Plain'Access, Name => "traced");
+      Traced.Add_Middleware (IDs.Call'Access, Name => "request-ids");
+
+      for Index in Samples'Range loop
+         Samples (Index) := To_Unbounded_String (Next_Identifier);
+      end loop;
+
+      --  A fixed-width opaque suffix, so no request count is legible.
+      for Index in Samples'Range loop
+         declare
+            Value : constant String := To_String (Samples (Index));
+         begin
+            if Value'Length /= 20
+              or else Value (Value'First .. Value'First + 3) /= "fly-"
+            then
+               Failures := Failures + 1;
+               Ada.Text_IO.Put_Line
+                 (Ada.Text_IO.Standard_Error,
+                  "FAIL finding 29 identifier shape: observed ["
+                  & Value & "]");
+            end if;
+         end;
+      end loop;
+
+      --  Distinct within the process, so the counter still guarantees
+      --  uniqueness through the keyed permutation.
+      for Left in Samples'Range loop
+         for Right in Left + 1 .. Samples'Last loop
+            if Samples (Left) = Samples (Right) then
+               Failures := Failures + 1;
+               Ada.Text_IO.Put_Line
+                 (Ada.Text_IO.Standard_Error,
+                  "FAIL finding 29 duplicate identifier "
+                  & To_String (Samples (Left)));
+            end if;
+         end loop;
+      end loop;
+
+      --  Successive identifiers must not sit at a constant numeric distance,
+      --  which is what made the old counter a traffic-volume oracle.
+      declare
+         --  Read the suffix as a base-16 magnitude; the pre-fix decimal
+         --  counter reads consistently under the same scale.
+         function Numeric (Value : String) return Interfaces.Unsigned_64 is
+            Result : Interfaces.Unsigned_64 := 0;
+            Digit  : Natural;
+         begin
+            for Item of Value (Value'First + 4 .. Value'Last) loop
+               Digit :=
+                 (case Item is
+                     when '0' .. '9' =>
+                       Character'Pos (Item) - Character'Pos ('0'),
+                     when 'a' .. 'f' =>
+                       Character'Pos (Item) - Character'Pos ('a') + 10,
+                     when others => 0);
+               Result :=
+                 Result * 16 + Interfaces.Unsigned_64 (Digit);
+            end loop;
+            return Result;
+         end Numeric;
+
+         Constant_Stride : Boolean := True;
+         Stride : Interfaces.Unsigned_64;
+         Previous : Interfaces.Unsigned_64;
+         Current  : Interfaces.Unsigned_64;
+      begin
+         Previous := Numeric (To_String (Samples (1)));
+         Current := Numeric (To_String (Samples (2)));
+         Stride := Current - Previous;
+         for Index in 3 .. Samples'Last loop
+            Previous := Current;
+            Current := Numeric (To_String (Samples (Index)));
+            if Current - Previous /= Stride then
+               Constant_Stride := False;
+            end if;
+         end loop;
+         if Constant_Stride then
+            Failures := Failures + 1;
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "FAIL finding 29 constant stride: "
+               & To_String (Samples (1)) & " .. "
+               & To_String (Samples (Samples'Last)));
+         end if;
+      end;
+   end Check_Request_ID_Unpredictability;
 
 begin
    Check_Target_Form_Anchoring;
@@ -1135,6 +1269,7 @@ begin
    Check_Authentication_Backstop;
    Check_CORS_List_Member_Validation;
    Check_Response_Header_Replacement;
+   Check_Request_ID_Unpredictability;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

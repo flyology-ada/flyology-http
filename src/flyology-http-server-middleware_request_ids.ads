@@ -2,7 +2,11 @@ with Ada.Strings.Unbounded;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Middleware;
 
---  Installs bounded request identifiers before application work.
+--  Installs bounded request identifiers before application work. The default
+--  identifier is a per-process keyed permutation of an internal counter, so
+--  it stays unique within the process without publishing how many requests
+--  the process has served. It is obfuscation, not a secret: an application
+--  needing an unguessable correlation or idempotency token supplies Generate.
 --  @formal App_Context Application-owned context
 --  @formal Components Matching typed middleware package
 --  @formal Trust_Inbound Whether valid inbound identifiers may be accepted
