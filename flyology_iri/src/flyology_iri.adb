@@ -427,8 +427,11 @@ package body Flyology_IRI is
       return (Kind => No_Error, Offset => 0);
    end Validate_Range;
 
+   --  Match the RFC 3986 IPv4address production, whose dec-octet forbids a
+   --  leading zero.  WHATWG IPv4 parsing is separate and lives in
+   --  Flyology_IRI.Web.Canonical_IPv4.
    function Valid_IPv4
-     (Input : String; First, Last : Positive; WHATWG : Boolean) return Boolean
+     (Input : String; First, Last : Positive) return Boolean
    is
       Parts      : Natural := 0;
       Position   : Natural := First;
@@ -457,7 +460,7 @@ package body Flyology_IRI is
             Position := Position + 1;
          end loop;
          if Digit_Count = 0 or else Value > 255
-           or else (WHATWG and then Leading_0 and then Digit_Count > 1)
+           or else (Leading_0 and then Digit_Count > 1)
          then
             return False;
          end if;
@@ -526,7 +529,7 @@ package body Flyology_IRI is
          end loop;
          if Position <= Last and then Char_At (Input, Position) = '.' then
             if Pieces > 6
-              or else not Valid_IPv4 (Input, Piece_First, Last, False)
+              or else not Valid_IPv4 (Input, Piece_First, Last)
             then
                return False;
             end if;

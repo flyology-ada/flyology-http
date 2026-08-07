@@ -162,6 +162,21 @@ begin
       "WHATWG URL preserves malformed percent escape with validation warning");
    Reject ("1http://example.com", URI_Syntax, Invalid_Scheme);
    Reject ("http://[2001:::1]/", URI_Syntax, Invalid_Authority);
+   --  RFC 3986 dec-octet forbids a leading zero, so an IPv4-in-IPv6 literal
+   --  has exactly one accepted spelling and cannot be zero-padded past a
+   --  host comparison.
+   Reject ("http://[::1.2.3.04]/", URI_Syntax, Invalid_Authority);
+   Reject ("http://[::01.2.3.4]/", URI_Syntax, Invalid_Authority);
+   Reject ("http://[::1.2.3.004]/", URI_Syntax, Invalid_Authority);
+   Assert
+     (Can_Parse ("http://[::1.2.3.4]/", URI_Syntax),
+      "IPv4-in-IPv6 literal rejected");
+   Assert
+     (Can_Parse ("http://[::0.0.0.0]/", URI_Syntax),
+      "single-zero dec-octets rejected");
+   Assert
+     (Can_Parse ("http://[::255.255.255.0]/", URI_Syntax),
+      "trailing zero dec-octet rejected");
    Reject ("http://example.com:abc/", URI_Syntax, Invalid_Authority);
    Reject ("/relative", Web_URL_Syntax, Relative_URL);
    Assert
