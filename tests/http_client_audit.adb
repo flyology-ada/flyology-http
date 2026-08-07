@@ -6,6 +6,11 @@
 --             incomplete HTTP/1.1 message's transport to the pool, whether
 --             the final response is a routine 401 or a 417 arriving when the
 --             expectation retry has already been spent.
+--  Finding 18 A bodyless-by-status response must not hand a transport that
+--             later becomes readable to the next exchange. The response to a
+--             HEAD request carrying Content-Length stays valid: RFC 9112
+--             section 6.3 terminates it at the first empty line regardless of
+--             the header fields present.
 --
 --  Each finding runs on its own listener so a desynchronized script cannot
 --  contaminate the evidence of the next one.
@@ -460,8 +465,164 @@ procedure HTTP_Client_Audit is
    procedure Run_Expectation is new Run_Lane
      (Expectation_Script, Expectation_Exercise);
 
+   ------------------------------------------------------------------
+   --  Finding 18. Bodyless-by-status responses and pooled quiescence
+   ------------------------------------------------------------------
+
+   procedure Bodyless_Script is
+   begin
+      --  RFC 9112 section 6.3 terminates a HEAD response at the first empty
+      --  line whatever Content-Length says, so this head is well formed.
+      Accept_Peer;
+      declare
+         Head : constant String := Read_Head ("HEAD /probe HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 5" & CRLF & CRLF);
+      end;
+      --  The stray message lands one segment later, on a transport already
+      --  back in the pool and therefore past the Pending quiescence check.
+      delay 0.2;
+      Send
+        ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 7" & CRLF & CRLF &
+         "PLANTED");
+      Require_Destroyed ("finding 18 (stray bytes on a pooled transport)");
+
+      Accept_Peer;
+      declare
+         Head : constant String := Read_Head ("GET /victim HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send
+           ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 4" & CRLF & CRLF &
+            "REAL");
+      end;
+
+      --  A 304 that counts no undelivered octets keeps its transport with no
+      --  probe at all, and a quiescent HEAD that does count them keeps its
+      --  transport once the probe finds nothing. Neither may cost reuse.
+      declare
+         Head : constant String := Read_Head ("GET /cached HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send
+           ("HTTP/1.1 304 Not Modified" & CRLF & "ETag: ""v1""" & CRLF & CRLF);
+      end;
+      declare
+         Head : constant String := Read_Head ("HEAD /meta HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 9" & CRLF & CRLF);
+      end;
+      declare
+         Head : constant String := Read_Head ("GET /settled HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send
+           ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 4" & CRLF & CRLF &
+            "body");
+      end;
+   end Bodyless_Script;
+
+   procedure Bodyless_Exercise (Origin : Flyology.HTTP.Origin) is
+      HTTP : aliased Client.Client (Capacity => 1);
+   begin
+      Client.Configure (HTTP, Origin);
+
+      declare
+         Request : Client.Request;
+      begin
+         Client.Set_Method (Request, Flyology.HTTP.Methods.HEAD);
+         Client.Set_Target (Request, "/probe");
+         declare
+            Reply : constant Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 5.0);
+         begin
+            Require_Status ("finding 18 HEAD", Reply, 200);
+            if not Client.Body_Complete (Reply) then
+               Report
+                 ("finding 18: HEAD with Content-Length was not bodyless");
+            end if;
+         end;
+      end;
+      --  Leave the transport idle long enough for the stray message to land.
+      delay 0.6;
+      declare
+         Request : Client.Request;
+      begin
+         Client.Set_Target (Request, "/victim");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 5.0);
+         begin
+            Require_Body ("finding 18 (planted response)", Reply, "REAL");
+         end;
+      end;
+
+      declare
+         Request : Client.Request;
+         Before  : constant Client.Client_Diagnostics :=
+           Client.Diagnostics (HTTP);
+      begin
+         Client.Set_Target (Request, "/cached");
+         declare
+            Reply : constant Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 5.0);
+         begin
+            Require_Status ("finding 18 conditional", Reply, 304);
+         end;
+         declare
+            Meta : Client.Request;
+         begin
+            Client.Set_Method (Meta, Flyology.HTTP.Methods.HEAD);
+            Client.Set_Target (Meta, "/meta");
+            declare
+               Reply : constant Client.Response :=
+                 Client.Execute (HTTP, Meta, Timeout => 5.0);
+            begin
+               Require_Status ("finding 18 quiescent HEAD", Reply, 200);
+            end;
+         end;
+         declare
+            Follow : Client.Request;
+         begin
+            Client.Set_Target (Follow, "/settled");
+            declare
+               Reply : Client.Response :=
+                 Client.Execute (HTTP, Follow, Timeout => 5.0);
+            begin
+               Require_Body ("finding 18 after a quiescent probe",
+                             Reply, "body");
+            end;
+         end;
+         declare
+            After : constant Client.Client_Diagnostics :=
+              Client.Diagnostics (HTTP);
+         begin
+            if After.Transports_Created /= Before.Transports_Created
+              or else After.Transport_Reuses /= Before.Transport_Reuses + 3
+            then
+               Report
+                 ("finding 18: a quiescent transport was lost," &
+                  Natural'Image
+                    (After.Transports_Created - Before.Transports_Created) &
+                  " created," &
+                  Natural'Image
+                    (After.Transport_Reuses - Before.Transport_Reuses) &
+                  " reused");
+            end if;
+         end;
+      end;
+
+      Client.Shutdown (HTTP);
+   end Bodyless_Exercise;
+
+   procedure Run_Bodyless is new Run_Lane
+     (Bodyless_Script, Bodyless_Exercise);
+
 begin
    Run_Expectation ("finding 6");
+   Run_Bodyless ("finding 18");
    pragma Assert (Ledger.Failures = 0);
    Ada.Text_IO.Put_Line ("HTTP client audit passed");
 end HTTP_Client_Audit;

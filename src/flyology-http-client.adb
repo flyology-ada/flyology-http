@@ -66,6 +66,7 @@ package body Flyology.HTTP.Client is
       Interrupting : Boolean := False;
       Interrupt_Sent : Boolean := False;
       Owner_Done   : Boolean := False;
+      Verify_On_Reuse : Boolean := False;
    end record;
    type Slot_Array is array (Positive range <>) of Slot;
 
@@ -83,7 +84,8 @@ package body Flyology.HTTP.Client is
         (Now        : Ada.Real_Time.Time;
          Result     : out Checkout_Result;
          Slot_Index : out Natural;
-         Connection : out Pooled_Connection_Access);
+         Connection : out Pooled_Connection_Access;
+         Verify     : out Boolean);
       procedure Install
         (Slot_Index : Positive;
          Connection : Pooled_Connection_Access;
@@ -95,7 +97,12 @@ package body Flyology.HTTP.Client is
       procedure Return_Lease
         (Slot_Index : Positive;
          Reusable   : Boolean;
+         Verify     : Boolean;
          Now        : Ada.Real_Time.Time;
+         Result     : out Return_Result;
+         Connection : out Pooled_Connection_Access);
+      procedure Reject_Reuse
+        (Slot_Index : Positive;
          Result     : out Return_Result;
          Connection : out Pooled_Connection_Access);
       procedure Finish_Close (Slot_Index : Positive);
@@ -359,8 +366,14 @@ package body Flyology.HTTP.Client is
       end loop;
    end Interrupt_Active;
 
+   --  Verify marks a returned transport whose quiescence the response
+   --  framing could not establish, so the next exchange probes it before
+   --  writing a request onto it.
    procedure Release_Lease
-     (Data : in out Response_Data; Reusable : Boolean) is
+     (Data     : in out Response_Data;
+      Reusable : Boolean;
+      Verify   : Boolean := False)
+   is
       Result : Return_Result;
       Value  : Pooled_Connection_Access;
       Index  : constant Natural := Data.Slot_Index;
@@ -370,7 +383,7 @@ package body Flyology.HTTP.Client is
          return;
       end if;
       Data.Owner.Pool.Return_Lease
-        (Positive (Data.Slot_Index), Reusable, Ada.Real_Time.Clock,
+        (Positive (Data.Slot_Index), Reusable, Verify, Ada.Real_Time.Clock,
          Result, Value);
       Data.Connection := null;
       Data.Slot_Index := 0;

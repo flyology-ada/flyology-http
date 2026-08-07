@@ -16,12 +16,14 @@ protected body Pool_Controller is
         (Now        : Ada.Real_Time.Time;
          Result     : out Checkout_Result;
          Slot_Index : out Natural;
-         Connection : out Pooled_Connection_Access)
+         Connection : out Pooled_Connection_Access;
+         Verify     : out Boolean)
       is
          Available_After : Boolean := False;
       begin
          Slot_Index := 0;
          Connection := null;
+         Verify := False;
          if Stopping then
             Result := Checkout_Closed;
             return;
@@ -117,6 +119,8 @@ protected body Pool_Controller is
                        Slots (Index).Request_Count + 1;
                      Leased_Count := Leased_Count + 1;
                      Reused_Count := Reused_Count + 1;
+                     Verify := Slots (Index).Verify_On_Reuse;
+                     Slots (Index).Verify_On_Reuse := False;
                      Result := Checkout_Idle;
                   end if;
                   exit;
@@ -186,7 +190,8 @@ protected body Pool_Controller is
               (if Connection.Protocol = HTTP_2_Transport then 1 else 0),
             Interrupting  => False,
             Interrupt_Sent => False,
-            Owner_Done    => False);
+            Owner_Done    => False,
+            Verify_On_Reuse => False);
          Connecting_Count := Connecting_Count - 1;
          Leased_Count := Leased_Count + 1;
          if Connection.Protocol = HTTP_2_Transport then
@@ -245,6 +250,7 @@ protected body Pool_Controller is
       procedure Return_Lease
         (Slot_Index : Positive;
          Reusable   : Boolean;
+         Verify     : Boolean;
          Now        : Ada.Real_Time.Time;
          Result     : out Return_Result;
          Connection : out Pooled_Connection_Access)
@@ -320,6 +326,7 @@ protected body Pool_Controller is
          then
             Slots (Slot_Index).Phase := Idle;
             Slots (Slot_Index).Last_Used := Now;
+            Slots (Slot_Index).Verify_On_Reuse := Verify;
             Idle_Count := Idle_Count + 1;
             Result := Returned_Idle;
          elsif Slots (Slot_Index).Interrupting then
@@ -340,6 +347,36 @@ protected body Pool_Controller is
             Checkout_Signalled := True;
          end if;
       end Return_Lease;
+
+      --  Undo a reuse whose transport turned out to be desynchronized. The
+      --  exchange was never assigned it, so the reuse tally is withdrawn and
+      --  the slot moves straight to Closing.
+      procedure Reject_Reuse
+        (Slot_Index : Positive;
+         Result     : out Return_Result;
+         Connection : out Pooled_Connection_Access) is
+      begin
+         if Slot_Index > Capacity
+           or else Slots (Slot_Index).Phase /= Leased
+         then
+            raise Program_Error with "invalid HTTP pool reuse rejection";
+         end if;
+         Connection := Slots (Slot_Index).Connection;
+         Leased_Count := Leased_Count - 1;
+         Reused_Count := Reused_Count - 1;
+         Slots (Slot_Index).Phase := Closing;
+         Slots (Slot_Index).Owner_Done := True;
+         Closing_Count := Closing_Count + 1;
+         Result :=
+           (if Slots (Slot_Index).Interrupting
+            then Return_Close_Deferred else Return_Close);
+         if Flyology.Wake_Sources.Descriptor (Checkout_Wake) >= 0
+           and then not Checkout_Signalled
+         then
+            Flyology.Wake_Sources.Signal (Checkout_Wake);
+            Checkout_Signalled := True;
+         end if;
+      end Reject_Reuse;
 
       procedure Finish_Close (Slot_Index : Positive) is
       begin

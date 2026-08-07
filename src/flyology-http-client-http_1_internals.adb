@@ -638,6 +638,7 @@ package body HTTP_1_Internals is
         (Data.Fields, "Connection", "close");
       Keep_Token : constant Boolean := Header_Has_Token
         (Data.Fields, "Connection", "keep-alive");
+      Undelivered_Framing : Boolean := False;
    begin
       Data.Reusable :=
         (if Data.Version_Value = HTTP_1_1
@@ -663,7 +664,15 @@ package body HTTP_1_Internals is
       if Image (Request_Method) = "HEAD"
         or else Data.Status_Value in 100 .. 199 | 204 | 205 | 304
       then
+         --  RFC 9112 6.3 terminates these messages at the first empty line
+         --  whatever framing fields are present, so Content-Length stays
+         --  legal here and must not be rejected. It does mean the peer
+         --  counts octets it is forbidden to deliver, which is the one case
+         --  where a late write can desynchronize the pooled transport.
          Data.Mode := No_Body;
+         Undelivered_Framing :=
+           Transfer_Count > 0
+             or else (Length_Present and then Length_Value > 0);
       elsif Transfer_Count > 0 then
          if Length_Present then
             raise Protocol_Error with
@@ -691,7 +700,7 @@ package body HTTP_1_Internals is
             --  pipelined request, which this client never sends.
             Data.Reusable := False;
          end if;
-         Release_Lease (Data, Data.Reusable);
+         Release_Lease (Data, Data.Reusable, Verify => Undelivered_Framing);
       end if;
    end Select_Body_Mode;
 

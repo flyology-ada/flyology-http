@@ -288,6 +288,25 @@ package body Exchange_Internals is
       end if;
    end Wait_For_Pool;
 
+   --  A pooled HTTP/1 transport that became readable while idle is
+   --  desynchronized: this client never pipelines, so nothing legitimate can
+   --  precede the response to the request about to be written. A transport
+   --  that reports orderly closure instead is left to the stale-retry path.
+   function Carries_Stray_Input
+     (Item : in out Connections.Connection) return Boolean
+   is
+      Probe : Ada.Streams.Stream_Element_Array (1 .. 1);
+      Last  : Ada.Streams.Stream_Element_Offset;
+   begin
+      Connections.Receive (Item, Probe, Last, Timeout => 0.0);
+      return Last >= Probe'First;
+   exception
+      when others =>
+         --  A probe that cannot complete leaves the transport to the
+         --  established failure paths rather than failing admission here.
+         return False;
+   end Carries_Stray_Input;
+
    procedure Checkout
      (Item       : in out Client;
       Connection : out Pooled_Connection_Access;
@@ -300,7 +319,21 @@ package body Exchange_Internals is
       Result : Checkout_Result;
       Index  : Natural;
       Value  : Pooled_Connection_Access;
+      Verify : Boolean;
       Waiting : Boolean := False;
+
+      --  Withdraw a checked-out transport whose quiescence probe failed and
+      --  close it outside the pool lock.
+      procedure Discard_Checkout is
+         Outcome : Return_Result;
+         Stale   : Pooled_Connection_Access;
+      begin
+         Item.Control.State.Pool.Reject_Reuse
+           (Positive (Index), Outcome, Stale);
+         if Outcome = Return_Close then
+            Close_And_Finish (Item.Control.State, Positive (Index), Stale);
+         end if;
+      end Discard_Checkout;
    begin
       if Item.Control.State = null
         or else not Item.Control.State.Is_Configured
@@ -310,17 +343,24 @@ package body Exchange_Internals is
       Was_Reused := False;
       loop
          Item.Control.State.Pool.Try_Checkout
-           (Ada.Real_Time.Clock, Result, Index, Value);
+           (Ada.Real_Time.Clock, Result, Index, Value, Verify);
          case Result is
             when Checkout_Idle =>
-               if Waiting then
-                  Item.Control.State.Pool.Unregister_Waiter;
-                  Waiting := False;
+               if Verify
+                 and then Value.Protocol = HTTP_1_Transport
+                 and then Carries_Stray_Input (Value.Channel)
+               then
+                  Discard_Checkout;
+               else
+                  if Waiting then
+                     Item.Control.State.Pool.Unregister_Waiter;
+                     Waiting := False;
+                  end if;
+                  Connection := Value;
+                  Slot_Index := Positive (Index);
+                  Was_Reused := True;
+                  return;
                end if;
-               Connection := Value;
-               Slot_Index := Positive (Index);
-               Was_Reused := True;
-               return;
             when Checkout_Create =>
                begin
                   Establish
