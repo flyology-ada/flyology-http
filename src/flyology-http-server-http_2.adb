@@ -461,6 +461,23 @@ package body Flyology.HTTP.Server.HTTP_2 is
          end if;
       end Return_Stream_Credit;
 
+      --  A closed stream still consumes connection flow-control credit: the
+      --  peer debited its connection send window before the stream closed.
+      --  Charge those bytes and hand the credit straight back, otherwise the
+      --  two sides diverge permanently and the peer stalls on every stream.
+      procedure Charge_Closed_Stream
+        (Flow_Length : Natural; Accepted : out Boolean)
+      is
+         Consumed : constant Policy.Window_Result := Policy.Consume
+           (Connection_Receive_Window, Policy.Data_Length (Flow_Length));
+      begin
+         Accepted := Consumed.Accepted;
+         if Accepted then
+            Connection_Receive_Window := Consumed.Window;
+            Return_Connection_Credit (Flow_Length);
+         end if;
+      end Charge_Closed_Stream;
+
       procedure Open_Request
         (Stream_ID       : Frames.Stream_Identifier;
          End_Stream      : Boolean;
@@ -564,14 +581,14 @@ package body Flyology.HTTP.Server.HTTP_2 is
                Queue_Control_Frame
                  (Frames.Reset_Stream_Frame, 0, Stream_ID,
                   U31_Payload (Natural (Frames.Stream_Closed_Error)));
-               Accepted := True;
+               Charge_Closed_Stream (Flow_Length, Accepted);
             end if;
             return;
          elsif Streams (Index).Remote_End then
             Queue_Control_Frame
               (Frames.Reset_Stream_Frame, 0, Stream_ID,
                U31_Payload (Natural (Frames.Stream_Closed_Error)));
-            Accepted := True;
+            Charge_Closed_Stream (Flow_Length, Accepted);
             return;
          end if;
          Connection_Result := Policy.Consume
