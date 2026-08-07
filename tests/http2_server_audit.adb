@@ -1,13 +1,17 @@
 --  Regression coverage for the 2026-08-07 audit findings in the HTTP/2 server
---  engine. Every fix lands its failing reproduction here before the fix
---  itself. The peer speaks raw HTTP/2 frames over a loopback socket so that
---  connection-level flow control and output scheduling stay observable.
+--  engine, and in the client connection where a finding names both. Every fix
+--  lands its failing reproduction here before the fix itself. The peer speaks
+--  raw HTTP/2 frames over a loopback socket so that connection-level flow
+--  control and output scheduling stay observable.
+with Ada.Exceptions;
 with Ada.Streams;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology;
+with Flyology.Bytes;
 with Flyology.IO;
+with Flyology.HTTP.Client;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.HTTP_2;
 with Flyology.HTTP.Server.Routing;
@@ -20,6 +24,7 @@ procedure HTTP2_Server_Audit is
    use Ada.Strings.Unbounded;
    use type Interfaces.Unsigned_32;
    package App renames Flyology.HTTP.Server.Applications;
+   package Client renames Flyology.HTTP.Client;
    package Connections renames Flyology.IO.Connections;
    package Sockets renames Flyology.IO.Sockets;
 
@@ -304,11 +309,16 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 10;
+   Sessions : constant := 13;
 
    Router_Manager  : aliased Connections.Server (Capacity => 1);
    Router_Listener : Sockets.Socket_Type;
    Router_Address  : Sockets.Endpoint;
+
+   --  A listener the audit answers itself, so the library's HTTP/2 client
+   --  can be driven against a peer that speaks raw frames.
+   Peer_Listener : Sockets.Socket_Type;
+   Peer_Address  : Sockets.Endpoint;
 
    procedure Connect_Peer
      (Socket : in out Sockets.Socket_Type;
@@ -779,6 +789,140 @@ begin
             "no field the peer never sent reaches the application");
          Sockets.Close_Socket (Socket);
       end;
+
+      ------------------------------------------------------------------------
+      --  Finding 15: RFC 9113 6.10 makes a CONTINUATION that follows no
+      --  unterminated HEADERS or CONTINUATION a connection PROTOCOL_ERROR.
+      --  With END_HEADERS clear the payload otherwise stays buffered and
+      --  prepends whatever field section arrives next.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line
+        ("finding 15: CONTINUATION outside an open field section");
+      declare
+         --  Send an unsolicited CONTINUATION with END_HEADERS clear, then a
+         --  complete HEADERS block, and report the connection's verdict.
+         procedure Unsolicited
+           (Residue  : Stream_Element_Array;
+            Block    : Stream_Element_Array;
+            Response : out Unbounded_String;
+            Goaway   : out Integer;
+            Reset    : out Boolean)
+         is
+            Socket  : Sockets.Socket_Type;
+            Info    : Frame_Info;
+            Payload : Stream_Element_Array (1 .. 16_384) := (others => 0);
+            Settled : Boolean := False;
+         begin
+            Response := Null_Unbounded_String;
+            Goaway := -1;
+            Reset := False;
+            Connect_Peer (Socket);
+            Send_Frame (Socket, Continuation_Frame, 0, 1, Residue);
+            Send_Frame
+              (Socket, Headers_Frame,
+               End_Stream_Flag or End_Headers_Flag, 1, Block);
+            while not Settled loop
+               Read_Frame_Header (Socket, Info, Wait => 5.0);
+               Read_Payload (Socket, Info, Payload, Wait => 5.0);
+               if Info.Kind = Goaway_Frame then
+                  Goaway := Integer
+                    (Natural (Payload (5)) * 16#100_0000# +
+                       Natural (Payload (6)) * 16#1_0000# +
+                       Natural (Payload (7)) * 16#100# +
+                       Natural (Payload (8)));
+                  Settled := True;
+               elsif Info.Stream_ID = 1
+                 and then Info.Kind = Reset_Stream_Frame
+               then
+                  Reset := True;
+                  Settled := True;
+               elsif Info.Stream_ID = 1 and then Info.Kind = Data_Frame then
+                  for Offset in 1 .. Stream_Element_Offset (Info.Length) loop
+                     Append
+                       (Response,
+                        Character'Val (Natural (Payload (Offset))));
+                  end loop;
+                  Settled := (Info.Flags and End_Stream_Flag) /= 0;
+               end if;
+            end loop;
+            Sockets.Close_Socket (Socket);
+         end Unsolicited;
+
+         procedure Report
+           (Label    : String;
+            Response : Unbounded_String;
+            Goaway   : Integer;
+            Reset    : Boolean) is
+         begin
+            Ada.Text_IO.Put_Line
+              ("  " & Label & " yielded " &
+                 (if Goaway >= 0
+                  then "GOAWAY code " & Decimal (Natural (Goaway))
+                  elsif Reset then "a stream reset"
+                  else '"' & To_String (Response) & '"'));
+         end Report;
+
+         Response : Unbounded_String;
+         Goaway   : Integer;
+         Reset    : Boolean;
+      begin
+         Unsolicited
+           (Request_Block ("GET", "/hpack"), Literal ("x-decoy", "decoy"),
+            Response, Goaway, Reset);
+         Report ("buffered pseudo-headers", Response, Goaway, Reset);
+         Check
+           (Goaway = 1,
+            "a CONTINUATION outside a field section is a connection error");
+         Check
+           (Index (Response, "decoy=decoy") = 0,
+            "CONTINUATION residue never becomes a served request");
+
+         Unsolicited
+           (Literal ("x-decoy", "decoy"), Request_Block ("GET", "/hpack"),
+            Response, Goaway, Reset);
+         Report ("buffered regular field", Response, Goaway, Reset);
+         Check
+           (Goaway = 1,
+            "residue never prepends the next field section");
+      end;
+
+      --  The guard must fire only outside an open field section: a HEADERS
+      --  frame with END_HEADERS clear still opens one for its CONTINUATION.
+      declare
+         Block : constant Stream_Element_Array :=
+           Request_Block ("GET", "/hpack");
+         Split : constant Stream_Element_Offset :=
+           Block'First + Block'Length / 2;
+         Socket  : Sockets.Socket_Type;
+         Info    : Frame_Info;
+         Payload : Stream_Element_Array (1 .. 16_384) := (others => 0);
+         Served  : Boolean := False;
+         Settled : Boolean := False;
+      begin
+         Connect_Peer (Socket);
+         Send_Frame
+           (Socket, Headers_Frame, End_Stream_Flag, 1,
+            Block (Block'First .. Split - 1));
+         Send_Frame
+           (Socket, Continuation_Frame, End_Headers_Flag, 1,
+            Block (Split .. Block'Last));
+         while not Settled loop
+            Read_Frame_Header (Socket, Info, Wait => 5.0);
+            Read_Payload (Socket, Info, Payload, Wait => 5.0);
+            if Info.Kind = Goaway_Frame
+              or else (Info.Stream_ID = 1
+                and then Info.Kind = Reset_Stream_Frame)
+            then
+               Settled := True;
+            elsif Info.Stream_ID = 1 and then Info.Kind = Data_Frame then
+               Served := True;
+               Settled := (Info.Flags and End_Stream_Flag) /= 0;
+            end if;
+         end loop;
+         Check
+           (Served, "a legally fragmented field section is still served");
+         Sockets.Close_Socket (Socket);
+      end;
    end;
 
    ---------------------------------------------------------------------------
@@ -867,6 +1011,177 @@ begin
          "asterisk-form :path never binds a route parameter");
       Sockets.Close_Socket (Socket);
    end;
+
+   ---------------------------------------------------------------------------
+   --  Finding 15, client half: the client connection has the same unguarded
+   --  CONTINUATION branch. A peer that sends CONTINUATION with END_HEADERS
+   --  clear before any HEADERS gets its payload prepended to the next
+   --  response field section, so fields no HEADERS frame carried reach the
+   --  application.
+   ---------------------------------------------------------------------------
+   Sockets.Create_Socket (Peer_Listener);
+   Sockets.Set_Socket_Option
+     (Peer_Listener, Sockets.Socket_Level, (Sockets.Reuse_Address, True));
+   Sockets.Bind_Socket
+     (Peer_Listener,
+      Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Sockets.Any_Port));
+   Sockets.Listen_Socket (Peer_Listener, Length => 1);
+   Peer_Address := Sockets.Get_Socket_Name (Peer_Listener);
+
+   Ada.Text_IO.Put_Line
+     ("finding 15: CONTINUATION outside a client field section");
+   declare
+      task Peer_Task is
+         pragma Task_Info (Flyology.Native_Task);
+      end Peer_Task;
+
+      --  Indexed field 8 is ":status: 200"; the regular field rides behind
+      --  it so the section is long enough to split across two frames.
+      Reply_Block : constant Stream_Element_Array :=
+        (1 => 16#88#) & Literal ("x-ok", "1");
+
+      task body Peer_Task is
+         Info    : Frame_Info;
+         Payload : Stream_Element_Array (1 .. 16_384) := (others => 0);
+
+         --  Read frames, acknowledging settings, until the client opens a
+         --  stream, and report which one it opened.
+         procedure Await_Request
+           (Socket : Sockets.Socket_Type; Stream_ID : out Natural)
+         is
+            Asked : Boolean := False;
+         begin
+            Stream_ID := 0;
+            while not Asked loop
+               Read_Frame_Header (Socket, Info, Wait => 10.0);
+               Read_Payload (Socket, Info, Payload, Wait => 10.0);
+               if Info.Kind = Settings_Frame
+                 and then (Info.Flags and Ack_Flag) = 0
+               then
+                  Send_Frame (Socket, Settings_Frame, Ack_Flag, 0, Empty);
+               elsif Info.Kind = Headers_Frame then
+                  Stream_ID := Info.Stream_ID;
+                  Asked := True;
+               end if;
+            end loop;
+         end Await_Request;
+
+         --  Answer one connection with one response: either a legally
+         --  fragmented field section, or one whose status pseudo-field rides
+         --  an unsolicited CONTINUATION while the HEADERS frame that follows
+         --  carries only a regular field. Each gets a connection of its own,
+         --  since a request that fails on a reused connection is retried.
+         procedure Serve (Fragmented : Boolean) is
+            Socket  : Sockets.Socket_Type;
+            Where   : Sockets.Endpoint;
+            Opening : Stream_Element_Array (1 .. Preface'Length);
+            Opened  : Natural;
+         begin
+            Sockets.Accept_Connection
+              (Peer_Listener, Socket, Where, Timeout => 10.0);
+            Sockets.Receive_Exactly (Socket, Opening, Timeout => 10.0);
+            Send_Frame (Socket, Settings_Frame, 0, 0, Empty);
+            Await_Request (Socket, Opened);
+            if Fragmented then
+               Send_Frame
+                 (Socket, Headers_Frame, 0, Opened,
+                  Reply_Block (Reply_Block'First .. Reply_Block'First));
+               Send_Frame
+                 (Socket, Continuation_Frame, End_Headers_Flag, Opened,
+                  Reply_Block (Reply_Block'First + 1 .. Reply_Block'Last));
+            else
+               Send_Frame
+                 (Socket, Continuation_Frame, 0, Opened,
+                  Stream_Element_Array'(1 => 16#88#));
+               Send_Frame
+                 (Socket, Headers_Frame, End_Headers_Flag, Opened,
+                  Literal ("x-forged", "1"));
+            end if;
+            Send_Frame
+              (Socket, Data_Frame, End_Stream_Flag, Opened,
+               Text_Bytes ("ok"));
+            delay 0.50;
+            Sockets.Close_Socket (Socket);
+         end Serve;
+      begin
+         Serve (Fragmented => True);
+         Serve (Fragmented => False);
+      exception
+         when others =>
+            null;
+      end Peer_Task;
+
+      Origin : constant String :=
+        "http://127.0.0.1:" & Decimal (Natural (Peer_Address.Port));
+      Fragmented_Client : aliased Client.Client (Capacity => 1);
+      Forged_Client     : aliased Client.Client (Capacity => 1);
+      Served  : Boolean := False;
+      Forged  : Boolean := False;
+      Refused : Boolean := False;
+      Detail  : Unbounded_String;
+   begin
+      Client.Configure
+        (Fragmented_Client, Flyology.HTTP.Parse_Origin (Origin),
+         Client.HTTP_2_Prior_Knowledge);
+      Client.Configure
+        (Forged_Client, Flyology.HTTP.Parse_Origin (Origin),
+         Client.HTTP_2_Prior_Knowledge);
+
+      declare
+         Ask : Client.Request;
+      begin
+         Client.Set_Target (Ask, "/fragmented");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (Fragmented_Client, Ask, Timeout => 10.0);
+            Content : constant String :=
+              Flyology.Bytes.To_Byte_String (Client.Read_All (Reply));
+         begin
+            Served := Client.Status (Reply) = 200
+              and then Client.Header (Reply, "x-ok") = "1"
+              and then Content = "ok";
+         end;
+      exception
+         when Event : others =>
+            Detail :=
+              To_Unbounded_String (Ada.Exceptions.Exception_Name (Event));
+      end;
+      Check
+        (Served, "a legally fragmented response section is still accepted");
+
+      declare
+         Ask : Client.Request;
+      begin
+         Client.Set_Target (Ask, "/forged");
+         declare
+            Reply : constant Client.Response :=
+              Client.Execute (Forged_Client, Ask, Timeout => 10.0);
+         begin
+            Forged := Client.Header (Reply, "x-forged") = "1";
+         end;
+      exception
+         when Flyology.HTTP.Protocol_Error =>
+            Refused := True;
+         when Event : others =>
+            Detail :=
+              To_Unbounded_String (Ada.Exceptions.Exception_Name (Event));
+      end;
+      Ada.Text_IO.Put_Line
+        ("  the client response " &
+           (if Refused then "failed the connection"
+            elsif Forged then "carried the forged x-forged field"
+            elsif Length (Detail) > 0 then "raised " & To_String (Detail)
+            else "arrived without the forged field"));
+      Check
+        (Refused,
+         "an unsolicited CONTINUATION fails the client connection");
+      Check
+        (not Forged,
+         "residue never prepends a response field section");
+      Client.Shutdown (Fragmented_Client, Timeout => 5.0);
+      Client.Shutdown (Forged_Client, Timeout => 5.0);
+   end;
+   Sockets.Close_Socket (Peer_Listener);
 
    Sockets.Close_Socket (Router_Listener);
    Sockets.Close_Socket (Listener);

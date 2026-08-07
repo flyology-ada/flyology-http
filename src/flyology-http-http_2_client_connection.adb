@@ -1373,6 +1373,13 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                end if;
             end;
          elsif Header.Kind = Frames.Continuation_Frame then
+            --  RFC 9113 6.10: a CONTINUATION that does not follow an
+            --  unterminated HEADERS or CONTINUATION is a connection
+            --  PROTOCOL_ERROR. With END_HEADERS clear its payload would
+            --  otherwise stay buffered and prepend the next field section.
+            if not Expect_Continuation then
+               Protocol_Failure;
+            end if;
             Bytes.Append (Header_Block, Payload);
             if Bytes.Length (Header_Block) > Maximum_Header_Block then
                Protocol_Failure;
