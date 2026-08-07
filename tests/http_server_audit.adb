@@ -21,6 +21,7 @@ procedure HTTP_Server_Audit is
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    LF   : constant Character := Character'Val (10);
+   NUL  : constant Character := Character'Val (0);
 
    Test_Peer : constant Sockets.Endpoint :=
      Sockets.Network_Endpoint (Sockets.Loopback_IPv4, 12_345);
@@ -296,7 +297,67 @@ procedure HTTP_Server_Audit is
         (To_String (Joined) = "sid=good; x=y", To_String (Joined));
    end Check_Repeated_Cookie_Fields;
 
+   --  Finding 25. Decode_Query emitted any percent-escaped byte, so a query
+   --  value was the one request surface able to carry an embedded NUL or C0
+   --  control byte into an application.
+   procedure Check_Query_Control_Bytes is
+      package Applications renames Flyology.HTTP.Server.Applications;
+      package Requests renames Flyology.HTTP.Server.Requests;
+      package Responses renames Flyology.HTTP.Server.Responses;
+      type Context is null record;
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      Rejected : Boolean := False;
+      Observed : Unbounded_String;
+      Benign   : Unbounded_String;
+      Spaced   : Unbounded_String;
+
+      procedure Show
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+         Builder : Responses.Builder;
+      begin
+         Benign := To_Unbounded_String (Requests.Query (X, "ok"));
+         Spaced := To_Unbounded_String (Requests.Query (X, "sp"));
+         begin
+            Observed := To_Unbounded_String (Requests.Query (X, "name"));
+         exception
+            when Flyology.HTTP.Protocol_Error =>
+               Rejected := True;
+         end;
+         Builder.Initialize (200, "text/plain");
+         Builder.Set_Payload ("ok");
+         Builder.Send (X);
+      end Show;
+
+      Routes : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+      Wire   : aliased Memory_Transport;
+   begin
+      Routes.Get ("/files", Show'Access, Name => "files");
+      Wire.Input := To_Unbounded_String
+        ("GET /files?name=report%2Etxt%00.png&ok=report%2Etxt&sp=a+b"
+         & " HTTP/1.1" & CRLF
+         & "Host: example.test" & CRLF
+         & "Connection: close" & CRLF & CRLF);
+      declare
+         Client : aliased HTTP_Server.Connection (Wire'Access);
+      begin
+         Routes.Serve (State, Client, Test_Peer);
+      end;
+      pragma Assert (To_String (Benign) = "report.txt", To_String (Benign));
+      pragma Assert (To_String (Spaced) = "a b", To_String (Spaced));
+      pragma Assert (Rejected, Visible (To_String (Observed)));
+      pragma Assert
+        (Ada.Strings.Fixed.Index (To_String (Observed), "" & NUL) = 0,
+         Visible (To_String (Observed)));
+   end Check_Query_Control_Bytes;
+
 begin
    Check_Per_Request_Response_Shape;
    Check_Repeated_Cookie_Fields;
+   Check_Query_Control_Bytes;
 end HTTP_Server_Audit;

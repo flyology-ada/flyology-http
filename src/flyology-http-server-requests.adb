@@ -16,8 +16,9 @@ package body Flyology.HTTP.Server.Requests is
    end Hex_Value;
 
    function Decode_Query (Value : String) return String is
-      Result : Unbounded_String;
-      Index  : Natural := Value'First;
+      Result  : Unbounded_String;
+      Index   : Natural := Value'First;
+      Decoded : Character;
    begin
       while Index <= Value'Last loop
          if Value (Index) = '%' then
@@ -25,19 +26,28 @@ package body Flyology.HTTP.Server.Requests is
                raise Flyology.HTTP.Protocol_Error with
                  "truncated query percent escape";
             end if;
-            Append
-              (Result,
-               Character'Val
-                 (16 * Hex_Value (Value (Index + 1))
-                  + Hex_Value (Value (Index + 2))));
+            Decoded := Character'Val
+              (16 * Hex_Value (Value (Index + 1))
+               + Hex_Value (Value (Index + 2)));
             Index := Index + 3;
          elsif Value (Index) = '+' then
-            Append (Result, ' ');
+            Decoded := ' ';
             Index := Index + 1;
          else
-            Append (Result, Value (Index));
+            Decoded := Value (Index);
             Index := Index + 1;
          end if;
+         --  Reject in the same pass the bytes the path decoder rejects
+         --  after decoding, so no request surface can hand an application
+         --  an embedded NUL or C0 control byte. Backslash stays legal
+         --  because it carries no delimiter meaning in a query.
+         if Character'Pos (Decoded) < 32
+           or else Character'Pos (Decoded) = 127
+         then
+            raise Flyology.HTTP.Protocol_Error with
+              "unsafe decoded byte in query";
+         end if;
+         Append (Result, Decoded);
       end loop;
       return To_String (Result);
    end Decode_Query;

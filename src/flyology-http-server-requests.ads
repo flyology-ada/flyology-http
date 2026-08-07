@@ -5,7 +5,8 @@ package Flyology.HTTP.Server.Requests is
 
    --  Return one decoded query occurrence. Names and values use percent
    --  decoding, and plus represents space only in the query. Duplicate keys
-   --  retain wire order. Malformed escapes raise Protocol_Error.
+   --  retain wire order. Malformed escapes raise Protocol_Error, as does a
+   --  decoded NUL, C0 control byte, or DEL.
    --  @param X Request exchange
    --  @param Name Decoded case-sensitive key
    --  @param Occurrence One-based duplicate occurrence
@@ -15,7 +16,8 @@ package Flyology.HTTP.Server.Requests is
       Name       : String;
       Occurrence : Positive := 1) return String;
 
-   --  Report whether one decoded query occurrence exists.
+   --  Report whether one decoded query occurrence exists. Decoding rejects
+   --  the same bytes Query rejects.
    --  @param X Request exchange
    --  @param Name Decoded case-sensitive key
    --  @param Occurrence One-based duplicate occurrence
