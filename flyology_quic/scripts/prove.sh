@@ -17,6 +17,7 @@ alr gnatprove \
   -f \
   -u \
   flyology-quic-connection_state_policy.adb \
+  flyology-quic-crypto_frame_policy.adb \
   flyology-quic-crypto_reassembly_policy.adb \
   flyology-quic-handshake_packet_policy.adb \
   flyology-quic-initial_frame_policy.adb \
