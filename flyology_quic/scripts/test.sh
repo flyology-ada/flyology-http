@@ -22,6 +22,7 @@ for test in \
   flyology-quic-tls_extension_policy-smoke \
   flyology-quic-tls_handshake_policy-smoke \
   flyology-quic-tls_key_schedule-smoke \
+  flyology-quic-tls_session-smoke \
   flyology-quic-tls_signature_policy-smoke \
   flyology-quic-transport_parameter_policy-smoke \
   flyology-quic-varint_policy-smoke

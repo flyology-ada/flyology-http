@@ -83,6 +83,12 @@ for the next layer.
   RSA-PSS, and Ed25519 scheme selection, exact signature and verify-data
   lengths, encoder round trips, truncation, malformed vectors, unsupported
   schemes, and the bounded eight-certificate resource limit.
+- An in-memory Ada client/server handshake exchanges ClientHello, ServerHello,
+  EncryptedExtensions, Certificate, CertificateVerify, and both Finished
+  messages across the QUIC Initial/Handshake boundary. Both endpoints derive
+  identical opposite-direction Handshake and 1-RTT keys, validate the pinned
+  Ed25519 leaf, and decode role-correct peer transport parameters. Corrupting
+  the server Finished is rejected and moves the client to a failed state.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

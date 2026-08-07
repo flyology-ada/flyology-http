@@ -37,6 +37,10 @@ CertificateVerify, and SHA-256 Finished messages without owning certificate or
 signature payloads.
 A proved builder constructs the role-separated TLS 1.3 CertificateVerify input
 from the Ada-owned transcript hash.
+The bounded Ada TLS session now runs the no-PSK client and server handshake,
+splits the server flight at QUIC's Initial/Handshake key boundary, validates a
+pinned Ed25519 leaf, verifies both Finished messages, decodes peer transport
+parameters, and derives matching directional Handshake and 1-RTT keys.
 
 ## Build and test
 
