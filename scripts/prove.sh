@@ -4,6 +4,8 @@ set -eu
 http_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 alr=$("$http_root/scripts/find-alr.sh")
 
+"$http_root/flyology_quic/scripts/prove.sh"
+
 cd "$http_root/proof"
 "$alr" build --stop-after=generation
 "$alr" gnatprove \

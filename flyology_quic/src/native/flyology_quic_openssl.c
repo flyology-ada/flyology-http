@@ -1,0 +1,375 @@
+#define _POSIX_C_SOURCE 200809L
+
+/* OpenSSL 3 dynamic cryptography adapter for Flyology QUIC.  This adapter
+ * contains no QUIC protocol state. */
+
+#include <dlfcn.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct evp_cipher_st EVP_CIPHER;
+typedef struct evp_cipher_ctx_st EVP_CIPHER_CTX;
+typedef struct evp_md_st EVP_MD;
+
+struct quic_crypto_module {
+   void *crypto;
+   unsigned long (*OpenSSL_version_num)(void);
+   void (*ERR_clear_error)(void);
+   unsigned long (*ERR_get_error)(void);
+   void (*ERR_error_string_n)(unsigned long, char *, size_t);
+   const EVP_MD *(*EVP_sha256)(void);
+   unsigned char *(*HMAC)(const EVP_MD *, const void *, int,
+                          const unsigned char *, size_t,
+                          unsigned char *, unsigned int *);
+   void (*OPENSSL_cleanse)(void *, size_t);
+   const EVP_CIPHER *(*EVP_aes_128_ecb)(void);
+   const EVP_CIPHER *(*EVP_aes_128_gcm)(void);
+   EVP_CIPHER_CTX *(*EVP_CIPHER_CTX_new)(void);
+   void (*EVP_CIPHER_CTX_free)(EVP_CIPHER_CTX *);
+   int (*EVP_CIPHER_CTX_ctrl)(EVP_CIPHER_CTX *, int, int, void *);
+   int (*EVP_CIPHER_CTX_set_padding)(EVP_CIPHER_CTX *, int);
+   int (*EVP_EncryptInit_ex)(EVP_CIPHER_CTX *, const EVP_CIPHER *, void *,
+                             const unsigned char *, const unsigned char *);
+   int (*EVP_EncryptUpdate)(EVP_CIPHER_CTX *, unsigned char *, int *,
+                            const unsigned char *, int);
+   int (*EVP_EncryptFinal_ex)(EVP_CIPHER_CTX *, unsigned char *, int *);
+};
+
+static void set_error(char *buffer, size_t size, const char *message)
+{
+   if (buffer != NULL && size != 0)
+      snprintf(buffer, size, "%s", message != NULL ? message : "unknown error");
+}
+
+static void loader_error(char *buffer, size_t size, const char *name)
+{
+   const char *detail = dlerror();
+   if (buffer != NULL && size != 0)
+      snprintf(buffer, size, "%s: %s", name,
+               detail != NULL ? detail : "dynamic loader failure");
+}
+
+static int make_path(char *out, size_t size, const char *directory,
+                     const char *name)
+{
+   int count = directory == NULL || directory[0] == '\0'
+     ? snprintf(out, size, "%s", name)
+     : snprintf(out, size, "%s/%s", directory, name);
+   return count >= 0 && (size_t)count < size;
+}
+
+static void *required_symbol(void *handle, const char *name,
+                             char *error, size_t error_size)
+{
+   void *symbol;
+   dlerror();
+   symbol = dlsym(handle, name);
+   if (symbol == NULL) loader_error(error, error_size, name);
+   return symbol;
+}
+
+#define LOAD(module, member) do {                                               \
+   void *symbol = required_symbol((module)->crypto, #member, error, error_size); \
+   if (symbol == NULL) goto fail;                                                \
+   _Static_assert(sizeof((module)->member) == sizeof(symbol),                    \
+                  "function and data pointers must have equal size");           \
+   memcpy(&(module)->member, &symbol, sizeof((module)->member));                  \
+} while (0)
+
+static void release_module(struct quic_crypto_module *module)
+{
+   if (module == NULL) return;
+   if (module->crypto != NULL) dlclose(module->crypto);
+   free(module);
+}
+
+static struct quic_crypto_module *load_from_directory
+  (const char *directory, char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = NULL;
+   char path[1024];
+#if defined(__APPLE__)
+   const char *name = "libcrypto.3.dylib";
+#else
+   const char *name = "libcrypto.so.3";
+#endif
+
+   if (!make_path(path, sizeof path, directory, name)) {
+      set_error(error, error_size, "OpenSSL library directory is too long");
+      return NULL;
+   }
+   module = calloc(1, sizeof *module);
+   if (module == NULL) {
+      set_error(error, error_size, "cannot allocate OpenSSL module table");
+      return NULL;
+   }
+   module->crypto = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+   if (module->crypto == NULL) {
+      loader_error(error, error_size, path);
+      goto fail;
+   }
+
+   LOAD(module, OpenSSL_version_num);
+   if ((module->OpenSSL_version_num() >> 28) != 3) {
+      set_error(error, error_size, "QUIC requires OpenSSL 3.x");
+      goto fail;
+   }
+   LOAD(module, ERR_clear_error);
+   LOAD(module, ERR_get_error);
+   LOAD(module, ERR_error_string_n);
+   LOAD(module, EVP_sha256);
+   LOAD(module, HMAC);
+   LOAD(module, OPENSSL_cleanse);
+   LOAD(module, EVP_aes_128_ecb);
+   LOAD(module, EVP_aes_128_gcm);
+   LOAD(module, EVP_CIPHER_CTX_new);
+   LOAD(module, EVP_CIPHER_CTX_free);
+   LOAD(module, EVP_CIPHER_CTX_ctrl);
+   LOAD(module, EVP_CIPHER_CTX_set_padding);
+   LOAD(module, EVP_EncryptInit_ex);
+   LOAD(module, EVP_EncryptUpdate);
+   LOAD(module, EVP_EncryptFinal_ex);
+   return module;
+
+fail:
+   release_module(module);
+   return NULL;
+}
+
+static struct quic_crypto_module *load_module
+  (const char *directory, char *error, size_t error_size)
+{
+   struct quic_crypto_module *module;
+   if (directory != NULL && directory[0] != '\0')
+      return load_from_directory(directory, error, error_size);
+#if defined(__APPLE__)
+   static const char *directories[] = {
+      "/opt/homebrew/opt/openssl@3/lib",
+      "/usr/local/opt/openssl@3/lib",
+      ""
+   };
+#else
+   static const char *directories[] = { "" };
+#endif
+   for (size_t index = 0;
+        index < sizeof directories / sizeof directories[0]; ++index) {
+      module = load_from_directory(directories[index], error, error_size);
+      if (module != NULL) return module;
+   }
+   return NULL;
+}
+
+static void provider_error(struct quic_crypto_module *module,
+                           char *buffer, size_t size, const char *fallback)
+{
+   unsigned long code = module->ERR_get_error();
+   if (code != 0) module->ERR_error_string_n(code, buffer, size);
+   else set_error(buffer, size, fallback);
+}
+
+#define SHA256_LENGTH 32
+
+static int hmac_sha256(struct quic_crypto_module *module,
+                       const unsigned char *key, size_t key_length,
+                       const unsigned char *data, size_t data_length,
+                       unsigned char output[SHA256_LENGTH])
+{
+   unsigned int output_length = 0;
+   if (key_length > INT32_MAX) return 0;
+   module->ERR_clear_error();
+   return module->HMAC(module->EVP_sha256(), key, (int)key_length,
+                       data, data_length, output, &output_length) != NULL &&
+          output_length == SHA256_LENGTH;
+}
+
+static int hkdf_expand_label
+  (struct quic_crypto_module *module,
+   const unsigned char secret[SHA256_LENGTH], const char *label,
+   unsigned char *output, size_t output_length)
+{
+   static const unsigned char prefix[] = "tls13 ";
+   unsigned char input[256];
+   unsigned char digest[SHA256_LENGTH];
+   size_t label_length = strlen(label);
+   size_t full_label_length = sizeof prefix - 1 + label_length;
+   size_t cursor = 0;
+   int success = 0;
+
+   if (output_length > SHA256_LENGTH || full_label_length > 255 ||
+       2 + 1 + full_label_length + 1 + 1 > sizeof input)
+      return 0;
+   input[cursor++] = (unsigned char)(output_length >> 8);
+   input[cursor++] = (unsigned char)output_length;
+   input[cursor++] = (unsigned char)full_label_length;
+   memcpy(input + cursor, prefix, sizeof prefix - 1);
+   cursor += sizeof prefix - 1;
+   memcpy(input + cursor, label, label_length);
+   cursor += label_length;
+   input[cursor++] = 0;
+   input[cursor++] = 1;
+   if (hmac_sha256(module, secret, SHA256_LENGTH, input, cursor, digest)) {
+      memcpy(output, digest, output_length);
+      success = 1;
+   }
+   module->OPENSSL_cleanse(digest, sizeof digest);
+   module->OPENSSL_cleanse(input, sizeof input);
+   return success;
+}
+
+static int initial_direction
+  (struct quic_crypto_module *module,
+   const unsigned char initial_secret[SHA256_LENGTH], const char *direction,
+   unsigned char secret[SHA256_LENGTH], unsigned char key[16],
+   unsigned char iv[12], unsigned char hp[16])
+{
+   return hkdf_expand_label(module, initial_secret, direction,
+                            secret, SHA256_LENGTH) &&
+          hkdf_expand_label(module, secret, "quic key", key, 16) &&
+          hkdf_expand_label(module, secret, "quic iv", iv, 12) &&
+          hkdf_expand_label(module, secret, "quic hp", hp, 16);
+}
+
+void *flyology_quic_openssl_create(const char *directory,
+                                    char *error, size_t error_size)
+{
+   return load_module(directory, error, error_size);
+}
+
+void flyology_quic_openssl_release(void *handle)
+{
+   release_module(handle);
+}
+
+int flyology_quic_openssl_initial_keys
+  (void *handle, const unsigned char *connection_id, size_t connection_id_length,
+   unsigned char client_secret[32], unsigned char client_key[16],
+   unsigned char client_iv[12], unsigned char client_hp[16],
+   unsigned char server_secret[32], unsigned char server_key[16],
+   unsigned char server_iv[12], unsigned char server_hp[16],
+   char *error, size_t error_size)
+{
+   static const unsigned char initial_salt[20] = {
+      0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
+      0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a
+   };
+   struct quic_crypto_module *module = handle;
+   unsigned char initial_secret[SHA256_LENGTH];
+   int success = 0;
+
+   if (module == NULL || (connection_id_length != 0 && connection_id == NULL) ||
+       client_secret == NULL || client_key == NULL || client_iv == NULL ||
+       client_hp == NULL || server_secret == NULL || server_key == NULL ||
+       server_iv == NULL || server_hp == NULL) {
+      set_error(error, error_size, "invalid QUIC initial-key arguments");
+      return -1;
+   }
+   if (!hmac_sha256(module, initial_salt, sizeof initial_salt,
+                    connection_id, connection_id_length, initial_secret) ||
+       !initial_direction(module, initial_secret, "client in",
+                          client_secret, client_key, client_iv, client_hp) ||
+       !initial_direction(module, initial_secret, "server in",
+                          server_secret, server_key, server_iv, server_hp)) {
+      provider_error(module, error, error_size,
+                     "OpenSSL QUIC initial-key derivation failed");
+      goto done;
+   }
+   success = 1;
+done:
+   module->OPENSSL_cleanse(initial_secret, sizeof initial_secret);
+   return success ? 0 : -1;
+}
+
+#define EVP_CTRL_AEAD_SET_IVLEN 0x9
+#define EVP_CTRL_AEAD_GET_TAG 0x10
+
+int flyology_quic_openssl_protect
+  (void *handle, const unsigned char key[16], const unsigned char nonce[12],
+   const unsigned char *header, size_t header_length,
+   const unsigned char *plaintext, size_t plaintext_length,
+   unsigned char *ciphertext, size_t ciphertext_length,
+   char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   EVP_CIPHER_CTX *context = NULL;
+   int produced = 0;
+   int final_length = 0;
+   int success = 0;
+
+   if (module == NULL || key == NULL || nonce == NULL || ciphertext == NULL ||
+       plaintext_length > INT32_MAX || header_length > INT32_MAX ||
+       plaintext_length > SIZE_MAX - 16 ||
+       ciphertext_length != plaintext_length + 16 ||
+       (header_length != 0 && header == NULL) ||
+       (plaintext_length != 0 && plaintext == NULL)) {
+      set_error(error, error_size, "invalid QUIC payload-protection arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   context = module->EVP_CIPHER_CTX_new();
+   if (context == NULL ||
+       module->EVP_EncryptInit_ex(context, module->EVP_aes_128_gcm(), NULL,
+                                  NULL, NULL) != 1 ||
+       module->EVP_CIPHER_CTX_ctrl(context, EVP_CTRL_AEAD_SET_IVLEN,
+                                   12, NULL) != 1 ||
+       module->EVP_EncryptInit_ex(context, NULL, NULL, key, nonce) != 1 ||
+       (header_length != 0 &&
+        module->EVP_EncryptUpdate(context, NULL, &produced, header,
+                                  (int)header_length) != 1) ||
+       (plaintext_length != 0 &&
+        module->EVP_EncryptUpdate(context, ciphertext, &produced, plaintext,
+                                  (int)plaintext_length) != 1) ||
+       module->EVP_EncryptFinal_ex(context, ciphertext + produced,
+                                   &final_length) != 1 ||
+       (size_t)(produced + final_length) != plaintext_length ||
+       module->EVP_CIPHER_CTX_ctrl(context, EVP_CTRL_AEAD_GET_TAG, 16,
+                                   ciphertext + plaintext_length) != 1) {
+      provider_error(module, error, error_size,
+                     "OpenSSL QUIC payload protection failed");
+      goto done;
+   }
+   success = 1;
+done:
+   if (context != NULL) module->EVP_CIPHER_CTX_free(context);
+   return success ? 0 : -1;
+}
+
+int flyology_quic_openssl_header_mask
+  (void *handle, const unsigned char key[16],
+   const unsigned char sample[16], unsigned char mask[5],
+   char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   EVP_CIPHER_CTX *context = NULL;
+   unsigned char block[16];
+   int produced = 0;
+   int final_length = 0;
+   int success = 0;
+
+   memset(block, 0, sizeof block);
+   if (module == NULL || key == NULL || sample == NULL || mask == NULL) {
+      set_error(error, error_size, "invalid QUIC header-mask arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   context = module->EVP_CIPHER_CTX_new();
+   if (context == NULL ||
+       module->EVP_EncryptInit_ex(context, module->EVP_aes_128_ecb(), NULL,
+                                  key, NULL) != 1 ||
+       module->EVP_CIPHER_CTX_set_padding(context, 0) != 1 ||
+       module->EVP_EncryptUpdate(context, block, &produced, sample, 16) != 1 ||
+       module->EVP_EncryptFinal_ex(context, block + produced,
+                                   &final_length) != 1 ||
+       produced + final_length != 16) {
+      provider_error(module, error, error_size,
+                     "OpenSSL QUIC header protection failed");
+      goto done;
+   }
+   memcpy(mask, block, 5);
+   success = 1;
+done:
+   module->OPENSSL_cleanse(block, sizeof block);
+   if (context != NULL) module->EVP_CIPHER_CTX_free(context);
+   return success ? 0 : -1;
+}
