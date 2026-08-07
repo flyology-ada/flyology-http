@@ -19,6 +19,12 @@ for the next layer.
 - FIPS 180-4, RFC 4231, and RFC 7748 vectors cover SHA-256, HMAC-SHA256,
   X25519 public-key derivation, and shared-secret agreement in both directions.
   Fresh ephemeral pairs must agree, while an all-zero peer key is rejected.
+- RFC 8032 test 1 covers Ed25519 public-key derivation and deterministic
+  signing byte-for-byte. Raw-key and fixed DER-certificate verification accept
+  the authentic signature and reject tampering and malformed certificate DER.
+  Separate tests cover the exact client and server TLS 1.3 CertificateVerify
+  input construction; certificate trust and endpoint identity are not inferred
+  from signature validity.
 - The RFC 8448 simple 1-RTT trace covers the Ada TLS 1.3 no-PSK schedule:
   handshake and master secrets, both handshake traffic and Finished secrets,
   Finished verification, application traffic, exporter, resumption, and TLS

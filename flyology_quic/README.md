@@ -27,12 +27,16 @@ numbers only after successful construction, suppresses authenticated replays
 through a proved 256-packet window, and exchanges datagrams through Flyology's
 portable UDP sockets.
 The native primitive boundary also supplies cryptographic randomness, SHA-256,
-HMAC-SHA256, and X25519 for the Ada TLS 1.3 handshake state.
+HMAC-SHA256, X25519, and Ed25519 signing and verification for the Ada TLS 1.3
+handshake state. Certificate public-key extraction accepts bounded DER input;
+trust and endpoint-identity policy remain outside the primitive adapter.
 The Ada key schedule derives no-PSK TLS 1.3 handshake, Finished, application,
 exporter, and resumption secrets together with QUIC traffic keys and updates.
 A proved bounded wire policy parses and encodes TLS 1.3 Certificate,
 CertificateVerify, and SHA-256 Finished messages without owning certificate or
 signature payloads.
+A proved builder constructs the role-separated TLS 1.3 CertificateVerify input
+from the Ada-owned transcript hash.
 
 ## Build and test
 

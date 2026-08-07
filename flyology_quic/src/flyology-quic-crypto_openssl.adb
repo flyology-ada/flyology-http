@@ -123,6 +123,50 @@ package body Flyology.QUIC.Crypto_OpenSSL is
    pragma Import
      (C, C_X25519_Shared, "flyology_quic_openssl_x25519_shared");
 
+   function C_Ed25519_Public
+     (Handle      : System.Address;
+      Private_Key : System.Address;
+      Public_Key  : System.Address;
+      Error       : System.Address;
+      Error_Size  : C.size_t) return C.int;
+   pragma Import
+     (C, C_Ed25519_Public, "flyology_quic_openssl_ed25519_public");
+
+   function C_Ed25519_Sign
+     (Handle         : System.Address;
+      Private_Key    : System.Address;
+      Message        : System.Address;
+      Message_Length : C.size_t;
+      Signature      : System.Address;
+      Error          : System.Address;
+      Error_Size     : C.size_t) return C.int;
+   pragma Import
+     (C, C_Ed25519_Sign, "flyology_quic_openssl_ed25519_sign");
+
+   function C_Ed25519_Verify
+     (Handle         : System.Address;
+      Public_Key     : System.Address;
+      Message        : System.Address;
+      Message_Length : C.size_t;
+      Signature      : System.Address;
+      Error          : System.Address;
+      Error_Size     : C.size_t) return C.int;
+   pragma Import
+     (C, C_Ed25519_Verify, "flyology_quic_openssl_ed25519_verify");
+
+   function C_Ed25519_Verify_Certificate
+     (Handle             : System.Address;
+      Certificate        : System.Address;
+      Certificate_Length : C.size_t;
+      Message            : System.Address;
+      Message_Length     : C.size_t;
+      Signature          : System.Address;
+      Error              : System.Address;
+      Error_Size         : C.size_t) return C.int;
+   pragma Import
+     (C, C_Ed25519_Verify_Certificate,
+      "flyology_quic_openssl_ed25519_verify_certificate");
+
    function Image (Buffer : Error_Buffer) return String is
      (C.To_Ada (Buffer, Trim_Nul => True));
 
@@ -437,6 +481,112 @@ package body Flyology.QUIC.Crypto_OpenSSL is
          Public_Key := (others => 0);
          raise;
    end Generate_X25519;
+
+   procedure Ed25519_Public
+     (Item        : Provider;
+      Private_Key : Ed25519_Private_Key;
+      Public_Key  : out Ed25519_Public_Key)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Public_Key := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Ed25519_Public
+          (Item.Handle, Private_Key (Private_Key'First)'Address,
+           Public_Key (Public_Key'First)'Address, Error (Error'First)'Address,
+           C.size_t (Error'Length));
+      if Status /= 0 then
+         Public_Key := (others => 0);
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Ed25519_Public;
+
+   procedure Ed25519_Sign
+     (Item        : Provider;
+      Private_Key : Ed25519_Private_Key;
+      Message     : Ada.Streams.Stream_Element_Array;
+      Signature   : out Ed25519_Signature)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Signature := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Ed25519_Sign
+          (Item.Handle, Private_Key (Private_Key'First)'Address,
+           (if Message'Length = 0 then System.Null_Address
+            else Message (Message'First)'Address),
+           C.size_t (Message'Length), Signature (Signature'First)'Address,
+           Error (Error'First)'Address, C.size_t (Error'Length));
+      if Status /= 0 then
+         Signature := (others => 0);
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Ed25519_Sign;
+
+   procedure Ed25519_Verify
+     (Item       : Provider;
+      Public_Key : Ed25519_Public_Key;
+      Message    : Ada.Streams.Stream_Element_Array;
+      Signature  : Ed25519_Signature;
+      Verified   : out Boolean)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Verified := False;
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Ed25519_Verify
+          (Item.Handle, Public_Key (Public_Key'First)'Address,
+           (if Message'Length = 0 then System.Null_Address
+            else Message (Message'First)'Address),
+           C.size_t (Message'Length), Signature (Signature'First)'Address,
+           Error (Error'First)'Address, C.size_t (Error'Length));
+      if Status = 0 then
+         Verified := True;
+      elsif Status /= 1 then
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Ed25519_Verify;
+
+   procedure Ed25519_Verify_Certificate
+     (Item            : Provider;
+      Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Message         : Ada.Streams.Stream_Element_Array;
+      Signature       : Ed25519_Signature;
+      Verified        : out Boolean)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Verified := False;
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Ed25519_Verify_Certificate
+          (Item.Handle, Certificate_DER (Certificate_DER'First)'Address,
+           C.size_t (Certificate_DER'Length),
+           (if Message'Length = 0 then System.Null_Address
+            else Message (Message'First)'Address),
+           C.size_t (Message'Length), Signature (Signature'First)'Address,
+           Error (Error'First)'Address, C.size_t (Error'Length));
+      if Status = 0 then
+         Verified := True;
+      elsif Status /= 1 then
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Ed25519_Verify_Certificate;
 
    overriding procedure Finalize (Item : in out Provider) is
    begin

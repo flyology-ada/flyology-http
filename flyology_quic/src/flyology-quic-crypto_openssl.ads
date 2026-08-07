@@ -17,6 +17,9 @@ private package Flyology.QUIC.Crypto_OpenSSL is
    subtype X25519_Private_Key is Ada.Streams.Stream_Element_Array (1 .. 32);
    subtype X25519_Public_Key is Ada.Streams.Stream_Element_Array (1 .. 32);
    subtype X25519_Shared_Secret is Ada.Streams.Stream_Element_Array (1 .. 32);
+   subtype Ed25519_Private_Key is Ada.Streams.Stream_Element_Array (1 .. 32);
+   subtype Ed25519_Public_Key is Ada.Streams.Stream_Element_Array (1 .. 32);
+   subtype Ed25519_Signature is Ada.Streams.Stream_Element_Array (1 .. 64);
 
    --  QUIC v1 Initial secrets and traffic keys. Initial secrets are derived
    --  from the public Destination Connection ID; later encryption levels use
@@ -108,6 +111,32 @@ private package Flyology.QUIC.Crypto_OpenSSL is
      (Item        : Provider;
       Private_Key : out X25519_Private_Key;
       Public_Key  : out X25519_Public_Key);
+
+   procedure Ed25519_Public
+     (Item        : Provider;
+      Private_Key : Ed25519_Private_Key;
+      Public_Key  : out Ed25519_Public_Key);
+
+   procedure Ed25519_Sign
+     (Item        : Provider;
+      Private_Key : Ed25519_Private_Key;
+      Message     : Ada.Streams.Stream_Element_Array;
+      Signature   : out Ed25519_Signature);
+
+   procedure Ed25519_Verify
+     (Item       : Provider;
+      Public_Key : Ed25519_Public_Key;
+      Message    : Ada.Streams.Stream_Element_Array;
+      Signature  : Ed25519_Signature;
+      Verified   : out Boolean);
+
+   procedure Ed25519_Verify_Certificate
+     (Item            : Provider;
+      Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Message         : Ada.Streams.Stream_Element_Array;
+      Signature       : Ed25519_Signature;
+      Verified        : out Boolean)
+   with Pre => Certificate_DER'Length > 0;
 private
    type Provider is new Ada.Finalization.Limited_Controlled with record
       Handle : System.Address := System.Null_Address;

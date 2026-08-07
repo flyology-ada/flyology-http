@@ -4,6 +4,7 @@
  * contains no QUIC protocol state. */
 
 #include <dlfcn.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,8 +13,10 @@
 typedef struct evp_cipher_st EVP_CIPHER;
 typedef struct evp_cipher_ctx_st EVP_CIPHER_CTX;
 typedef struct evp_md_st EVP_MD;
+typedef struct evp_md_ctx_st EVP_MD_CTX;
 typedef struct evp_pkey_st EVP_PKEY;
 typedef struct evp_pkey_ctx_st EVP_PKEY_CTX;
+typedef struct x509_st X509;
 
 struct quic_crypto_module {
    void *crypto;
@@ -42,6 +45,20 @@ struct quic_crypto_module {
    int (*EVP_PKEY_derive_init)(EVP_PKEY_CTX *);
    int (*EVP_PKEY_derive_set_peer)(EVP_PKEY_CTX *, const EVP_PKEY *);
    int (*EVP_PKEY_derive)(EVP_PKEY_CTX *, unsigned char *, size_t *);
+   EVP_MD_CTX *(*EVP_MD_CTX_new)(void);
+   void (*EVP_MD_CTX_free)(EVP_MD_CTX *);
+   int (*EVP_DigestSignInit)
+     (EVP_MD_CTX *, EVP_PKEY_CTX **, const EVP_MD *, void *, EVP_PKEY *);
+   int (*EVP_DigestSign)
+     (EVP_MD_CTX *, unsigned char *, size_t *, const unsigned char *, size_t);
+   int (*EVP_DigestVerifyInit)
+     (EVP_MD_CTX *, EVP_PKEY_CTX **, const EVP_MD *, void *, EVP_PKEY *);
+   int (*EVP_DigestVerify)
+     (EVP_MD_CTX *, const unsigned char *, size_t,
+      const unsigned char *, size_t);
+   X509 *(*d2i_X509)(X509 **, const unsigned char **, long);
+   void (*X509_free)(X509 *);
+   EVP_PKEY *(*X509_get_pubkey)(X509 *);
    const EVP_CIPHER *(*EVP_aes_128_ecb)(void);
    const EVP_CIPHER *(*EVP_aes_128_gcm)(void);
    EVP_CIPHER_CTX *(*EVP_CIPHER_CTX_new)(void);
@@ -157,6 +174,15 @@ static struct quic_crypto_module *load_from_directory
    LOAD(module, EVP_PKEY_derive_init);
    LOAD(module, EVP_PKEY_derive_set_peer);
    LOAD(module, EVP_PKEY_derive);
+   LOAD(module, EVP_MD_CTX_new);
+   LOAD(module, EVP_MD_CTX_free);
+   LOAD(module, EVP_DigestSignInit);
+   LOAD(module, EVP_DigestSign);
+   LOAD(module, EVP_DigestVerifyInit);
+   LOAD(module, EVP_DigestVerify);
+   LOAD(module, d2i_X509);
+   LOAD(module, X509_free);
+   LOAD(module, X509_get_pubkey);
    LOAD(module, EVP_aes_128_ecb);
    LOAD(module, EVP_aes_128_gcm);
    LOAD(module, EVP_CIPHER_CTX_new);
@@ -625,4 +651,173 @@ done:
    if (local != NULL) module->EVP_PKEY_free(local);
    if (!success) module->OPENSSL_cleanse(shared_secret, 32);
    return success ? 0 : -1;
+}
+
+int flyology_quic_openssl_ed25519_public
+  (void *handle, const unsigned char private_key[32],
+   unsigned char public_key[32], char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   EVP_PKEY *key = NULL;
+   size_t public_length = 32;
+   int nid;
+   int success = 0;
+   if (module == NULL || private_key == NULL || public_key == NULL) {
+      set_error(error, error_size, "invalid Ed25519 public-key arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   nid = module->OBJ_sn2nid("ED25519");
+   if (nid == 0) {
+      provider_error(module, error, error_size,
+                     "OpenSSL does not provide Ed25519");
+      goto done;
+   }
+   key = module->EVP_PKEY_new_raw_private_key
+     (nid, NULL, private_key, 32);
+   if (key == NULL ||
+       module->EVP_PKEY_get_raw_public_key
+         (key, public_key, &public_length) != 1 || public_length != 32) {
+      provider_error(module, error, error_size,
+                     "OpenSSL Ed25519 public-key derivation failed");
+      goto done;
+   }
+   success = 1;
+done:
+   if (key != NULL) module->EVP_PKEY_free(key);
+   if (!success) module->OPENSSL_cleanse(public_key, 32);
+   return success ? 0 : -1;
+}
+
+int flyology_quic_openssl_ed25519_sign
+  (void *handle, const unsigned char private_key[32],
+   const unsigned char *message, size_t message_length,
+   unsigned char signature[64], char *error, size_t error_size)
+{
+   static const unsigned char empty = 0;
+   struct quic_crypto_module *module = handle;
+   EVP_PKEY *key = NULL;
+   EVP_MD_CTX *context = NULL;
+   size_t signature_length = 64;
+   int nid;
+   int success = 0;
+   if (module == NULL || private_key == NULL || signature == NULL ||
+       (message_length != 0 && message == NULL)) {
+      set_error(error, error_size, "invalid Ed25519 signing arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   nid = module->OBJ_sn2nid("ED25519");
+   if (nid == 0 ||
+       (key = module->EVP_PKEY_new_raw_private_key
+          (nid, NULL, private_key, 32)) == NULL ||
+       (context = module->EVP_MD_CTX_new()) == NULL ||
+       module->EVP_DigestSignInit(context, NULL, NULL, NULL, key) != 1 ||
+       module->EVP_DigestSign
+         (context, signature, &signature_length,
+          message_length == 0 ? &empty : message, message_length) != 1 ||
+       signature_length != 64) {
+      provider_error(module, error, error_size, "OpenSSL Ed25519 signing failed");
+      goto done;
+   }
+   success = 1;
+done:
+   if (context != NULL) module->EVP_MD_CTX_free(context);
+   if (key != NULL) module->EVP_PKEY_free(key);
+   if (!success) module->OPENSSL_cleanse(signature, 64);
+   return success ? 0 : -1;
+}
+
+static int verify_ed25519
+  (struct quic_crypto_module *module, EVP_PKEY *key,
+   const unsigned char *message, size_t message_length,
+   const unsigned char signature[64])
+{
+   static const unsigned char empty = 0;
+   EVP_MD_CTX *context = NULL;
+   int status;
+   context = module->EVP_MD_CTX_new();
+   if (context == NULL ||
+       module->EVP_DigestVerifyInit(context, NULL, NULL, NULL, key) != 1) {
+      if (context != NULL) module->EVP_MD_CTX_free(context);
+      return -1;
+   }
+   status = module->EVP_DigestVerify
+     (context, signature, 64, message_length == 0 ? &empty : message,
+      message_length);
+   module->EVP_MD_CTX_free(context);
+   return status == 1 ? 0 : status == 0 ? 1 : -1;
+}
+
+int flyology_quic_openssl_ed25519_verify
+  (void *handle, const unsigned char public_key[32],
+   const unsigned char *message, size_t message_length,
+   const unsigned char signature[64], char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   EVP_PKEY *key = NULL;
+   int nid;
+   int status;
+   if (module == NULL || public_key == NULL || signature == NULL ||
+       (message_length != 0 && message == NULL)) {
+      set_error(error, error_size, "invalid Ed25519 verification arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   nid = module->OBJ_sn2nid("ED25519");
+   key = nid == 0 ? NULL : module->EVP_PKEY_new_raw_public_key
+     (nid, NULL, public_key, 32);
+   if (key == NULL) {
+      provider_error(module, error, error_size,
+                     "OpenSSL Ed25519 public key failed");
+      return -1;
+   }
+   status = verify_ed25519
+     (module, key, message, message_length, signature);
+   module->EVP_PKEY_free(key);
+   if (status < 0)
+      provider_error(module, error, error_size,
+                     "OpenSSL Ed25519 verification failed");
+   return status;
+}
+
+int flyology_quic_openssl_ed25519_verify_certificate
+  (void *handle, const unsigned char *certificate, size_t certificate_length,
+   const unsigned char *message, size_t message_length,
+   const unsigned char signature[64], char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   const unsigned char *cursor = certificate;
+   X509 *parsed = NULL;
+   EVP_PKEY *key = NULL;
+   int status;
+   if (module == NULL || certificate == NULL || certificate_length == 0 ||
+       certificate_length > LONG_MAX || signature == NULL ||
+       (message_length != 0 && message == NULL)) {
+      set_error(error, error_size,
+                "invalid Ed25519 certificate verification arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   parsed = module->d2i_X509(NULL, &cursor, (long)certificate_length);
+   if (parsed == NULL || cursor != certificate + certificate_length) {
+      if (parsed != NULL) module->X509_free(parsed);
+      module->ERR_clear_error();
+      return 1;
+   }
+   key = module->X509_get_pubkey(parsed);
+   if (key == NULL) {
+      module->X509_free(parsed);
+      module->ERR_clear_error();
+      return 1;
+   }
+   status = verify_ed25519
+     (module, key, message, message_length, signature);
+   module->EVP_PKEY_free(key);
+   module->X509_free(parsed);
+   if (status < 0) {
+      module->ERR_clear_error();
+      return 1;
+   }
+   return status;
 }
