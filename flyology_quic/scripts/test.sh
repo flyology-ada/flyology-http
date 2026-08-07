@@ -10,6 +10,7 @@ for test in \
   flyology-quic-connection_state_policy-smoke \
   flyology-quic-crypto_openssl-smoke \
   flyology-quic-crypto_reassembly_policy-smoke \
+  flyology-quic-handshake_packet_policy-smoke \
   flyology-quic-initial_frame_policy-smoke \
   flyology-quic-initial_connection-smoke \
   flyology-quic-initial_receiver-smoke \
