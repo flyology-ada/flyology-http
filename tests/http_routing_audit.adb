@@ -432,10 +432,102 @@ procedure HTTP_Routing_Audit is
       end if;
    end Check_Bulkhead_Counter_Reuse;
 
+   --  Finding 27. Run_Automatic configured every automatic response with a
+   --  zero concurrency and zero rate, which both limiters read as unlimited,
+   --  so the 404, 405, OPTIONS, redirect, and malformed-path surface ran the
+   --  whole global middleware chain and wrote a response with no per-client
+   --  bound and no way to ask for one.
+   procedure Check_Automatic_Response_Admission is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      Clock_Value : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+      function Test_Clock return Ada.Real_Time.Time is (Clock_Value);
+      function Client_Key (X : Applications.Exchange) return String is
+        (X.Request_Header ("X-Client"));
+
+      package Rates is new Flyology.HTTP.Server.Middleware_Rate_Limits
+        (Context, Routing.Components, Client_Key,
+         Capacity => 32, Clock => Test_Clock);
+
+      procedure Plain
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "plain");
+      end Plain;
+
+      Metered   : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      Unmetered : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      State     : Context;
+
+      function Status
+        (Routes : in out Routing.Router;
+         Target : String) return String
+      is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET " & Target & " HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "X-Client: 198.51.100.9" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         declare
+            Output : constant String := To_String (Wire.Output);
+         begin
+            return
+              (if Output'Length >= 12
+               then Output (Output'First + 9 .. Output'First + 11)
+               else "---");
+         end;
+      end Status;
+   begin
+      Metered.Get
+        ("/kept", Plain'Access, Name => "kept",
+         Policy =>
+           (Routing.Default_Route_Policy with delta Rate_Per_Second => 2));
+      Metered.Add_Middleware (Rates.Call'Access);
+      Metered.Set_Automatic_Admission (Rate_Per_Second => 2);
+
+      Unmetered.Get ("/kept", Plain'Access, Name => "unmetered.kept");
+      Unmetered.Add_Middleware (Rates.Call'Access);
+
+      --  A configured router bounds its unmatched-path surface per client.
+      Expect
+        ("finding 27 first miss", Status (Metered, "/gone-1"), "404");
+      Expect
+        ("finding 27 second miss", Status (Metered, "/gone-2"), "404");
+      Expect
+        ("finding 27 third miss", Status (Metered, "/gone-3"), "429");
+      Expect
+        ("finding 27 fourth miss", Status (Metered, "/gone-4"), "429");
+
+      --  The default stays unlimited, so an unconfigured router is unchanged.
+      for Index in 1 .. 6 loop
+         pragma Unreferenced (Index);
+         Expect
+           ("finding 27 default miss",
+            Status (Unmetered, "/gone"), "404");
+      end loop;
+   end Check_Automatic_Response_Admission;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
    Check_Bulkhead_Counter_Reuse;
+   Check_Automatic_Response_Admission;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

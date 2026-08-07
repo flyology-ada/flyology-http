@@ -606,6 +606,22 @@ package body Flyology.HTTP.Server.Routing is
       Add (Item, "OPTIONS", Pattern, Handler, Name, Policy);
    end Options;
 
+   procedure Set_Automatic_Admission
+     (Item            : in out Router;
+      Concurrency     : Natural := 0;
+      Rate_Per_Second : Natural := 0)
+   is
+   begin
+      Item.Automatic_Concurrency := Concurrency;
+      Item.Automatic_Rate := Rate_Per_Second;
+   end Set_Automatic_Admission;
+
+   function Automatic_Concurrency (Item : Router) return Natural is
+     (Item.Automatic_Concurrency);
+
+   function Automatic_Rate_Per_Second (Item : Router) return Natural is
+     (Item.Automatic_Rate);
+
    function Join_Pattern (Prefix, Pattern : String) return String is
    begin
       if Prefix = "/" then
@@ -855,7 +871,8 @@ package body Flyology.HTTP.Server.Routing is
       begin
          X.Configure_Route
            (Name, Path_Value, App.Reject_Body, App.No_Authentication,
-            CORS_Policy, 0, 0, App.No_Upgrade);
+            CORS_Policy, Item.Automatic_Concurrency, Item.Automatic_Rate,
+            App.No_Upgrade);
          X.Seal_Route;
          for Index in 1 .. Item.Middleware_Count loop
             if Item.Middleware (Index).Stage = Request_Head then

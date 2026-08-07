@@ -309,6 +309,32 @@ package Flyology.HTTP.Server.Routing is
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
+   --  Set the per-client admission policy applied to the router's own
+   --  automatic responses: 404, 405, CORS preflight, OPTIONS, the trailing
+   --  slash redirect, and the malformed-path 400. Those responses match no
+   --  route, so they carry no route policy of their own, yet they run the
+   --  whole global middleware chain and write a response. Zero is unlimited
+   --  and is the default, which leaves that surface unmetered.
+   --  @param Item Router registry
+   --  @param Concurrency Maximum active automatic responses; zero is
+   --  unlimited
+   --  @param Rate_Per_Second Per-client automatic response rate; zero is
+   --  unlimited
+   procedure Set_Automatic_Admission
+     (Item            : in out Router;
+      Concurrency     : Natural := 0;
+      Rate_Per_Second : Natural := 0);
+
+   --  Return the configured automatic-response concurrency bound.
+   --  @param Item Router registry
+   --  @return Maximum active automatic responses; zero is unlimited
+   function Automatic_Concurrency (Item : Router) return Natural;
+
+   --  Return the configured automatic-response per-client rate.
+   --  @param Item Router registry
+   --  @return Automatic responses per second; zero is unlimited
+   function Automatic_Rate_Per_Second (Item : Router) return Natural;
+
    --  Copy routes from Source under Prefix. Capacity is checked before any
    --  route is copied. Prefix must be a static path without parameters.
    --  @param Item Destination router
@@ -448,6 +474,8 @@ private
       Count  : Natural := 0;
       Middleware : Middleware_Array (1 .. Max_Global_Middleware);
       Middleware_Count : Natural := 0;
+      Automatic_Concurrency : Natural := 0;
+      Automatic_Rate        : Natural := 0;
    end record;
 
 end Flyology.HTTP.Server.Routing;
