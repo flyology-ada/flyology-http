@@ -18,6 +18,7 @@ for test in \
   flyology-quic-long_header_policy-smoke \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
+  flyology-quic-tls_authentication_policy-smoke \
   flyology-quic-tls_extension_policy-smoke \
   flyology-quic-tls_handshake_policy-smoke \
   flyology-quic-tls_key_schedule-smoke \

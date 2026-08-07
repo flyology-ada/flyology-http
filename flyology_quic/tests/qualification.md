@@ -72,6 +72,11 @@ for the next layer.
   extension-invalid messages are rejected separately.
   Canonical full-message encoders round-trip all three handshake contexts,
   including bounded server session-ID echo and exact nested vector lengths.
+- TLS 1.3 Certificate, CertificateVerify, and SHA-256 Finished framing tests
+  cover borrowed DER chain ranges, per-certificate extensions, ECDSA P-256,
+  RSA-PSS, and Ed25519 scheme selection, exact signature and verify-data
+  lengths, encoder round trips, truncation, malformed vectors, unsupported
+  schemes, and the bounded eight-certificate resource limit.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

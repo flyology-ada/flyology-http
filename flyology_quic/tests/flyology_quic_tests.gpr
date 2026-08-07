@@ -17,6 +17,7 @@ project Flyology_QUIC_Tests is
       "flyology-quic-long_header_policy-smoke.adb",
       "flyology-quic-packet_number_policy-smoke.adb",
       "flyology-quic-protection_policy-smoke.adb",
+      "flyology-quic-tls_authentication_policy-smoke.adb",
       "flyology-quic-tls_extension_policy-smoke.adb",
       "flyology-quic-tls_handshake_policy-smoke.adb",
       "flyology-quic-tls_key_schedule-smoke.adb",
