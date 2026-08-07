@@ -6,6 +6,10 @@
 --             incomplete HTTP/1.1 message's transport to the pool, whether
 --             the final response is a routine 401 or a 417 arriving when the
 --             expectation retry has already been spent.
+--  Finding 10 A checkout that cannot be admitted because the HTTP/2 peer
+--             permits no further stream must block on the pool wake source
+--             and honour the request deadline, not spin between the
+--             admission predicate and the wait predicate.
 --  Finding 18 A bodyless-by-status response must not hand a transport that
 --             later becomes readable to the next exchange. The response to a
 --             HEAD request carrying Content-Length stays valid: RFC 9112
@@ -17,6 +21,7 @@
 --  Each finding runs on its own listener so a desynchronized script cannot
 --  contaminate the evidence of the next one.
 with Ada.Exceptions;
+with Ada.Real_Time;
 with Ada.Streams;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
@@ -36,6 +41,7 @@ procedure HTTP_Client_Audit is
 
    use Ada.Streams;
    use Ada.Strings.Unbounded;
+   use type Ada.Real_Time.Time;
    use type Sockets.Selector_Status;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
@@ -686,10 +692,262 @@ procedure HTTP_Client_Audit is
 
    procedure Run_Redirect is new Run_Lane
      (Redirect_Script, Redirect_Exercise);
+
+   ------------------------------------------------------------------
+   --  Finding 10. Pool admission against HTTP/2 peer stream capacity
+   ------------------------------------------------------------------
+
+   --  Minimal HTTP/2 peer. It advertises SETTINGS_MAX_CONCURRENT_STREAMS = 1
+   --  and leaves the first response body open, so the client's only transport
+   --  has no peer stream capacity while the caller holds that response.
+   Preface_Text : constant String :=
+     "PRI * HTTP/2.0" & CRLF & CRLF & "SM" & CRLF & CRLF;
+
+   Headers_Frame    : constant := 16#01#;
+   Settings_Frame   : constant := 16#04#;
+   End_Stream_Flag  : constant := 16#01#;
+   End_Headers_Flag : constant := 16#04#;
+   Ack_Flag         : constant := 16#01#;
+
+   --  Deadline the blocked exchange is given, and the far larger interval the
+   --  lane waits before calling the checkout a spin.
+   Blocked_Deadline : constant Duration := 0.75;
+   Spin_Watchdog    : constant Duration := 5.0;
+
+   No_Payload : constant Stream_Element_Array (1 .. 0) := (1 .. 0 => 0);
+
+   procedure Send_Frame
+     (Kind    : Natural;
+      Flags   : Natural;
+      Stream  : Natural;
+      Payload : Stream_Element_Array)
+   is
+      Header : Stream_Element_Array (1 .. 9);
+      Length : constant Natural := Natural (Payload'Length);
+   begin
+      Header (1) := Stream_Element (Length / 65_536);
+      Header (2) := Stream_Element ((Length / 256) mod 256);
+      Header (3) := Stream_Element (Length mod 256);
+      Header (4) := Stream_Element (Kind);
+      Header (5) := Stream_Element (Flags);
+      Header (6) := Stream_Element (Stream / 16_777_216);
+      Header (7) := Stream_Element ((Stream / 65_536) mod 256);
+      Header (8) := Stream_Element ((Stream / 256) mod 256);
+      Header (9) := Stream_Element (Stream mod 256);
+      Sockets.Send_All (Peer, Header & Payload, Timeout => 5.0);
+   end Send_Frame;
+
+   --  Read one frame and discard its payload. Ended reports that the peer
+   --  stopped producing frames, which is how every lane outcome finishes.
+   procedure Read_Frame
+     (Kind   : out Natural;
+      Flags  : out Natural;
+      Stream : out Natural;
+      Ended  : out Boolean)
+   is
+      Header : Stream_Element_Array (1 .. 9);
+      Skip   : Stream_Element_Array (1 .. 1_024);
+      Length : Natural;
+      Left   : Natural;
+      Count  : Natural;
+   begin
+      Kind := 0;
+      Flags := 0;
+      Stream := 0;
+      Ended := False;
+      Sockets.Receive_Exactly (Peer, Header, Timeout => 5.0);
+      Length := Natural (Header (1)) * 65_536
+        + Natural (Header (2)) * 256 + Natural (Header (3));
+      Kind := Natural (Header (4));
+      Flags := Natural (Header (5));
+      Stream := (Natural (Header (6)) mod 128) * 16_777_216
+        + Natural (Header (7)) * 65_536
+        + Natural (Header (8)) * 256 + Natural (Header (9));
+      Left := Length;
+      while Left > 0 loop
+         Count := Natural'Min (Left, Natural (Skip'Length));
+         Sockets.Receive_Exactly
+           (Peer, Skip (1 .. Stream_Element_Offset (Count)), Timeout => 5.0);
+         Left := Left - Count;
+      end loop;
+   exception
+      when Flyology.IO.Timeout_Error | Flyology.IO.Device_Error |
+           Sockets.Socket_Error =>
+         Ended := True;
+   end Read_Frame;
+
+   procedure Capacity_Script is
+      --  SETTINGS_MAX_CONCURRENT_STREAMS (0x3) = 1.
+      Peer_Capacity : constant Stream_Element_Array (1 .. 6) :=
+        (16#00#, 16#03#, 16#00#, 16#00#, 16#00#, 16#01#);
+      --  HPACK indexed field 8: ":status: 200".
+      Status_200 : constant Stream_Element_Array (1 .. 1) := (1 => 16#88#);
+      Preface  : Stream_Element_Array
+        (1 .. Stream_Element_Offset (Preface_Text'Length));
+      Deadline : Ada.Real_Time.Time;
+      Requests : Natural := 0;
+      Kind     : Natural;
+      Flags    : Natural;
+      Stream   : Natural;
+      Ended    : Boolean;
+   begin
+      Accept_Peer;
+      Send_Frame (Settings_Frame, 0, 0, Peer_Capacity);
+      Sockets.Receive_Exactly (Peer, Preface, Timeout => 5.0);
+      Deadline := Ada.Real_Time.Clock + Ada.Real_Time.Seconds (20);
+      loop
+         Read_Frame (Kind, Flags, Stream, Ended);
+         exit when Ended or else Ada.Real_Time.Clock >= Deadline;
+         if Kind = Settings_Frame and then (Flags mod 2) /= Ack_Flag then
+            Send_Frame (Settings_Frame, Ack_Flag, 0, No_Payload);
+         elsif Kind = Headers_Frame then
+            Requests := Requests + 1;
+            if Requests = 1 then
+               --  No END_STREAM: the first response body stays open, so the
+               --  single stream the peer permits remains occupied.
+               Send_Frame
+                 (Headers_Frame, End_Headers_Flag, Stream, Status_200);
+            else
+               Send_Frame
+                 (Headers_Frame, End_Headers_Flag + End_Stream_Flag,
+                  Stream, Status_200);
+            end if;
+         end if;
+      end loop;
+   end Capacity_Script;
+
+   --  Outcome of the exchange that cannot be admitted while the peer permits
+   --  no further stream.
+   type Blocked_Outcome is
+     (Blocked_Pending, Blocked_Timed_Out, Blocked_Answered, Blocked_Closed,
+      Blocked_Failed);
+
+   protected Blocked_Result is
+      procedure Publish (Value : Blocked_Outcome; Span : Duration);
+      function Settled return Boolean;
+      function Outcome return Blocked_Outcome;
+      function Elapsed return Duration;
+   private
+      Current : Blocked_Outcome := Blocked_Pending;
+      Waited  : Duration := 0.0;
+   end Blocked_Result;
+
+   protected body Blocked_Result is
+      procedure Publish (Value : Blocked_Outcome; Span : Duration) is
+      begin
+         if Current = Blocked_Pending then
+            Current := Value;
+            Waited := Span;
+         end if;
+      end Publish;
+
+      function Settled return Boolean is (Current /= Blocked_Pending);
+      function Outcome return Blocked_Outcome is (Current);
+      function Elapsed return Duration is (Waited);
+   end Blocked_Result;
+
+   procedure Capacity_Exercise (Origin : Flyology.HTTP.Origin) is
+      HTTP : aliased Client.Client (Capacity => 1);
+
+      --  The blocked exchange runs on its own thread so that a spinning
+      --  checkout cannot starve the lane's watchdog or the peer script.
+      task Blocked_Request is
+         pragma Task_Info (Flyology.Native_Task);
+         entry Start;
+      end Blocked_Request;
+
+      task body Blocked_Request is
+         Request : Client.Request;
+         Started : Ada.Real_Time.Time := Ada.Real_Time.Clock;
+
+         procedure Publish (Value : Blocked_Outcome) is
+         begin
+            Blocked_Result.Publish
+              (Value,
+               Ada.Real_Time.To_Duration (Ada.Real_Time.Clock - Started));
+         end Publish;
+      begin
+         accept Start;
+         Client.Set_Target (Request, "/blocked");
+         Started := Ada.Real_Time.Clock;
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => Blocked_Deadline);
+            pragma Unreferenced (Reply);
+         begin
+            Publish (Blocked_Answered);
+         end;
+      exception
+         when Flyology.IO.Timeout_Error =>
+            Publish (Blocked_Timed_Out);
+         when Client.Client_Closed =>
+            Publish (Blocked_Closed);
+         when others =>
+            Publish (Blocked_Failed);
+      end Blocked_Request;
+
+      Spun     : Boolean := False;
+      Deadline : Ada.Real_Time.Time;
+      Request  : Client.Request;
+   begin
+      Client.Configure (HTTP, Origin, Client.HTTP_2_Prior_Knowledge);
+      Client.Set_Target (Request, "/hold");
+      declare
+         Held : Client.Response :=
+           Client.Execute (HTTP, Request, Timeout => 5.0);
+      begin
+         Require_Status ("finding 10 held stream", Held, 200);
+         if Client.Body_Complete (Held) then
+            Report ("finding 10: the held HTTP/2 stream closed early");
+         end if;
+         Blocked_Request.Start;
+         Deadline := Ada.Real_Time.Clock
+           + Ada.Real_Time.To_Time_Span (Spin_Watchdog);
+         while not Blocked_Result.Settled loop
+            if Ada.Real_Time.Clock >= Deadline then
+               Spun := True;
+               Report
+                 ("finding 10: a checkout with no peer stream capacity " &
+                  "ignored its" & Duration'Image (Blocked_Deadline) &
+                  " second deadline for" & Duration'Image (Spin_Watchdog) &
+                  " seconds");
+               exit;
+            end if;
+            delay 0.005;
+         end loop;
+      end;
+      --  Releasing the held stream restores peer capacity, so the exchange
+      --  finishes even when it never honoured its own deadline.
+      if not Spun then
+         if Blocked_Result.Outcome /= Blocked_Timed_Out then
+            Report
+              ("finding 10: the blocked exchange ended as " &
+               Blocked_Outcome'Image (Blocked_Result.Outcome));
+         elsif Blocked_Result.Elapsed > Blocked_Deadline + 2.0 then
+            Report
+              ("finding 10: the blocked exchange took" &
+               Duration'Image (Blocked_Result.Elapsed) & " seconds");
+         elsif Client.Diagnostics (HTTP).Admission_Timeouts /= 1 then
+            Report
+              ("finding 10: the exchange never waited on pool admission");
+         end if;
+      end if;
+      Client.Shutdown (HTTP, Timeout => 5.0);
+   exception
+      when Error : others =>
+         Report
+           ("finding 10 client: " &
+            Ada.Exceptions.Exception_Information (Error));
+         abort Blocked_Request;
+   end Capacity_Exercise;
+
+   procedure Run_Capacity is new Run_Lane
+     (Capacity_Script, Capacity_Exercise);
 begin
    Run_Expectation ("finding 6");
    Run_Bodyless ("finding 18");
    Run_Redirect ("finding 36");
+   Run_Capacity ("finding 10");
    pragma Assert (Ledger.Failures = 0);
    Ada.Text_IO.Put_Line ("HTTP client audit passed");
 end HTTP_Client_Audit;
