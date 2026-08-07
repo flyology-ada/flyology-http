@@ -191,6 +191,7 @@ package body Flyology.HTTP.Client is
       Reading_Trailers : Boolean := False;
       Complete       : Boolean := False;
       Reusable       : Boolean := False;
+      Request_Incomplete : Boolean := False;
       Saw_Response_Bytes : Boolean := False;
       Source_Failed      : Boolean := False;
       Informational_Count : Client_Policy.Informational_Count := 0;
@@ -1010,6 +1011,13 @@ package body Flyology.HTTP.Client is
                            Body_Sent := Has_Request_Body;
                            Read_Final_Head (Result.Data.all, Token);
                         end if;
+                        --  A final response before the expected body leaves
+                        --  the declared Content-Length or chunked body
+                        --  untransmitted, so the peer is still mid-message.
+                        Result.Data.Request_Incomplete :=
+                          Use_Expectation
+                            and then Has_Request_Body
+                            and then not Body_Sent;
                         if Classify_Expectation_Response
                           (Expectation_Sent => Use_Expectation,
                            Body_Sent        => Body_Sent,

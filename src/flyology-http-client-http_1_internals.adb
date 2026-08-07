@@ -237,6 +237,7 @@ package body HTTP_1_Internals is
       Data.Reading_Trailers := False;
       Data.Complete := False;
       Data.Reusable := False;
+      Data.Request_Incomplete := False;
       Data.Saw_Response_Bytes := False;
       Data.Source_Failed := False;
       Data.Informational_Count := 0;
@@ -641,6 +642,11 @@ package body HTTP_1_Internals is
       Data.Reusable :=
         (if Data.Version_Value = HTTP_1_1
          then not Close_Token else Keep_Token);
+      if Data.Request_Incomplete then
+         --  The request head declared a body the peer never received, so the
+         --  transport is mid-message and cannot carry another exchange.
+         Data.Reusable := False;
+      end if;
       if Data.Status_Value = 204
         and then (Length_Present or else Transfer_Count > 0)
       then

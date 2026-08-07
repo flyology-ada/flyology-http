@@ -268,9 +268,14 @@ procedure HTTP_Client_Upload_Controls_Smoke is
          end;
          Send_Empty;
 
+         --  The 401 arrives before the declared 13-byte body is sent, so the
+         --  request message is incomplete and the transport must be
+         --  destroyed rather than pooled for the next exchange.
          Expect_Head_Only ("/reject", Head);
          Send_Empty ("401 Unauthorized");
+         Expect_Close;
 
+         Accept_Peer;
          Expect_Head_Only ("/fallback", Head);
          declare
             Payload : constant String := Receive_Until ("fallback-body");
