@@ -188,6 +188,34 @@ begin
         (Actual = "https://googoo.com/",
          "IDNA ignored format characters: " & Actual);
    end;
+   --  WHATWG domain-to-ASCII runs Unicode ToASCII with VerifyDnsLength
+   --  false, so neither the 63-octet DNS label limit nor the 253-octet name
+   --  limit applies. The normalized fast path never enforced them, so host
+   --  validity used to depend on letter case: the same name parsed in lower
+   --  case and failed once one letter forced the IDNA path.
+   declare
+      Label : constant String (1 .. 64) := [others => 'a'];
+      Upper : constant String := 'A' & Label (2 .. Label'Last);
+      Name  : constant String (1 .. 300) := [others => 'b'];
+      Cased : constant String := 'B' & Name (2 .. Name'Last);
+   begin
+      Assert
+        (Host (Parse ("http://" & Label & "/", Web_URL_Syntax)) = Label,
+         "64-octet label rejected");
+      Assert
+        (Host (Parse ("http://" & Upper & "/", Web_URL_Syntax)) = Label,
+         "64-octet label rejected once one letter is upper case");
+      Assert
+        (Host (Parse ("http://" & Name & "/", Web_URL_Syntax)) = Name,
+         "300-octet name rejected");
+      Assert
+        (Host (Parse ("http://" & Cased & "/", Web_URL_Syntax)) = Name,
+         "300-octet name rejected once one letter is upper case");
+      Assert
+        (Can_Parse ("http://" & Upper & "/", Web_URL_Syntax),
+         "Can_Parse rejects a 64-octet label with an upper-case letter");
+   end;
+
    Check_Web ("#x", "mailto:x@x.com", "mailto:x@x.com#x");
    Assert
      (Has_Query (Parse ("?", URI_Syntax))

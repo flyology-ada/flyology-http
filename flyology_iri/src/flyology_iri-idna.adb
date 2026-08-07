@@ -158,9 +158,12 @@ package body Flyology_IRI.IDNA is
       return Wide.To_Wide_Wide_String (Result);
    end Map_Input;
 
+   --  WHATWG domain-to-ASCII runs Unicode ToASCII with VerifyDnsLength
+   --  false, so the DNS 63-octet label and 253-octet name limits are not
+   --  applied here. Only the WHATWG forbidden domain code points are.
    function Valid_ASCII_Label (Label : String) return Boolean is
    begin
-      if Label'Length = 0 or else Label'Length > 63 then
+      if Label'Length = 0 then
          return False;
       end if;
       for C of Label loop
@@ -234,7 +237,7 @@ package body Flyology_IRI.IDNA is
                         declare
                            Encoded : constant String := Punycode (Label, Label_OK);
                         begin
-                           if not Label_OK or else Encoded'Length + 4 > 63 then
+                           if not Label_OK then
                               return "";
                            end if;
                            Bytes.Append (Result, "xn--" & Encoded);
@@ -245,9 +248,6 @@ package body Flyology_IRI.IDNA is
                Start := Position + 1;
             end if;
          end loop;
-         if Bytes.Length (Result) > 253 then
-            return "";
-         end if;
          Success := True;
          return Bytes.To_String (Result);
       end;
