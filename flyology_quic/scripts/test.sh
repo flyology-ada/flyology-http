@@ -8,6 +8,7 @@ alr build
 
 for test in \
   flyology-quic-crypto_openssl-smoke \
+  flyology-quic-long_header_policy-smoke \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
   flyology-quic-varint_policy-smoke

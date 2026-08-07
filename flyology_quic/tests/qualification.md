@@ -6,6 +6,8 @@ for the next layer.
 ## Wire and cryptography
 
 - RFC 9000 examples cover variable integers and packet-number reconstruction.
+- RFC 8999 and RFC 9000 long-header invariants cover version dispatch,
+  connection-ID boundaries, truncation, and QUIC v1 packet-type framing.
 - Boundary tests cover every variable-integer width and the maximum packet
   number gap representable by QUIC's four-byte packet-number field.
 - RFC 9001 Appendix A covers both v1 Initial traffic secrets, keys, IVs,
