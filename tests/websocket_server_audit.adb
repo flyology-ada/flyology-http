@@ -258,8 +258,190 @@ procedure WebSocket_Server_Audit is
       end;
    end Check_Text_Frame_Does_Not_Kill_Session;
 
+   --  The handler validates a text payload at admission and the connection
+   --  validates it again before framing it, through two independent UTF-8
+   --  implementations. A sequence one accepts and the other rejects would be
+   --  admitted and then kill the connection, which is the very failure
+   --  finding 19 removed, so the two must agree on every boundary of the
+   --  RFC 3629 grammar.
+   procedure Check_Utf8_Validators_Agree is
+      package Applications renames Flyology.HTTP.Server.Applications;
+      package Buffers renames Flyology.Buffers;
+      package Routing is new Flyology.HTTP.Server.Routing (Boolean);
+
+      --  One block per queued payload: buffers are only returned once Run
+      --  drains the outbox, which happens after every publish.
+      Storage : aliased Buffers.Pool (Block_Size => 16, Capacity => 24);
+
+      function U (Octets : String) return String is (Octets);
+
+      --  One representative of every accepting branch, at both edges.
+      Valid_Cases : constant array (1 .. 8) of Unbounded_String :=
+        (To_Unbounded_String (U ("" & Character'Val (16#7F#))),
+         To_Unbounded_String                      --  U+0080, shortest 2-byte
+           (U (Character'Val (16#C2#) & Character'Val (16#80#))),
+         To_Unbounded_String                      --  U+07FF, longest 2-byte
+           (U (Character'Val (16#DF#) & Character'Val (16#BF#))),
+         To_Unbounded_String                      --  U+0800, E0 lower edge
+           (U (Character'Val (16#E0#) & Character'Val (16#A0#)
+               & Character'Val (16#80#))),
+         To_Unbounded_String                      --  U+D7FF, ED upper edge
+           (U (Character'Val (16#ED#) & Character'Val (16#9F#)
+               & Character'Val (16#BF#))),
+         To_Unbounded_String                      --  U+FFFF
+           (U (Character'Val (16#EF#) & Character'Val (16#BF#)
+               & Character'Val (16#BF#))),
+         To_Unbounded_String                      --  U+10000, F0 lower edge
+           (U (Character'Val (16#F0#) & Character'Val (16#90#)
+               & Character'Val (16#80#) & Character'Val (16#80#))),
+         To_Unbounded_String                      --  U+10FFFF, F4 upper edge
+           (U (Character'Val (16#F4#) & Character'Val (16#8F#)
+               & Character'Val (16#BF#) & Character'Val (16#BF#))));
+
+      --  One representative of every rejecting branch.
+      Invalid_Cases : constant array (1 .. 6) of Unbounded_String :=
+        (To_Unbounded_String                      --  overlong two-byte NUL
+           (U (Character'Val (16#C0#) & Character'Val (16#80#))),
+         To_Unbounded_String                      --  overlong three-byte
+           (U (Character'Val (16#E0#) & Character'Val (16#80#)
+               & Character'Val (16#80#))),
+         To_Unbounded_String                      --  UTF-16 surrogate U+D800
+           (U (Character'Val (16#ED#) & Character'Val (16#A0#)
+               & Character'Val (16#80#))),
+         To_Unbounded_String                      --  above U+10FFFF
+           (U (Character'Val (16#F4#) & Character'Val (16#90#)
+               & Character'Val (16#80#) & Character'Val (16#80#))),
+         To_Unbounded_String                      --  truncated sequence
+           (U (Character'Val (16#E1#) & Character'Val (16#80#))),
+         To_Unbounded_String                      --  never a lead octet
+           (U ("" & Character'Val (16#FE#))));
+
+      Admitted  : array (Valid_Cases'Range) of Boolean := (others => False);
+      Refused   : array (Invalid_Cases'Range) of Boolean := (others => False);
+      Run_Error : Unbounded_String;
+
+      Close_Frame : constant String :=
+        Character'Val (16#88#) & Character'Val (16#80#) & "mask";
+
+      procedure Chat
+        (State : in out Boolean;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+         Item : WebSockets.Session
+           (Capacity => 16, Byte_Limit => 4_096, Budget => null,
+            Buffer_Pool => Storage'Access);
+         Accepted : Boolean;
+      begin
+         --  Publish through the pooled-buffer path, because that is the one
+         --  the connection frames from a Stream_Element_Array.
+         for Index in Valid_Cases'Range loop
+            declare
+               Payload : Buffers.Unique_Buffer (Storage'Access);
+               Octets  : constant String := To_String (Valid_Cases (Index));
+               Raw     : Ada.Streams.Stream_Element_Array
+                 (1 .. Octets'Length);
+            begin
+               for Offset in Raw'Range loop
+                  Raw (Offset) := Ada.Streams.Stream_Element
+                    (Character'Pos
+                       (Octets (Octets'First + Natural (Offset) - 1)));
+               end loop;
+               Buffers.Acquire (Payload);
+               Buffers.Copy_From (Payload, Raw);
+               WebSockets.Try_Publish_Move
+                 (Item, HTTP_Server.Text_Frame, Payload, Accepted);
+               Admitted (Index) := Accepted;
+            end;
+         end loop;
+         for Index in Invalid_Cases'Range loop
+            declare
+               Payload : Buffers.Unique_Buffer (Storage'Access);
+               Octets  : constant String := To_String (Invalid_Cases (Index));
+               Raw     : Ada.Streams.Stream_Element_Array
+                 (1 .. Octets'Length);
+            begin
+               for Offset in Raw'Range loop
+                  Raw (Offset) := Ada.Streams.Stream_Element
+                    (Character'Pos
+                       (Octets (Octets'First + Natural (Offset) - 1)));
+               end loop;
+               Buffers.Acquire (Payload);
+               Buffers.Copy_From (Payload, Raw);
+               WebSockets.Try_Publish_Move
+                 (Item, HTTP_Server.Text_Frame, Payload, Accepted);
+               Refused (Index) := not Accepted;
+            end;
+         end loop;
+         WebSockets.Close (Item);
+         begin
+            WebSockets.Run (X, Item);
+         exception
+            when Error : others =>
+               Run_Error := To_Unbounded_String
+                 (Ada.Exceptions.Exception_Message (Error));
+         end;
+      end Chat;
+
+      Routes : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State : Boolean := False;
+      Wire  : aliased Memory_Transport;
+   begin
+      Routing.Get
+        (Routes,
+         "/chat", Chat'Access, Name => "chat",
+         Policy =>
+           (Routing.Default_Route_Policy with delta
+              Upgrade => Routing.Allow_WebSocket));
+      Wire.Input := To_Unbounded_String
+        ("GET /chat HTTP/1.1" & CRLF
+         & "Host: localhost" & CRLF
+         & "Upgrade: websocket" & CRLF
+         & "Connection: Upgrade" & CRLF
+         & "Sec-WebSocket-Version: 13" & CRLF
+         & "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" & CRLF & CRLF
+         & Close_Frame);
+      declare
+         Client : aliased HTTP_Server.Connection (Wire'Access);
+      begin
+         Routing.Serve (Routes, State, Client, Peer => Test_Peer);
+      end;
+
+      --  Every well-formed sequence must be admitted by the handler and then
+      --  framed by the connection: a disagreement surfaces as a Run error.
+      for Index in Valid_Cases'Range loop
+         pragma Assert
+           (Admitted (Index),
+            "handler refused well-formed UTF-8 case"
+            & Integer'Image (Index));
+      end loop;
+      for Index in Invalid_Cases'Range loop
+         pragma Assert
+           (Refused (Index),
+            "handler admitted ill-formed UTF-8 case"
+            & Integer'Image (Index));
+      end loop;
+      pragma Assert
+        (Length (Run_Error) = 0,
+         "the connection rejected a payload the handler admitted: """
+         & To_String (Run_Error) & """");
+      declare
+         Output : constant String := To_String (Wire.Output);
+      begin
+         for Index in Valid_Cases'Range loop
+            pragma Assert
+              (Ada.Strings.Fixed.Index
+                 (Output, To_String (Valid_Cases (Index))) /= 0,
+               "well-formed UTF-8 case" & Integer'Image (Index)
+               & " never reached the wire");
+         end loop;
+      end;
+   end Check_Utf8_Validators_Agree;
+
 begin
    Check_Text_Frame_Admission;
    Check_Moved_Text_Frame_Admission;
    Check_Text_Frame_Does_Not_Kill_Session;
+   Check_Utf8_Validators_Agree;
 end WebSocket_Server_Audit;

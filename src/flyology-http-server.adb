@@ -2020,6 +2020,71 @@ package body Flyology.HTTP.Server is
    end Valid_UTF8;
 
    function Valid_UTF8
+     (Value : Ada.Streams.Stream_Element_Array) return Boolean
+   is
+      Index : Ada.Streams.Stream_Element_Offset := Value'First;
+
+      function Byte
+        (Offset : Ada.Streams.Stream_Element_Offset) return Natural is
+        (Natural (Value (Index + Offset)));
+
+      function Continuation
+        (Offset : Ada.Streams.Stream_Element_Offset) return Boolean is
+        (Index + Offset <= Value'Last
+         and then Byte (Offset) in 16#80# .. 16#BF#);
+   begin
+      while Index <= Value'Last loop
+         if Byte (0) <= 16#7F# then
+            Index := Index + 1;
+         elsif Byte (0) in 16#C2# .. 16#DF#
+           and then Continuation (1)
+         then
+            Index := Index + 2;
+         elsif Byte (0) = 16#E0#
+           and then Index + 2 <= Value'Last
+           and then Byte (1) in 16#A0# .. 16#BF#
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) in 16#E1# .. 16#EC# | 16#EE# .. 16#EF#
+           and then Continuation (1)
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) = 16#ED#
+           and then Index + 2 <= Value'Last
+           and then Byte (1) in 16#80# .. 16#9F#
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) = 16#F0#
+           and then Index + 3 <= Value'Last
+           and then Byte (1) in 16#90# .. 16#BF#
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         elsif Byte (0) in 16#F1# .. 16#F3#
+           and then Continuation (1)
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         elsif Byte (0) = 16#F4#
+           and then Index + 3 <= Value'Last
+           and then Byte (1) in 16#80# .. 16#8F#
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         else
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Valid_UTF8;
+
+   function Valid_UTF8
      (Value : Flyology.Bytes.Unbounded_Bytes) return Boolean
    is
       Index : Positive := 1;
@@ -3449,9 +3514,7 @@ package body Flyology.HTTP.Server is
       end if;
       if Data'Length > Max_WebSocket_Frame then
          raise Constraint_Error with "WebSocket frame is too large";
-      elsif Kind = Text_Frame
-        and then not Valid_UTF8 (Text (Data))
-      then
+      elsif Kind = Text_Frame and then not Valid_UTF8 (Data) then
          raise Constraint_Error with "WebSocket text must contain valid UTF-8";
       end if;
       if Item.WebSocket_Deflate_Enabled
