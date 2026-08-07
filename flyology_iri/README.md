@@ -17,8 +17,19 @@ The parser matches all 919 parsing cases in Ada URL 4.0.0's pinned
 `urltestdata.json` and `ada_extra_urltestdata.json`, including each expected
 serialized URL and exposed structural component. This is parser conformance,
 not a claim that the crate implements unrelated WHATWG URL APIs such as mutable
-setters or `URLSearchParams`, nor that its standalone IDNA implementation has
-been validated against every Unicode conformance file.
+setters or `URLSearchParams`.
+
+The standalone IDNA host conversion carries a subset of UTS #46, not the whole
+specification. It applies the ignorable and fullwidth mappings, case folding,
+RFC 3492 Punycode encoding, rejection of the domain code points that carry no
+glyph — controls, private-use, separators, format characters including the
+joiners and the bidi marks — and the clause of RFC 5893's bidi rule that
+forbids one label from mixing strong letters of both directions. It does not
+carry the full UTS #46 mapping table, the unassigned or mapped-symbol parts of
+the disallowed set, the ContextJ joiner rules, the remaining clauses of the
+bidi rule, or a Punycode decoder, so an already-encoded `xn--` label is copied
+through rather than decoded and revalidated. Hosts outside that subset can
+still differ from a full UTS #46 implementation.
 
 ## Use
 

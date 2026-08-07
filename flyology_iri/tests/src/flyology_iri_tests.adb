@@ -130,6 +130,29 @@ procedure Flyology_IRI_Tests is
          "web resolve " & Input & " produced " & Image (Actual));
    end Check_Web;
 
+   --  A host the WHATWG host parser must refuse. Diagnose reports
+   --  Unsupported_URL for every non-ASCII special host without running the
+   --  host parser, so the check goes through Can_Parse and Parse.
+   procedure Reject_Host (Host_Text : String) is
+      Input  : constant String := "http://" & Host_Text & "/";
+      Raised : Boolean := False;
+   begin
+      Assert
+        (not Can_Parse (Input, Web_URL_Syntax),
+         "Can_Parse accepted host " & Host_Text);
+      begin
+         declare
+            Ignored : constant Reference := Parse (Input, Web_URL_Syntax);
+         begin
+            Assert (Image (Ignored)'Length > Natural'Last, "unreachable");
+         end;
+      exception
+         when Malformed_Reference =>
+            Raised := True;
+      end;
+      Assert (Raised, "Parse accepted host " & Host_Text);
+   end Reject_Host;
+
    URL : constant Reference := Parse
      ("HTTPS://user:pass@Example.COM:8443/a/b?x=1#frag", Web_URL_Syntax);
    IRI : constant Reference := Parse
@@ -188,6 +211,45 @@ begin
         (Actual = "https://googoo.com/",
          "IDNA ignored format characters: " & Actual);
    end;
+   --  IDNA disallows every domain code point that carries no glyph. The C1
+   --  controls, the bidi controls and the two joiners used to survive UTS
+   --  #46 mapping and reach a Punycode label, so an invisible character
+   --  could ride inside a host that this parser called valid and ada-url
+   --  4.0.0 refuses.
+   Reject_Host (UTF8 (16#0080#) & ".com");
+   Reject_Host ("x" & UTF8 (16#009F#) & "y.com");
+   Reject_Host (UTF8 (16#200E#) & "example.com");
+   Reject_Host (UTF8 (16#200F#) & "example.com");
+   Reject_Host (UTF8 (16#202E#) & "example.com");
+   Reject_Host (UTF8 (16#2066#) & "example.com");
+   Reject_Host ("ex" & UTF8 (16#200C#) & "ample.com");
+   Reject_Host ("ex" & UTF8 (16#200D#) & "ample.com");
+   Reject_Host (UTF8 (16#E000#) & ".com");
+   Reject_Host (UTF8 (16#10_FFFD#) & ".com");
+
+   --  UTS #46 specifies a convert-and-validate step for a label that is
+   --  already Punycode, but WHATWG's domain-to-ASCII observably copies one
+   --  through: ada-url 4.0.0 and the pinned WPT corpus both keep these
+   --  hosts, so decoding and revalidating them would be a regression.
+   Check_Web ("http://xn--/", "http://xn--/");
+   Check_Web ("http://xn--a/", "http://xn--a/");
+   Check_Web ("http://a.b.c.xn--pokxncvks/", "http://a.b.c.xn--pokxncvks/");
+
+   --  RFC 5893's bidi rule forbids one label from carrying strong letters
+   --  of both directions, whichever comes first.
+   Reject_Host (UTF8 (16#05D0#) & UTF8 (16#05D1#) & "abc.com");
+   Reject_Host ("abc" & UTF8 (16#05D0#) & UTF8 (16#05D1#) & ".com");
+   Reject_Host (UTF8 (16#0645#) & "x.com");
+   Assert
+     (Image (Parse
+        ("http://" & UTF8 (16#05D0#) & UTF8 (16#05D1#) & ".com/",
+         Web_URL_Syntax)) = "http://xn--4dbc.com/",
+      "single-direction right-to-left label rejected");
+   Assert
+     (Image (Parse ("http://xn--4dbc.com/", Web_URL_Syntax)) =
+        "http://xn--4dbc.com/",
+      "pre-encoded right-to-left label rejected");
+
    --  WHATWG domain-to-ASCII runs Unicode ToASCII with VerifyDnsLength
    --  false, so neither the 63-octet DNS label limit nor the 253-octet name
    --  limit applies. The normalized fast path never enforced them, so host

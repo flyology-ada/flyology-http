@@ -120,6 +120,57 @@ package body Flyology_IRI.IDNA is
       return Bytes.To_String (Result);
    end Punycode;
 
+   --  Code points IDNA disallows in a domain label because they carry no
+   --  glyph: controls, private-use and separator code points, which are not
+   --  graphic, and the format characters, which cover both joiners and the
+   --  bidi marks. GNAT's character table predates the U+2066 .. U+2069
+   --  isolates, so those are named here. UTS #46 disallows a further set of
+   --  symbols and numbers that it maps elsewhere, and treats unassigned
+   --  code points as disallowed; this unit carries neither table. ASCII is
+   --  excluded so the common lower-case path never consults a Unicode
+   --  table: Map_Input already rejects every disallowed ASCII code point.
+   function Disallowed (Item : Wide_Wide_Character) return Boolean is
+     (Wide_Wide_Character'Pos (Item) >= 16#80#
+      and then (not Unicode.Is_Graphic (Item)
+                or else Unicode.Is_Other_Format (Item)
+                or else Wide_Wide_Character'Pos (Item)
+                          in 16#2066# .. 16#2069#));
+
+   --  Bidi classes R and AL by block, from DerivedBidiClass, restricted to
+   --  letters: RFC 5893 admits a combining mark in either label direction
+   --  and classifies the Arabic-Indic digits separately.
+   function Right_To_Left (Item : Wide_Wide_Character) return Boolean is
+      Code : constant Natural := Wide_Wide_Character'Pos (Item);
+   begin
+      return Unicode.Is_Letter (Item)
+        and then (Code in 16#0590# .. 16#08FF#
+                  or else Code in 16#2135# .. 16#2138#
+                  or else Code in 16#FB1D# .. 16#FDFF#
+                  or else Code in 16#FE70# .. 16#FEFF#
+                  or else Code in 16#1_0800# .. 16#1_0FFF#
+                  or else Code in 16#1_E800# .. 16#1_EFFF#);
+   end Right_To_Left;
+
+   --  RFC 5893's bidi rule confines a right-to-left label to right-to-left
+   --  characters and a left-to-right label to left-to-right ones, so no
+   --  label may carry strong letters of both directions. The clauses that
+   --  need the AN and EN classes are not implemented.
+   function Bidi_Consistent (Label : Wide_Wide_String) return Boolean is
+      Has_LTR : Boolean := False;
+      Has_RTL : Boolean := False;
+   begin
+      for Item of Label loop
+         if Unicode.Is_Letter (Item) then
+            if Right_To_Left (Item) then
+               Has_RTL := True;
+            else
+               Has_LTR := True;
+            end if;
+         end if;
+      end loop;
+      return not (Has_LTR and then Has_RTL);
+   end Bidi_Consistent;
+
    function Map_Input
      (Input : Wide_Wide_String; Success : out Boolean)
       return Wide_Wide_String
@@ -141,6 +192,7 @@ package body Flyology_IRI.IDNA is
            or else Code in 16#D800# .. 16#DFFF#
            or else Code in 16#FDD0# .. 16#FDEF#
            or else Code mod 16#10000# in 16#FFFE# | 16#FFFF#
+           or else Disallowed (Item)
          then
             return "";
          elsif Code in 16#3002# | 16#FF0E# | 16#FF61# then
@@ -233,9 +285,12 @@ package body Flyology_IRI.IDNA is
                            end if;
                            Bytes.Append (Result, Text);
                         end;
+                     elsif not Bidi_Consistent (Label) then
+                        return "";
                      else
                         declare
-                           Encoded : constant String := Punycode (Label, Label_OK);
+                           Encoded : constant String :=
+                             Punycode (Label, Label_OK);
                         begin
                            if not Label_OK then
                               return "";
