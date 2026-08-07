@@ -594,7 +594,10 @@ package Flyology.HTTP.Server is
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null);
 
-   --  Send a normal WebSocket close frame and make Item terminal.
+   --  Send a normal WebSocket close frame and make Item terminal. The peer's
+   --  close is drained under the Max_Message bound Receive_WebSocket last ran
+   --  with on Item, so a frame the application already permits cannot abort
+   --  the handshake this operation initiated.
    --  @param Item Upgraded WebSocket connection
    --  @param Code RFC 6455 close status
    --  @param Reason Optional UTF-8 close reason
@@ -689,6 +692,10 @@ private
       WebSocket_Message_Kind : WebSocket_Data_Kind := Text_Frame;
       WebSocket_Message : Flyology.Bytes.Unbounded_Bytes;
       WebSocket_Message_Limit : Natural := 0;
+      --  Message bound the application last asked Receive_WebSocket for. It
+      --  outlives WebSocket_Message_Limit, which only spans one receive, so
+      --  the close handshake can drain under the application's own bound.
+      WebSocket_Limit : Natural := Default_Max_WebSocket_Message;
       WebSocket_Control_Count : Natural := 0;
       WebSocket_Frame : Flyology.WebSocket_Policy.Frame_Cursor :=
         (Phase => Flyology.WebSocket_Policy.Awaiting_Header);

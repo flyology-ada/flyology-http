@@ -3133,6 +3133,7 @@ package body Flyology.HTTP.Server is
            (if Message_Timeout < 0.0 then Ada.Real_Time.Time_Last
             else Started + Ada.Real_Time.To_Time_Span (Message_Timeout));
          Item.WebSocket_Message_Limit := Message_Limit;
+         Item.WebSocket_Limit := Message_Limit;
       elsif Item.WebSocket_Message_Limit /= Message_Limit then
          raise Program_Error with
            "WebSocket Max_Message changed during active receive";
@@ -3612,7 +3613,7 @@ package body Flyology.HTTP.Server is
                Max_Message =>
                  (if Item.WebSocket_Receive_Active
                   then Item.WebSocket_Message_Limit
-                  else Default_Max_WebSocket_Message),
+                  else Item.WebSocket_Limit),
                Timeout => Left, Message_Timeout => Left, Token => Token);
             exit when Closed;
          end;

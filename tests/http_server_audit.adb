@@ -1,8 +1,10 @@
 --  Regression coverage for the 2026-08-07 audit findings in the HTTP/1.x server.
 --  Every fix lands its failing reproduction here before the fix itself.
+with Ada.Exceptions;
 with Ada.Streams;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
+with Flyology.Bytes;
 with Flyology.Cancellation;
 with Flyology.HTTP;
 with Flyology.HTTP.Server;
@@ -18,6 +20,7 @@ procedure HTTP_Server_Audit is
 
    use Ada.Strings.Unbounded;
    use type Flyology.HTTP.HTTP_Version;
+   use type HTTP_Server.WebSocket_Data_Kind;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    LF   : constant Character := Character'Val (10);
@@ -204,6 +207,38 @@ procedure HTTP_Server_Audit is
    begin
       null;
    end Send_All;
+
+   --  Return one complete client-masked WebSocket frame header for Opcode and
+   --  Size. The mask is all zero bytes, so the payload travels unchanged.
+   function Client_Frame_Header
+     (Opcode : Natural;
+      Size   : Natural) return String
+   is
+      Result : Unbounded_String;
+   begin
+      Append (Result, Character'Val (128 + Opcode));
+      if Size < 126 then
+         Append (Result, Character'Val (128 + Size));
+      elsif Size <= 65_535 then
+         Append (Result, Character'Val (128 + 126));
+         Append (Result, Character'Val (Size / 256));
+         Append (Result, Character'Val (Size mod 256));
+      else
+         Append (Result, Character'Val (128 + 127));
+         declare
+            Octets : String (1 .. 8) := (others => Character'Val (0));
+            Value  : Natural := Size;
+         begin
+            for Index in reverse Octets'Range loop
+               Octets (Index) := Character'Val (Value mod 256);
+               Value := Value / 256;
+            end loop;
+            Append (Result, Octets);
+         end;
+      end if;
+      Append (Result, String'(1 .. 4 => Character'Val (0)));
+      return To_String (Result);
+   end Client_Frame_Header;
 
    --  Return the connection output written after the last response status
    --  line, which is the error response the audit inspects.
@@ -594,9 +629,73 @@ procedure HTTP_Server_Audit is
       end;
    end Check_Buffered_Ingress_Reservation;
 
+   --  Finding 34. Close_WebSocket dropped back to the 1 MiB default message
+   --  limit once the receive it was draining had finished, so a frame the
+   --  application's own limit permits aborted the close handshake it had
+   --  already committed to instead of completing the clean 1000 close.
+   procedure Check_Close_Handshake_Message_Limit is
+      Application_Limit : constant := 2 * 1_024 * 1_024;
+      Frame_Size        : constant := 1_024 * 1_024 + 1;
+      Budget  : aliased HTTP_Server.Ingress_Budget
+        (Limit => 4 * 1_024 * 1_024);
+      Wire    : aliased Memory_Transport;
+      Failure : Unbounded_String;
+   begin
+      Wire.Input := To_Unbounded_String
+        ("GET /chat HTTP/1.1" & CRLF
+         & "Host: localhost" & CRLF
+         & "Upgrade: websocket" & CRLF
+         & "Connection: Upgrade" & CRLF
+         & "Sec-WebSocket-Version: 13" & CRLF
+         & "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" & CRLF & CRLF
+         & Client_Frame_Header (1, 2) & "hi"
+         & Client_Frame_Header (2, Frame_Size));
+      for Index in 1 .. Frame_Size / 65_536 loop
+         Append (Wire.Input, String'(1 .. 65_536 => 'A'));
+      end loop;
+      Append
+        (Wire.Input, String'(1 .. Frame_Size mod 65_536 => 'A'));
+      Append
+        (Wire.Input,
+         Client_Frame_Header (8, 2)
+         & Character'Val (1_000 / 256) & Character'Val (1_000 mod 256));
+      declare
+         Client  : HTTP_Server.Connection (Wire'Access);
+         Request : HTTP_Server.Request;
+         Message : Flyology.Bytes.Unbounded_Bytes;
+         Kind    : HTTP_Server.WebSocket_Data_Kind;
+         Closed  : Boolean;
+      begin
+         HTTP_Server.Configure_Ingress_Budget (Client, Budget'Access);
+         HTTP_Server.Read_Request (Client, Request, Closed);
+         HTTP_Server.Accept_WebSocket (Client, Request);
+         HTTP_Server.Receive_WebSocket
+           (Client, Kind, Message, Closed,
+            Max_Message => Application_Limit);
+         pragma Assert (not Closed);
+         pragma Assert (Kind = HTTP_Server.Text_Frame);
+         pragma Assert (Flyology.Bytes.To_Byte_String (Message) = "hi");
+         begin
+            HTTP_Server.Close_WebSocket (Client);
+         exception
+            when Error : Flyology.HTTP.Protocol_Error =>
+               Failure := To_Unbounded_String
+                 (Ada.Exceptions.Exception_Message (Error));
+         end;
+      end;
+      pragma Assert
+        (Length (Failure) = 0,
+         "close handshake aborted: " & To_String (Failure));
+      pragma Assert
+        (Length (Wire.Input) = 0,
+         "close handshake stopped before the peer close frame");
+      pragma Assert (HTTP_Server.Current (Budget).Current = 0);
+   end Check_Close_Handshake_Message_Limit;
+
 begin
    Check_Per_Request_Response_Shape;
    Check_Repeated_Cookie_Fields;
    Check_Query_Control_Bytes;
    Check_Buffered_Ingress_Reservation;
+   Check_Close_Handshake_Message_Limit;
 end HTTP_Server_Audit;
