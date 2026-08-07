@@ -2779,7 +2779,6 @@ package body Flyology.HTTP.Server is
       Reserve_Buffered (Item, Length (Item.Pending));
       Item.Response_Begun := True;
       Item.State := WebSocket;
-      Item.WebSocket_Reserved := False;
       Item.WebSocket_Fragmented := False;
       Item.WebSocket_Receive_Active := False;
       Item.WebSocket_Message_Deadline := Ada.Real_Time.Time_Last;
@@ -3092,7 +3091,6 @@ package body Flyology.HTTP.Server is
          Kind := Item.WebSocket_Message_Kind;
          Flyology.Bytes.Move (Data, Item.WebSocket_Message);
          Item.WebSocket_Fragmented := False;
-         Item.WebSocket_Reserved := False;
          Item.WebSocket_Message_Limit := 0;
          Item.WebSocket_Control_Count := 0;
          Item.WebSocket_Message_Compressed := False;
@@ -3112,7 +3110,6 @@ package body Flyology.HTTP.Server is
          Item.Pending := Null_Unbounded_String;
          Flyology.Bytes.Clear (Item.WebSocket_Message);
          Item.WebSocket_Fragmented := False;
-         Item.WebSocket_Reserved := False;
          Item.WebSocket_Message_Limit := 0;
          Item.WebSocket_Control_Count := 0;
          Item.WebSocket_Message_Compressed := False;
@@ -3477,7 +3474,6 @@ package body Flyology.HTTP.Server is
          Item.Pending := Null_Unbounded_String;
          Flyology.Bytes.Clear (Item.WebSocket_Message);
          Item.WebSocket_Fragmented := False;
-         Item.WebSocket_Reserved := False;
          Item.WebSocket_Receive_Active := False;
          Item.WebSocket_Message_Deadline := Ada.Real_Time.Time_Last;
          Item.WebSocket_Message_Limit := 0;
@@ -3531,7 +3527,6 @@ package body Flyology.HTTP.Server is
          Item.Pending := Null_Unbounded_String;
          Flyology.Bytes.Clear (Item.WebSocket_Message);
          Item.WebSocket_Fragmented := False;
-         Item.WebSocket_Reserved := False;
          Item.WebSocket_Receive_Active := False;
          Item.WebSocket_Message_Deadline := Ada.Real_Time.Time_Last;
          Item.WebSocket_Message_Limit := 0;
@@ -3624,7 +3619,6 @@ package body Flyology.HTTP.Server is
          Item.Pending := Null_Unbounded_String;
          Flyology.Bytes.Clear (Item.WebSocket_Message);
          Item.WebSocket_Fragmented := False;
-         Item.WebSocket_Reserved := False;
          Item.WebSocket_Receive_Active := False;
          Item.WebSocket_Message_Deadline := Ada.Real_Time.Time_Last;
          Item.WebSocket_Message_Limit := 0;

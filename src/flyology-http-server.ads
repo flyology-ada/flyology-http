@@ -678,7 +678,6 @@ private
       Body_Started     : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
       Body_Timeout     : Duration := 0.0;
       Buffered_Bytes   : Natural := 0;
-      WebSocket_Reserved   : Boolean := False;
       WebSocket_Fragmented : Boolean := False;
       WebSocket_Receive_Active : Boolean := False;
       WebSocket_Message_Deadline : Ada.Real_Time.Time :=
