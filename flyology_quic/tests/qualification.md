@@ -24,6 +24,11 @@ for the next layer.
   Tag corruption and an incorrect reconstructed packet number are rejected
   without releasing candidate plaintext; an authenticated packet with a set
   reserved bit is rejected separately as a protocol violation.
+- The RFC 9001 server plaintext decodes as its exact ACK and 90-byte CRYPTO
+  frames. The client plaintext decodes as its exact 241-byte CRYPTO frame and
+  917-byte PADDING run. Boundary tests cover ACK/ACK_ECN range arithmetic,
+  truncated frames, prohibited Initial-level types, CRYPTO offset overflow,
+  and transport CONNECTION_CLOSE reason bounds.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

@@ -15,7 +15,9 @@ selection and reconstruction, nonce and header-protection policy, and the
 QUIC v1 Initial key schedule and packet protection using OpenSSL 3. The
 bounded Initial receive path parses the envelope, removes header protection,
 reconstructs the packet number, and releases plaintext only after AES-GCM
-authentication and reserved-bit validation.
+authentication and reserved-bit validation. A proved, allocation-free frame
+cursor validates Initial-level PADDING, PING, ACK/ACK_ECN, CRYPTO, and transport
+CONNECTION_CLOSE frames and reports borrowed payload bounds.
 
 ## Build and test
 
