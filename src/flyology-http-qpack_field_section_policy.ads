@@ -55,7 +55,7 @@ is
       Truncated,
       Invalid_Prefix,
       Unsupported_Dynamic,
-      Unsupported_Huffman,
+      Invalid_Huffman,
       Invalid_Static_Index,
       Too_Many_Fields,
       Field_Too_Large);

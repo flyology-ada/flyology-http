@@ -1,3 +1,4 @@
+with Flyology.HTTP.Header_Huffman_Policy;
 with Flyology.HTTP.QPACK_Integer_Policy;
 with Flyology.HTTP.QPACK_Static_Table;
 
@@ -7,6 +8,7 @@ is
    use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
    use type QPACK_Integer_Policy.Decode_Status;
+   use type Header_Huffman_Policy.Decode_Status;
 
    function Make_Field (Name, Value : String) return Header_Field is
       Result : Header_Field;
@@ -115,7 +117,8 @@ is
          Prefix_Bits : QPACK_Integer_Policy.Prefix_Size := 7;
          Huffman_Bit : Ada.Streams.Stream_Element := 16#80#)
       with
-        Pre => Target'Length <= Max_Value_Length,
+        Pre => Target'First = 1
+          and then Target'Length <= Max_Value_Length,
         Post =>
           (if Status = Decoded then
               Length <= Target'Length
@@ -133,37 +136,72 @@ is
          Encoded_Length : QPACK_Integer_Policy.Value_Type;
          Success        : Boolean;
          First_Position : constant Natural := Position;
+         Huffman        : Boolean;
       begin
          Target := (others => Character'Val (0));
          Length := 0;
          Status := Truncated;
          if Position >= Data_Length then
             return;
-         elsif (Byte_At (Position) and Huffman_Bit) /= 0 then
-            Status := Unsupported_Huffman;
-            return;
          end if;
+         Huffman := (Byte_At (Position) and Huffman_Bit) /= 0;
          Read_Integer (Prefix_Bits, Encoded_Length, Success);
          if not Success then
             Position := First_Position;
-            return;
-         elsif Encoded_Length > QPACK_Integer_Policy.Value_Type (Target'Length) then
-            Status := Field_Too_Large;
             return;
          elsif Natural (Encoded_Length) > Data_Length - Position then
             Position := First_Position;
             return;
          end if;
-         Length := Natural (Encoded_Length);
-         if Length > 0 then
-            for Offset in 0 .. Length - 1 loop
-               Target (Target'First + Offset) :=
-                 Character'Val (Byte_At (Position + Offset));
-            end loop;
-            pragma Assert (Length <= Data_Length - Position);
-            pragma Assert (Position + Length <= Data_Length);
-            Position := Position + Length;
+         if Huffman then
+            declare
+               Parsed : Header_Huffman_Policy.Decode_Result;
+            begin
+               if Encoded_Length = 0 then
+                  Parsed := Header_Huffman_Policy.Decode
+                    (Ada.Streams.Stream_Element_Array'(1 .. 0 => 0),
+                     Header_Huffman_Policy.Output_Length (Target'Length));
+               else
+                  Parsed := Header_Huffman_Policy.Decode
+                    (Data
+                       (Data'First
+                          + Ada.Streams.Stream_Element_Offset (Position)
+                        .. Data'First
+                             + Ada.Streams.Stream_Element_Offset
+                                 (Position + Natural (Encoded_Length) - 1)),
+                     Header_Huffman_Policy.Output_Length (Target'Length));
+               end if;
+               if Parsed.Status = Header_Huffman_Policy.Output_Too_Large then
+                  Status := Field_Too_Large;
+                  return;
+               elsif Parsed.Status /= Header_Huffman_Policy.Decoded then
+                  Status := Invalid_Huffman;
+                  return;
+               end if;
+               Length := Parsed.Length;
+               for Offset in 1 .. Length loop
+                  Target (Offset) := Parsed.Data (Offset);
+               end loop;
+            end;
+         else
+            if Encoded_Length >
+              QPACK_Integer_Policy.Value_Type (Target'Length)
+            then
+               Status := Field_Too_Large;
+               return;
+            end if;
+            Length := Natural (Encoded_Length);
+            if Length > 0 then
+               for Offset in 0 .. Length - 1 loop
+                  Target (Offset + 1) :=
+                    Character'Val (Byte_At (Position + Offset));
+               end loop;
+            end if;
          end if;
+         pragma Assert (Natural (Encoded_Length) <= Data_Length - Position);
+         pragma Assert
+           (Position + Natural (Encoded_Length) <= Data_Length);
+         Position := Position + Natural (Encoded_Length);
          Status := Decoded;
       end Read_String;
 

@@ -113,6 +113,7 @@ flyology-websocket_policy-smoke
 flyology-websocket_client_policy-smoke
 flyology-http-decoded_path_policy-smoke
 flyology-http-expect_policy-smoke
+flyology-http-header_huffman_policy-smoke
 flyology-http-client_policy-smoke
 flyology-http-http_2_frames-smoke
 flyology-http-http_2_huffman-smoke

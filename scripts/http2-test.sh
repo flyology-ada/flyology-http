@@ -41,6 +41,10 @@ run_codecs () {
   PYTHONDONTWRITEBYTECODE=1 "$python" \
     "$http_root/tests/http2_hpack_differential.py" \
     "$http_root/tests/bin/http2-differential/flyology-http-http_2_hpack-differential"
+  build_test flyology-http-header_huffman_policy-differential huffman-differential
+  PYTHONDONTWRITEBYTECODE=1 "$python" \
+    "$http_root/tests/header_huffman_differential.py" \
+    "$http_root/tests/bin/huffman-differential/flyology-http-header_huffman_policy-differential"
 }
 
 run_client () {

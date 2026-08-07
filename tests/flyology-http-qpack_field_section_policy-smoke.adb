@@ -41,9 +41,18 @@ begin
 
    pragma Assert (Decode ((16#01#, 16#00#)).Status = Unsupported_Dynamic);
    pragma Assert (Decode ((16#00#, 16#00#, 16#80#)).Status = Unsupported_Dynamic);
+   Parsed :=
+     Decode
+       ((16#00#, 16#00#, 16#51#, 16#8C#, 16#F1#, 16#E3#,
+         16#C2#, 16#E5#, 16#F2#, 16#3A#, 16#6B#, 16#A0#,
+         16#AB#, 16#90#, 16#F4#, 16#FF#));
    pragma Assert
-     (Decode ((16#00#, 16#00#, 16#50#, 16#80#)).Status =
-        Unsupported_Huffman);
+     (Parsed.Status = Decoded
+      and then Field_Name (Parsed.Block.Fields (1)) = ":path"
+      and then Field_Value (Parsed.Block.Fields (1)) = "www.example.com");
+   pragma Assert
+     (Decode ((16#00#, 16#00#, 16#50#, 16#81#, 16#00#)).Status =
+        Invalid_Huffman);
    pragma Assert
      (Decode ((16#00#, 16#00#, 16#FF#, 16#24#)).Status =
         Invalid_Static_Index);
