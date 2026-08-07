@@ -19,6 +19,7 @@ for test in \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
   flyology-quic-tls_extension_policy-smoke \
+  flyology-quic-tls_handshake_policy-smoke \
   flyology-quic-transport_parameter_policy-smoke \
   flyology-quic-varint_policy-smoke
 do

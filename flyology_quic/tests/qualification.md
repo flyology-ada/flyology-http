@@ -56,6 +56,12 @@ for the next layer.
   Ada encoders round-trip client, server, and EncryptedExtensions contexts;
   negative tests cover truncation, duplicates, placement violations, missing
   mandatory extensions, invalid versions and shares, and malformed ALPN.
+- The complete RFC ClientHello and ServerHello messages cover handshake
+  lengths, legacy fields, random and session-ID bounds, AES-128-GCM suite
+  negotiation, compression, and borrowed extension ranges. A synthetic
+  EncryptedExtensions message and a coalesced-message prefix cover subsequent
+  CRYPTO-stream framing; truncated, unsupported, structurally invalid, and
+  extension-invalid messages are rejected separately.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 
