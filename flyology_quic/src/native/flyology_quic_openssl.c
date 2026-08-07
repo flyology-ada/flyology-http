@@ -12,6 +12,8 @@
 typedef struct evp_cipher_st EVP_CIPHER;
 typedef struct evp_cipher_ctx_st EVP_CIPHER_CTX;
 typedef struct evp_md_st EVP_MD;
+typedef struct evp_pkey_st EVP_PKEY;
+typedef struct evp_pkey_ctx_st EVP_PKEY_CTX;
 
 struct quic_crypto_module {
    void *crypto;
@@ -20,10 +22,26 @@ struct quic_crypto_module {
    unsigned long (*ERR_get_error)(void);
    void (*ERR_error_string_n)(unsigned long, char *, size_t);
    const EVP_MD *(*EVP_sha256)(void);
+   int (*EVP_Digest)(const void *, size_t, unsigned char *, unsigned int *,
+                     const EVP_MD *, void *);
    unsigned char *(*HMAC)(const EVP_MD *, const void *, int,
                           const unsigned char *, size_t,
                           unsigned char *, unsigned int *);
    void (*OPENSSL_cleanse)(void *, size_t);
+   int (*RAND_bytes)(unsigned char *, int);
+   int (*OBJ_sn2nid)(const char *);
+   EVP_PKEY *(*EVP_PKEY_new_raw_private_key)
+     (int, void *, const unsigned char *, size_t);
+   EVP_PKEY *(*EVP_PKEY_new_raw_public_key)
+     (int, void *, const unsigned char *, size_t);
+   int (*EVP_PKEY_get_raw_public_key)(const EVP_PKEY *, unsigned char *,
+                                      size_t *);
+   void (*EVP_PKEY_free)(EVP_PKEY *);
+   EVP_PKEY_CTX *(*EVP_PKEY_CTX_new)(EVP_PKEY *, void *);
+   void (*EVP_PKEY_CTX_free)(EVP_PKEY_CTX *);
+   int (*EVP_PKEY_derive_init)(EVP_PKEY_CTX *);
+   int (*EVP_PKEY_derive_set_peer)(EVP_PKEY_CTX *, const EVP_PKEY *);
+   int (*EVP_PKEY_derive)(EVP_PKEY_CTX *, unsigned char *, size_t *);
    const EVP_CIPHER *(*EVP_aes_128_ecb)(void);
    const EVP_CIPHER *(*EVP_aes_128_gcm)(void);
    EVP_CIPHER_CTX *(*EVP_CIPHER_CTX_new)(void);
@@ -125,8 +143,20 @@ static struct quic_crypto_module *load_from_directory
    LOAD(module, ERR_get_error);
    LOAD(module, ERR_error_string_n);
    LOAD(module, EVP_sha256);
+   LOAD(module, EVP_Digest);
    LOAD(module, HMAC);
    LOAD(module, OPENSSL_cleanse);
+   LOAD(module, RAND_bytes);
+   LOAD(module, OBJ_sn2nid);
+   LOAD(module, EVP_PKEY_new_raw_private_key);
+   LOAD(module, EVP_PKEY_new_raw_public_key);
+   LOAD(module, EVP_PKEY_get_raw_public_key);
+   LOAD(module, EVP_PKEY_free);
+   LOAD(module, EVP_PKEY_CTX_new);
+   LOAD(module, EVP_PKEY_CTX_free);
+   LOAD(module, EVP_PKEY_derive_init);
+   LOAD(module, EVP_PKEY_derive_set_peer);
+   LOAD(module, EVP_PKEY_derive);
    LOAD(module, EVP_aes_128_ecb);
    LOAD(module, EVP_aes_128_gcm);
    LOAD(module, EVP_CIPHER_CTX_new);
@@ -451,5 +481,148 @@ int flyology_quic_openssl_header_mask
 done:
    module->OPENSSL_cleanse(block, sizeof block);
    if (context != NULL) module->EVP_CIPHER_CTX_free(context);
+   return success ? 0 : -1;
+}
+
+int flyology_quic_openssl_random
+  (void *handle, unsigned char *output, size_t output_length,
+   char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   if (module == NULL || (output_length != 0 && output == NULL) ||
+       output_length > INT32_MAX) {
+      set_error(error, error_size, "invalid QUIC random arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   if (output_length != 0 &&
+       module->RAND_bytes(output, (int)output_length) != 1) {
+      provider_error(module, error, error_size, "OpenSSL randomness failed");
+      return -1;
+   }
+   return 0;
+}
+
+int flyology_quic_openssl_sha256
+  (void *handle, const unsigned char *data, size_t data_length,
+   unsigned char output[32], char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   unsigned int output_length = 0;
+   if (module == NULL || output == NULL ||
+       (data_length != 0 && data == NULL)) {
+      set_error(error, error_size, "invalid QUIC SHA-256 arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   if (module->EVP_Digest(data, data_length, output, &output_length,
+                          module->EVP_sha256(), NULL) != 1 ||
+       output_length != 32) {
+      provider_error(module, error, error_size, "OpenSSL SHA-256 failed");
+      return -1;
+   }
+   return 0;
+}
+
+int flyology_quic_openssl_hmac_sha256
+  (void *handle, const unsigned char *key, size_t key_length,
+   const unsigned char *data, size_t data_length, unsigned char output[32],
+   char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   if (module == NULL || output == NULL ||
+       (key_length != 0 && key == NULL) ||
+       (data_length != 0 && data == NULL)) {
+      set_error(error, error_size, "invalid QUIC HMAC arguments");
+      return -1;
+   }
+   if (!hmac_sha256(module, key, key_length, data, data_length, output)) {
+      module->OPENSSL_cleanse(output, 32);
+      provider_error(module, error, error_size, "OpenSSL HMAC-SHA256 failed");
+      return -1;
+   }
+   return 0;
+}
+
+int flyology_quic_openssl_x25519_public
+  (void *handle, const unsigned char private_key[32],
+   unsigned char public_key[32], char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   EVP_PKEY *key = NULL;
+   size_t public_length = 32;
+   int nid;
+   int success = 0;
+   if (module == NULL || private_key == NULL || public_key == NULL) {
+      set_error(error, error_size, "invalid X25519 public-key arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   nid = module->OBJ_sn2nid("X25519");
+   if (nid == 0) {
+      provider_error(module, error, error_size,
+                     "OpenSSL does not provide X25519");
+      goto done;
+   }
+   key = module->EVP_PKEY_new_raw_private_key
+     (nid, NULL, private_key, 32);
+   if (key == NULL ||
+       module->EVP_PKEY_get_raw_public_key
+         (key, public_key, &public_length) != 1 || public_length != 32) {
+      provider_error(module, error, error_size,
+                     "OpenSSL X25519 public-key derivation failed");
+      goto done;
+   }
+   success = 1;
+done:
+   if (key != NULL) module->EVP_PKEY_free(key);
+   if (!success) module->OPENSSL_cleanse(public_key, 32);
+   return success ? 0 : -1;
+}
+
+int flyology_quic_openssl_x25519_shared
+  (void *handle, const unsigned char private_key[32],
+   const unsigned char peer_public_key[32], unsigned char shared_secret[32],
+   char *error, size_t error_size)
+{
+   struct quic_crypto_module *module = handle;
+   EVP_PKEY *local = NULL;
+   EVP_PKEY *peer = NULL;
+   EVP_PKEY_CTX *context = NULL;
+   size_t shared_length = 32;
+   int nid;
+   int success = 0;
+   if (module == NULL || private_key == NULL || peer_public_key == NULL ||
+       shared_secret == NULL) {
+      set_error(error, error_size, "invalid X25519 shared-secret arguments");
+      return -1;
+   }
+   module->ERR_clear_error();
+   nid = module->OBJ_sn2nid("X25519");
+   if (nid == 0) {
+      provider_error(module, error, error_size,
+                     "OpenSSL does not provide X25519");
+      goto done;
+   }
+   local = module->EVP_PKEY_new_raw_private_key
+     (nid, NULL, private_key, 32);
+   peer = module->EVP_PKEY_new_raw_public_key
+     (nid, NULL, peer_public_key, 32);
+   if (local == NULL || peer == NULL ||
+       (context = module->EVP_PKEY_CTX_new(local, NULL)) == NULL ||
+       module->EVP_PKEY_derive_init(context) != 1 ||
+       module->EVP_PKEY_derive_set_peer(context, peer) != 1 ||
+       module->EVP_PKEY_derive
+         (context, shared_secret, &shared_length) != 1 || shared_length != 32) {
+      provider_error(module, error, error_size,
+                     "OpenSSL X25519 shared-secret derivation failed");
+      goto done;
+   }
+   success = 1;
+done:
+   if (context != NULL) module->EVP_PKEY_CTX_free(context);
+   if (peer != NULL) module->EVP_PKEY_free(peer);
+   if (local != NULL) module->EVP_PKEY_free(local);
+   if (!success) module->OPENSSL_cleanse(shared_secret, 32);
    return success ? 0 : -1;
 }

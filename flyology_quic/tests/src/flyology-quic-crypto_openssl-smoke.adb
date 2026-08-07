@@ -53,6 +53,101 @@ begin
      (Keys.Server_HP = Hex ("c206b8d9b9f0f37644430b490eeaa314"));
 
    declare
+      Digest : SHA256_Digest;
+      Key    : constant Ada.Streams.Stream_Element_Array (1 .. 20) :=
+        (others => 16#0B#);
+   begin
+      --  FIPS 180-4 and RFC 4231 keep the primitive boundary independent
+      --  from the TLS and QUIC key schedules which consume it.
+      SHA256 (Backend, Hex (""), Digest);
+      pragma Assert
+        (Digest =
+           Hex ("e3b0c44298fc1c149afbf4c8996fb924" &
+                "27ae41e4649b934ca495991b7852b855"));
+      SHA256 (Backend, Hex ("616263"), Digest);
+      pragma Assert
+        (Digest =
+           Hex ("ba7816bf8f01cfea414140de5dae2223" &
+                "b00361a396177a9cb410ff61f20015ad"));
+      HMAC_SHA256 (Backend, Key, Hex ("4869205468657265"), Digest);
+      pragma Assert
+        (Digest =
+           Hex ("b0344c61d8db38535ca8afceaf0bf12b" &
+                "881dc200c9833da726e9376c2e32cff7"));
+   end;
+
+   declare
+      Alice_Private : constant X25519_Private_Key :=
+        X25519_Private_Key'
+          (Hex ("77076d0a7318a57d3c16c17251b26645" &
+                "df4c2f87ebc0992ab177fba51db92c2a"));
+      Bob_Private   : constant X25519_Private_Key :=
+        X25519_Private_Key'
+          (Hex ("5dab087e624a8a4b79e17f8b83800ee6" &
+                "6f3bb1292618b6fd1c2f8b27ff88e0eb"));
+      Alice_Public  : X25519_Public_Key;
+      Bob_Public    : X25519_Public_Key;
+      Alice_Shared  : X25519_Shared_Secret;
+      Bob_Shared    : X25519_Shared_Secret;
+      Expected_Alice_Public : constant X25519_Public_Key :=
+        X25519_Public_Key'
+          (Hex ("8520f0098930a754748b7ddcb43ef75a0" &
+                "dbf3a0d26381af4eba4a98eaa9b4e6a"));
+      Expected_Bob_Public : constant X25519_Public_Key :=
+        X25519_Public_Key'
+          (Hex ("de9edb7d7b7dc1b4d35b61c2ece43537" &
+                "3f8343c85b78674dadfc7e146f882b4f"));
+      Expected_Shared : constant X25519_Shared_Secret :=
+        X25519_Shared_Secret'
+          (Hex ("4a5d9d5ba4ce2de1728e3bf480350f25" &
+                "e07e21c947d19e3376f09b3c1e161742"));
+   begin
+      --  RFC 7748 verifies raw public-key derivation and both ECDH
+      --  directions, including the byte ordering used on the TLS wire.
+      X25519_Public (Backend, Alice_Private, Alice_Public);
+      X25519_Public (Backend, Bob_Private, Bob_Public);
+      pragma Assert (Alice_Public = Expected_Alice_Public);
+      pragma Assert (Bob_Public = Expected_Bob_Public);
+      X25519_Shared
+        (Backend, Alice_Private, Bob_Public, Alice_Shared);
+      X25519_Shared
+        (Backend, Bob_Private, Alice_Public, Bob_Shared);
+      pragma Assert
+        (Alice_Shared = Expected_Shared and then Bob_Shared = Expected_Shared);
+
+      declare
+         Rejected : Boolean := False;
+         Invalid_Shared : X25519_Shared_Secret;
+      begin
+         begin
+            X25519_Shared
+              (Backend, Alice_Private, (others => 0), Invalid_Shared);
+         exception
+            when Crypto_Error =>
+               Rejected := True;
+         end;
+         pragma Assert (Rejected);
+      end;
+   end;
+
+   declare
+      Alice_Private : X25519_Private_Key;
+      Alice_Public  : X25519_Public_Key;
+      Bob_Private   : X25519_Private_Key;
+      Bob_Public    : X25519_Public_Key;
+      Alice_Shared  : X25519_Shared_Secret;
+      Bob_Shared    : X25519_Shared_Secret;
+   begin
+      Generate_X25519 (Backend, Alice_Private, Alice_Public);
+      Generate_X25519 (Backend, Bob_Private, Bob_Public);
+      X25519_Shared
+        (Backend, Alice_Private, Bob_Public, Alice_Shared);
+      X25519_Shared
+        (Backend, Bob_Private, Alice_Public, Bob_Shared);
+      pragma Assert (Alice_Shared = Bob_Shared);
+   end;
+
+   declare
       Crypto_Frame : constant Ada.Streams.Stream_Element_Array :=
         Hex
           ("060040f1010000ed0303ebf8fa56f129" &

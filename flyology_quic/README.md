@@ -26,6 +26,8 @@ bounds. Initial client/server state derives directional keys, reserves packet
 numbers only after successful construction, suppresses authenticated replays
 through a proved 256-packet window, and exchanges datagrams through Flyology's
 portable UDP sockets.
+The native primitive boundary also supplies cryptographic randomness, SHA-256,
+HMAC-SHA256, and X25519 for the Ada TLS 1.3 handshake state.
 
 ## Build and test
 

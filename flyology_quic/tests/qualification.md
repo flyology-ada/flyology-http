@@ -16,6 +16,9 @@ for the next layer.
   number gap representable by QUIC's four-byte packet-number field.
 - RFC 9001 Appendix A covers both v1 Initial traffic secrets, keys, IVs,
   header-protection keys, AES-GCM output, authentication tag, and header mask.
+- FIPS 180-4, RFC 4231, and RFC 7748 vectors cover SHA-256, HMAC-SHA256,
+  X25519 public-key derivation, and shared-secret agreement in both directions.
+  Fresh ephemeral pairs must agree, while an all-zero peer key is rejected.
 - The complete RFC 9001 server Initial packet covers receive-side envelope
   parsing, header unprotection, packet-number reconstruction, AAD and nonce
   construction, AES-GCM authentication, and exact plaintext recovery.

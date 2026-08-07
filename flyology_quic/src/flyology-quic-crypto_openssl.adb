@@ -75,6 +75,54 @@ package body Flyology.QUIC.Crypto_OpenSSL is
    pragma Import
      (C, C_Header_Mask, "flyology_quic_openssl_header_mask");
 
+   function C_Random
+     (Handle        : System.Address;
+      Output        : System.Address;
+      Output_Length : C.size_t;
+      Error         : System.Address;
+      Error_Size    : C.size_t) return C.int;
+   pragma Import (C, C_Random, "flyology_quic_openssl_random");
+
+   function C_SHA256
+     (Handle      : System.Address;
+      Data        : System.Address;
+      Data_Length : C.size_t;
+      Digest      : System.Address;
+      Error       : System.Address;
+      Error_Size  : C.size_t) return C.int;
+   pragma Import (C, C_SHA256, "flyology_quic_openssl_sha256");
+
+   function C_HMAC_SHA256
+     (Handle      : System.Address;
+      Key         : System.Address;
+      Key_Length  : C.size_t;
+      Data        : System.Address;
+      Data_Length : C.size_t;
+      Digest      : System.Address;
+      Error       : System.Address;
+      Error_Size  : C.size_t) return C.int;
+   pragma Import
+     (C, C_HMAC_SHA256, "flyology_quic_openssl_hmac_sha256");
+
+   function C_X25519_Public
+     (Handle      : System.Address;
+      Private_Key : System.Address;
+      Public_Key  : System.Address;
+      Error       : System.Address;
+      Error_Size  : C.size_t) return C.int;
+   pragma Import
+     (C, C_X25519_Public, "flyology_quic_openssl_x25519_public");
+
+   function C_X25519_Shared
+     (Handle          : System.Address;
+      Private_Key     : System.Address;
+      Peer_Public_Key : System.Address;
+      Shared_Secret   : System.Address;
+      Error           : System.Address;
+      Error_Size      : C.size_t) return C.int;
+   pragma Import
+     (C, C_X25519_Shared, "flyology_quic_openssl_x25519_shared");
+
    function Image (Buffer : Error_Buffer) return String is
      (C.To_Ada (Buffer, Trim_Nul => True));
 
@@ -183,6 +231,7 @@ package body Flyology.QUIC.Crypto_OpenSSL is
            C.size_t (Ciphertext'Length), Error (Error'First)'Address,
            C.size_t (Error'Length));
       if Status /= 0 then
+         Ciphertext := (others => 0);
          raise Crypto_Error with "OpenSSL: " & Image (Error);
       end if;
    end Protect;
@@ -241,9 +290,153 @@ package body Flyology.QUIC.Crypto_OpenSSL is
            Mask (Mask'First)'Address, Error (Error'First)'Address,
            C.size_t (Error'Length));
       if Status /= 0 then
+         Mask := (others => 0);
          raise Crypto_Error with "OpenSSL: " & Image (Error);
       end if;
    end Make_Header_Mask;
+
+   procedure Random_Bytes
+     (Item   : Provider;
+      Output : out Ada.Streams.Stream_Element_Array)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Output := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Random
+          (Item.Handle,
+           (if Output'Length = 0 then System.Null_Address
+            else Output (Output'First)'Address),
+           C.size_t (Output'Length), Error (Error'First)'Address,
+           C.size_t (Error'Length));
+      if Status /= 0 then
+         Output := (others => 0);
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Random_Bytes;
+
+   procedure SHA256
+     (Item   : Provider;
+      Data   : Ada.Streams.Stream_Element_Array;
+      Digest : out SHA256_Digest)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Digest := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_SHA256
+          (Item.Handle,
+           (if Data'Length = 0 then System.Null_Address
+            else Data (Data'First)'Address),
+           C.size_t (Data'Length), Digest (Digest'First)'Address,
+           Error (Error'First)'Address, C.size_t (Error'Length));
+      if Status /= 0 then
+         Digest := (others => 0);
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end SHA256;
+
+   procedure HMAC_SHA256
+     (Item   : Provider;
+      Key    : Ada.Streams.Stream_Element_Array;
+      Data   : Ada.Streams.Stream_Element_Array;
+      Digest : out SHA256_Digest)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Digest := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_HMAC_SHA256
+          (Item.Handle,
+           (if Key'Length = 0 then System.Null_Address
+            else Key (Key'First)'Address),
+           C.size_t (Key'Length),
+           (if Data'Length = 0 then System.Null_Address
+            else Data (Data'First)'Address),
+           C.size_t (Data'Length), Digest (Digest'First)'Address,
+           Error (Error'First)'Address, C.size_t (Error'Length));
+      if Status /= 0 then
+         Digest := (others => 0);
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end HMAC_SHA256;
+
+   procedure X25519_Public
+     (Item        : Provider;
+      Private_Key : X25519_Private_Key;
+      Public_Key  : out X25519_Public_Key)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Public_Key := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_X25519_Public
+          (Item.Handle, Private_Key (Private_Key'First)'Address,
+           Public_Key (Public_Key'First)'Address, Error (Error'First)'Address,
+           C.size_t (Error'Length));
+      if Status /= 0 then
+         Public_Key := (others => 0);
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end X25519_Public;
+
+   procedure X25519_Shared
+     (Item            : Provider;
+      Private_Key     : X25519_Private_Key;
+      Peer_Public_Key : X25519_Public_Key;
+      Shared_Secret   : out X25519_Shared_Secret)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      Shared_Secret := (others => 0);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_X25519_Shared
+          (Item.Handle, Private_Key (Private_Key'First)'Address,
+           Peer_Public_Key (Peer_Public_Key'First)'Address,
+           Shared_Secret (Shared_Secret'First)'Address,
+           Error (Error'First)'Address, C.size_t (Error'Length));
+      if Status /= 0 then
+         Shared_Secret := (others => 0);
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end X25519_Shared;
+
+   procedure Generate_X25519
+     (Item        : Provider;
+      Private_Key : out X25519_Private_Key;
+      Public_Key  : out X25519_Public_Key)
+   is
+   begin
+      Private_Key := (others => 0);
+      Public_Key := (others => 0);
+      Random_Bytes (Item, Private_Key);
+      X25519_Public (Item, Private_Key, Public_Key);
+   exception
+      when others =>
+         Private_Key := (others => 0);
+         Public_Key := (others => 0);
+         raise;
+   end Generate_X25519;
 
    overriding procedure Finalize (Item : in out Provider) is
    begin
