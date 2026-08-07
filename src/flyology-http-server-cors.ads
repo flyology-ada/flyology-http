@@ -8,7 +8,12 @@ package Flyology.HTTP.Server.CORS is
 
    --  Construct a policy. Allowed_Origins is a space-separated exact origin
    --  list or "*". Methods and headers are comma-separated token lists.
-   --  Wildcard origin with credentials is rejected.
+   --  Origin membership is checked token by token, so the wildcard is only
+   --  accepted as the entire list, and neither the wildcard nor the opaque
+   --  "null" origin may be combined with credentials.
+   --  @exception Program_Error Origins or methods are empty, a value carries
+   --     control bytes, "*" is listed beside other origins, or credentials
+   --     are granted to "*" or to "null"
    --  @param Allowed_Origins Exact origins or wildcard
    --  @param Allowed_Methods Allowed request methods
    --  @param Allowed_Headers Allowed request headers

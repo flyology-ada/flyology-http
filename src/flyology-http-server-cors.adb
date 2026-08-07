@@ -12,6 +12,8 @@ package body Flyology.HTTP.Server.CORS is
       end loop;
    end Validate_Value;
 
+   function Exact_Word (List, Word : String) return Boolean;
+
    function Create
      (Allowed_Origins   : String;
       Allowed_Methods   : String;
@@ -26,6 +28,20 @@ package body Flyology.HTTP.Server.CORS is
       elsif Allowed_Origins = "*" and then Allow_Credentials then
          raise Program_Error with
            "CORS wildcard origin cannot allow credentials";
+      elsif Allowed_Origins /= "*"
+        and then Exact_Word (Allowed_Origins, "*")
+      then
+         --  Origin_Allowed matches whole tokens, so a listed "*" is reached
+         --  by a literal Origin: * while Wildcard stays false. The wildcard
+         --  is only meaningful as the entire list.
+         raise Program_Error with
+           "CORS wildcard origin cannot be listed beside other origins";
+      elsif Allow_Credentials and then Exact_Word (Allowed_Origins, "null")
+      then
+         --  Any sandboxed iframe or data: document sends Origin: null, so
+         --  granting it credentials grants them to every such document.
+         raise Program_Error with
+           "CORS null origin cannot allow credentials";
       end if;
       Validate_Value (Allowed_Origins);
       Validate_Value (Allowed_Methods);

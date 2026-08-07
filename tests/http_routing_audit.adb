@@ -9,8 +9,10 @@ with Ada.Text_IO;
 with Flyology.Cancellation;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
+with Flyology.HTTP.Server.CORS;
 with Flyology.HTTP.Server.Middleware_Authentication;
 with Flyology.HTTP.Server.Middleware_Bulkheads;
+with Flyology.HTTP.Server.Middleware_CORS;
 with Flyology.HTTP.Server.Middleware_Rate_Limits;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO;
@@ -57,6 +59,24 @@ procedure HTTP_Routing_Audit is
             & "] in [" & Output & "]");
       end if;
    end Expect_In;
+
+   --  Return the first value of a response field, or an empty string.
+   function Field_Value (Output, Name : String) return String is
+      Start : constant Natural :=
+        Ada.Strings.Fixed.Index (Output, CRLF & Name & ": ");
+      First : Positive;
+      Stop  : Natural;
+   begin
+      if Start = 0 then
+         return "";
+      end if;
+      First := Start + 2 + Name'Length + 2;
+      Stop := Ada.Strings.Fixed.Index (Output (First .. Output'Last), CRLF);
+      if Stop = 0 then
+         return "";
+      end if;
+      return Output (First .. Stop - 1);
+   end Field_Value;
 
    type Memory_Transport is limited new HTTP_Server.Transport with record
       Input  : Unbounded_String;
@@ -856,6 +876,135 @@ procedure HTTP_Routing_Audit is
          Answer ("/private", "Basic AAAA"), "HTTP/1.1 401");
    end Check_Authentication_Backstop;
 
+   --  Finding 26. Create rejected the wildcard/credentials combination only
+   --  when Allowed_Origins was exactly "*", but Origin_Allowed matches whole
+   --  space-separated tokens, so a "*" member reflected a literal Origin: *
+   --  with Allow-Credentials: true while Wildcard stayed false.
+   procedure Check_CORS_List_Member_Validation is
+      package Applications renames Flyology.HTTP.Server.Applications;
+      package CORS renames Flyology.HTTP.Server.CORS;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      Listed : aliased constant CORS.Policy := CORS.Create
+        (Allowed_Origins   => "https://app.example https://ops.example",
+         Allowed_Methods   => "GET",
+         Allow_Credentials => True);
+
+      function Resolve (Slot : Positive)
+        return access constant CORS.Policy is
+        (if Slot = 1 then Listed'Access else null);
+
+      function Rejected
+        (Origins     : String;
+         Credentials : Boolean) return Boolean is
+      begin
+         declare
+            Discard : constant CORS.Policy := CORS.Create
+              (Allowed_Origins   => Origins,
+               Allowed_Methods   => "GET",
+               Allow_Credentials => Credentials);
+            pragma Unreferenced (Discard);
+         begin
+            null;
+         end;
+         return False;
+      exception
+         when Program_Error =>
+            return True;
+      end Rejected;
+
+      package CORS_Layer is new Flyology.HTTP.Server.Middleware_CORS
+        (Context, Routing.Components, Resolve);
+
+      procedure Plain
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "plain");
+      end Plain;
+
+      Shared : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+
+      function Answer (Origin : String) return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /data HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Origin: " & Origin & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Shared.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Answer;
+   begin
+      Shared.Get
+        ("/data", Plain'Access, Name => "data",
+         Policy =>
+           (Routing.Default_Route_Policy with delta CORS_Policy => 1));
+      Shared.Add_Middleware (CORS_Layer.Call'Access, Name => "cors");
+
+      --  A listed wildcard never reaches Origin_Allowed.
+      Expect
+        ("finding 26 listed wildcard with credentials",
+         Rejected ("https://app.example *", True)'Image, "TRUE");
+      Expect
+        ("finding 26 listed wildcard without credentials",
+         Rejected ("https://app.example *", False)'Image, "TRUE");
+      Expect
+        ("finding 26 sole wildcard with credentials",
+         Rejected ("*", True)'Image, "TRUE");
+      Expect
+        ("finding 26 listed null with credentials",
+         Rejected ("https://app.example null", True)'Image, "TRUE");
+      Expect
+        ("finding 26 sole null with credentials",
+         Rejected ("null", True)'Image, "TRUE");
+
+      --  The shapes that were always meant to work still do.
+      Expect
+        ("finding 26 sole wildcard without credentials",
+         Rejected ("*", False)'Image, "FALSE");
+      Expect
+        ("finding 26 listed null without credentials",
+         Rejected ("https://app.example null", False)'Image, "FALSE");
+      Expect
+        ("finding 26 exact list with credentials",
+         Rejected ("https://app.example https://ops.example", True)'Image,
+         "FALSE");
+
+      --  A credentialed exact list still reflects its own members and
+      --  refuses every other origin.
+      declare
+         Allowed : constant String := Answer ("https://ops.example");
+         Denied  : constant String := Answer ("https://evil.example");
+      begin
+         Expect
+           ("finding 26 allowed member origin",
+            Field_Value (Allowed, "Access-Control-Allow-Origin"),
+            "https://ops.example");
+         Expect
+           ("finding 26 allowed member credentials",
+            Field_Value (Allowed, "Access-Control-Allow-Credentials"),
+            "true");
+         Expect
+           ("finding 26 allowed member vary",
+            Field_Value (Allowed, "Vary"), "Origin");
+         Expect
+           ("finding 26 unlisted origin",
+            Field_Value (Denied, "Access-Control-Allow-Origin"), "");
+      end;
+   end Check_CORS_List_Member_Validation;
 
 
 
@@ -867,6 +1016,7 @@ begin
    Check_Mount_Sealing;
    Check_Authentication_Challenge;
    Check_Authentication_Backstop;
+   Check_CORS_List_Member_Validation;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
