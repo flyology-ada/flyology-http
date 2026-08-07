@@ -43,6 +43,7 @@ is
      Post =>
        (if Parse'Result.Status = Parsed then
            Parse'Result.Frame_Type in 16#08# .. 16#0F#
+           and then Parse'Result.Data_Offset > 0
            and then Parse'Result.Data_Offset <= Frame_Offset (Data'Length)
            and then Parse'Result.Data_Length <=
              Frame_Offset (Data'Length) - Parse'Result.Data_Offset
