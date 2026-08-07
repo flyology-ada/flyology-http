@@ -11,6 +11,8 @@
 --             HEAD request carrying Content-Length stays valid: RFC 9112
 --             section 6.3 terminates it at the first empty line regardless of
 --             the header fields present.
+--  Finding 36 An intermediate redirect body must be drained under a byte
+--             bound, destroying the transport when the bound is reached.
 --
 --  Each finding runs on its own listener so a desynchronized script cannot
 --  contaminate the evidence of the next one.
@@ -25,6 +27,7 @@ with Flyology.Cancellation;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
 with Flyology.HTTP.Methods;
+with Flyology.IO;
 with Flyology.IO.Sockets;
 
 procedure HTTP_Client_Audit is
@@ -37,6 +40,10 @@ procedure HTTP_Client_Audit is
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
 
+   --  Exceeds the client's intermediate redirect drain bound while still
+   --  fitting in the loopback socket buffers, so the scripted server never
+   --  blocks on a client that stopped reading.
+   Filler_Bytes : constant Natural := 96 * 1_024;
 
    protected Ledger is
       procedure Record_Failure;
@@ -620,9 +627,69 @@ procedure HTTP_Client_Audit is
    procedure Run_Bodyless is new Run_Lane
      (Bodyless_Script, Bodyless_Exercise);
 
+   ------------------------------------------------------------------
+   --  Finding 36. Bounded intermediate redirect drain
+   ------------------------------------------------------------------
+
+   procedure Redirect_Script is
+   begin
+      Accept_Peer;
+      declare
+         Head : constant String := Read_Head ("GET /redirect HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send
+           ("HTTP/1.1 302 Found" & CRLF & "Location: /final" & CRLF &
+            "Content-Length: 2000000000" & CRLF & CRLF);
+      end;
+      declare
+         Filler : constant String (1 .. Filler_Bytes) := (others => 'x');
+      begin
+         Send (Filler);
+      exception
+         when others => null;
+      end;
+      Require_Destroyed ("finding 36 (unbounded redirect drain)");
+
+      Accept_Peer;
+      declare
+         Head : constant String := Read_Head ("GET /final HTTP/1.1");
+         pragma Unreferenced (Head);
+      begin
+         Send
+           ("HTTP/1.1 200 OK" & CRLF & "Content-Length: 2" & CRLF & CRLF &
+            "ok");
+      end;
+   end Redirect_Script;
+
+   procedure Redirect_Exercise (Origin : Flyology.HTTP.Origin) is
+      HTTP    : aliased Client.Client (Capacity => 1);
+      Request : Client.Request;
+   begin
+      Client.Configure (HTTP, Origin);
+      Client.Set_Target (Request, "/redirect");
+      Client.Set_Redirects (Request, Client.Default_Same_Origin_Redirects);
+      declare
+         Reply : Client.Response :=
+           Client.Execute (HTTP, Request, Timeout => 3.0);
+      begin
+         Require_Status ("finding 36", Reply, 200);
+         Require_Body ("finding 36", Reply, "ok");
+      end;
+      Client.Shutdown (HTTP);
+   exception
+      when Flyology.IO.Timeout_Error =>
+         Report
+           ("finding 36: the intermediate redirect drain burned the whole " &
+            "exchange deadline");
+   end Redirect_Exercise;
+
+   procedure Run_Redirect is new Run_Lane
+     (Redirect_Script, Redirect_Exercise);
 begin
    Run_Expectation ("finding 6");
    Run_Bodyless ("finding 18");
+   Run_Redirect ("finding 36");
    pragma Assert (Ledger.Failures = 0);
    Ada.Text_IO.Put_Line ("HTTP client audit passed");
 end HTTP_Client_Audit;

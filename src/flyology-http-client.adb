@@ -41,6 +41,11 @@ package body Flyology.HTTP.Client is
    Request_Buffer_Size : constant Positive := 8 * 1_024;
    Max_Request_Target_Bytes : constant Positive := 8 * 1_024;
 
+   --  An intermediate redirect body is never delivered to the caller, so it
+   --  is read only to leave the transport reusable. Past this bound the
+   --  transport costs more than it saves and is destroyed instead.
+   Max_Redirect_Drain_Bytes : constant Natural := 64 * 1_024;
+
    type Transport_Protocol is (HTTP_1_Transport, HTTP_2_Transport);
 
    type Pooled_Connection is limited record
@@ -1342,17 +1347,31 @@ package body Flyology.HTTP.Client is
       Value.Method_Value := To_Method (if As_Head then "HEAD" else "GET");
    end Rewrite_Without_Content;
 
+   --  Discard an intermediate redirect body so the transport stays reusable,
+   --  giving up on the transport rather than the deadline once Maximum bytes
+   --  have been discarded.
    procedure Drain
-     (Item  : in out Response;
-      Token : access Flyology.Cancellation.Token) is
+     (Item    : in out Response;
+      Maximum : Natural;
+      Token   : access Flyology.Cancellation.Token) is
       Buffer : Ada.Streams.Stream_Element_Array
         (1 .. Ada.Streams.Stream_Element_Offset (Receive_Buffer_Size));
       Last : Ada.Streams.Stream_Element_Offset;
       Finished : Boolean;
+      Drained : Natural := 0;
    begin
       loop
          Read_Body (Item, Buffer, Last, Finished, Token);
          exit when Finished;
+         if Last >= Buffer'First then
+            Drained := Drained + Natural (Last - Buffer'First + 1);
+         end if;
+         if Drained > Maximum then
+            if Item.Data /= null and then Item.Data.Connection /= null then
+               Abandon_Response (Item.Data.all);
+            end if;
+            exit;
+         end if;
       end loop;
    end Drain;
 
@@ -1428,7 +1447,7 @@ package body Flyology.HTTP.Client is
                     "redirect requires a rewindable request body source";
                end if;
 
-               Drain (Reply, Token);
+               Drain (Reply, Max_Redirect_Drain_Bytes, Token);
                if Action = Follow_As_Get or else Action = Follow_As_Head then
                   Rewrite_Without_Content
                     (Current, As_Head => Action = Follow_As_Head);
