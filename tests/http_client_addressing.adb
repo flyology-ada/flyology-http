@@ -231,17 +231,39 @@ procedure HTTP_Client_Addressing is
                Held_IPv6 : Sockets.Socket_Type;
                Held_IPv4 : Sockets.Socket_Type;
                Port      : Sockets.Port;
+
+               procedure Reserve_Paired_Loopback_Port is
+               begin
+                  for Attempt in Positive range 1 .. 32 loop
+                     begin
+                        Sockets.Create_Socket (Held_IPv6, Sockets.IPv6);
+                        Sockets.Bind_Socket
+                          (Held_IPv6,
+                           Sockets.Network_Endpoint
+                             (Sockets.Loopback_IPv6, Sockets.Any_Port));
+                        Port := Sockets.Get_Socket_Name (Held_IPv6).Port;
+                        Sockets.Create_Socket (Held_IPv4, Sockets.IPv4);
+                        Sockets.Bind_Socket
+                          (Held_IPv4,
+                           Sockets.Network_Endpoint
+                             (Sockets.Loopback_IPv4, Port));
+                        return;
+                     exception
+                        when Sockets.Socket_Error =>
+                           Close_If_Open (Held_IPv4);
+                           Close_If_Open (Held_IPv6);
+                           if Attempt = 32 then
+                              raise;
+                           end if;
+                     end;
+                  end loop;
+               end Reserve_Paired_Loopback_Port;
             begin
-               Sockets.Create_Socket (Held_IPv6, Sockets.IPv6);
-               Sockets.Bind_Socket
-                 (Held_IPv6,
-                  Sockets.Network_Endpoint
-                    (Sockets.Loopback_IPv6, Sockets.Any_Port));
-               Port := Sockets.Get_Socket_Name (Held_IPv6).Port;
-               Sockets.Create_Socket (Held_IPv4, Sockets.IPv4);
-               Sockets.Bind_Socket
-                 (Held_IPv4,
-                  Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Port));
+               --  An IPv6 ephemeral allocation does not reserve the same
+               --  numeric port in IPv4. Another process may claim it before
+               --  the paired bind, so retry the two-family reservation as a
+               --  unit instead of making the test depend on host-wide timing.
+               Reserve_Paired_Loopback_Port;
                --  No other task in this process can claim the paired loopback
                --  port between this close and the immediate client attempt.
                --  Closed endpoints produce deterministic refusal on both
