@@ -60,13 +60,16 @@ procedure WebSocket_Client_Smoke is
    protected Coordination is
       procedure Publish (Value : Sockets.Port);
       procedure Finish (Passed : Boolean);
+      procedure Release_Stall;
       entry Wait_Ready (Value : out Sockets.Port);
       entry Wait_Done (Passed : out Boolean);
+      entry Wait_Stall;
    private
       Port_Value : Sockets.Port := Sockets.Any_Port;
       Ready : Boolean := False;
       Done  : Boolean := False;
       OK    : Boolean := True;
+      Released_Stalls : Natural := 0;
    end Coordination;
 
    protected body Coordination is
@@ -82,6 +85,11 @@ procedure WebSocket_Client_Smoke is
          Done := True;
       end Finish;
 
+      procedure Release_Stall is
+      begin
+         Released_Stalls := Released_Stalls + 1;
+      end Release_Stall;
+
       entry Wait_Ready (Value : out Sockets.Port) when Ready is
       begin
          Value := Port_Value;
@@ -91,6 +99,11 @@ procedure WebSocket_Client_Smoke is
       begin
          Passed := OK;
       end Wait_Done;
+
+      entry Wait_Stall when Released_Stalls > 0 is
+      begin
+         Released_Stalls := Released_Stalls - 1;
+      end Wait_Stall;
    end Coordination;
 
    type Server_Mode is
@@ -246,6 +259,17 @@ procedure WebSocket_Client_Smoke is
          Address : Sockets.Endpoint;
          Status  : Sockets.Selector_Status;
          Channel : aliased Connections.Connection;
+
+         procedure Wait_For_Client_Terminal_State is
+         begin
+            select
+               Coordination.Wait_Stall;
+            or
+               delay 5.0;
+               raise Program_Error with
+                 "WebSocket client stall did not terminate";
+            end select;
+         end Wait_For_Client_Terminal_State;
       begin
          Sockets.Accept_Socket
            (Listener, Socket, Address, Timeout => 5.0, Status => Status);
@@ -265,7 +289,7 @@ procedure WebSocket_Client_Smoke is
             if Mode in
               Stalled_Handshake_Timeout | Stalled_Handshake_Cancel
             then
-               delay 0.1;
+               Wait_For_Client_Terminal_State;
             else
                HTTP_Server.Accept_WebSocket
                  (Connection, Request, Protocol => "chat",
@@ -305,12 +329,12 @@ procedure WebSocket_Client_Smoke is
             elsif Mode = Partial_Timeout then
                Connections.Send_All
                  (Channel, [16#81#, 5, Character'Pos ('a')], Timeout => 5.0);
-               delay 0.1;
+               Wait_For_Client_Terminal_State;
             elsif Mode in
               Stalled_Receive_Cancel | Stalled_Close_Timeout |
                 Stalled_Close_Cancel | Send_Timeout | Send_Cancel
             then
-               delay 0.1;
+               Wait_For_Client_Terminal_State;
             else
                --  One fragmented text message with an interleaved ping.
                Connections.Send_All
@@ -450,6 +474,7 @@ procedure WebSocket_Client_Smoke is
             when Flyology.Cancellation.Operation_Cancelled =>
                Cancelled := True;
          end;
+         Coordination.Release_Stall;
          pragma Assert (Cancelled and then not WS.Is_Open (Client));
       end Expect_Cancellation;
 
@@ -756,6 +781,7 @@ procedure WebSocket_Client_Smoke is
          exception
             when Flyology.IO.Timeout_Error => Timed_Out := True;
          end;
+         Coordination.Release_Stall;
          pragma Assert (Timed_Out and then not WS.Is_Open (Client));
       end;
 
@@ -791,6 +817,7 @@ procedure WebSocket_Client_Smoke is
          exception
             when Flyology.IO.Timeout_Error => Timed_Out := True;
          end;
+         Coordination.Release_Stall;
          pragma Assert (Timed_Out and then not WS.Is_Open (Client));
       end;
 
@@ -808,6 +835,7 @@ procedure WebSocket_Client_Smoke is
          exception
             when Flyology.IO.Timeout_Error => Timed_Out := True;
          end;
+         Coordination.Release_Stall;
          pragma Assert (Timed_Out and then not WS.Is_Open (Client));
       end;
 
@@ -831,6 +859,7 @@ procedure WebSocket_Client_Smoke is
             when Flyology.IO.Timeout_Error => Timed_Out := True;
          end;
          Free (Data);
+         Coordination.Release_Stall;
          pragma Assert (Timed_Out and then not WS.Is_Open (Client));
       exception
          when others =>
