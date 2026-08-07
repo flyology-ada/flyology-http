@@ -17,7 +17,9 @@ bounded Initial receive path parses the envelope, removes header protection,
 reconstructs the packet number, and releases plaintext only after AES-GCM
 authentication and reserved-bit validation. A proved, allocation-free frame
 cursor validates Initial-level PADDING, PING, ACK/ACK_ECN, CRYPTO, and transport
-CONNECTION_CLOSE frames and reports borrowed payload bounds.
+CONNECTION_CLOSE frames and reports borrowed payload bounds. A proved 64 KiB
+CRYPTO buffer reassembles out-of-order handshake fragments, accepts matching
+retransmissions, and rejects conflicting overlaps atomically.
 
 ## Build and test
 

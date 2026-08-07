@@ -29,6 +29,10 @@ for the next layer.
   917-byte PADDING run. Boundary tests cover ACK/ACK_ECN range arithmetic,
   truncated frames, prohibited Initial-level types, CRYPTO offset overflow,
   and transport CONNECTION_CLOSE reason bounds.
+- CRYPTO reassembly tests split the RFC 9001 ServerHello across a gap and
+  deliver it in reverse order. Matching retransmissions are idempotent,
+  conflicting overlaps are rejected without partial insertion, and the
+  configured 64 KiB receive boundary is enforced.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 
