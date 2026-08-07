@@ -2169,7 +2169,13 @@ package body Flyology.HTTP.Server.HTTP_2 is
                      Accepted);
                end if;
                if not Accepted then
-                  Protocol_Failure (Frames.Flow_Control_Error);
+                  --  RFC 9113 5.1: a frame other than HEADERS or PRIORITY on
+                  --  an idle stream is a connection PROTOCOL_ERROR. Only a
+                  --  genuinely exhausted window is FLOW_CONTROL_ERROR.
+                  Protocol_Failure
+                    ((if State.Streams.Is_Idle (Header.Stream_ID)
+                      then Frames.Protocol_Error_Code
+                      else Frames.Flow_Control_Error));
                end if;
             end;
          elsif Header.Kind = Frames.Window_Update_Frame then
@@ -2193,8 +2199,13 @@ package body Flyology.HTTP.Server.HTTP_2 is
                end if;
             end;
             if not Accepted then
+               --  A zero increment and an idle stream are both connection
+               --  PROTOCOL_ERROR cases; stream 0 is never idle, so a
+               --  connection window overflow stays FLOW_CONTROL_ERROR.
                Protocol_Failure
                  ((if Payloads.Window_Increment (Payload) = 0
+                     or else (Header.Stream_ID /= 0
+                       and then State.Streams.Is_Idle (Header.Stream_ID))
                    then Frames.Protocol_Error_Code
                    else Frames.Flow_Control_Error));
             end if;

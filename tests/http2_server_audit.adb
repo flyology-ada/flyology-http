@@ -212,7 +212,7 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 3;
+   Sessions : constant := 5;
 
    procedure Connect_Peer (Socket : in out Sockets.Socket_Type) is
    begin
@@ -462,6 +462,52 @@ begin
             Check (False,
               "connection output resumes after the pinned stream is released");
             Sockets.Close_Socket (Socket);
+      end;
+
+      ------------------------------------------------------------------------
+      --  Finding 33: RFC 9113 5.1 requires a connection PROTOCOL_ERROR for
+      --  any frame other than HEADERS or PRIORITY on an idle stream.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line ("finding 33: idle-stream connection error code");
+      declare
+         function Idle_Goaway_Code
+           (Kind : Stream_Element; Payload : Stream_Element_Array)
+            return Natural
+         is
+            Socket  : Sockets.Socket_Type;
+            Info    : Frame_Info;
+            Scratch : Stream_Element_Array (1 .. 16_384);
+            Code    : Natural := 0;
+            Seen    : Boolean := False;
+         begin
+            Connect_Peer (Socket);
+            Send_Frame (Socket, Kind, 0, 7, Payload);
+            while not Seen loop
+               Read_Frame_Header (Socket, Info, Wait => 5.0);
+               Read_Payload (Socket, Info, Scratch, Wait => 5.0);
+               if Info.Kind = Goaway_Frame then
+                  Code := Natural (Scratch (5)) * 16#100_0000# +
+                    Natural (Scratch (6)) * 16#1_0000# +
+                    Natural (Scratch (7)) * 16#100# + Natural (Scratch (8));
+                  Seen := True;
+               end if;
+            end loop;
+            Sockets.Close_Socket (Socket);
+            return Code;
+         end Idle_Goaway_Code;
+
+         Data_Code : constant Natural := Idle_Goaway_Code
+           (Data_Frame, Stream_Element_Array'(1 .. 64 => 16#61#));
+         Update_Code : constant Natural :=
+           Idle_Goaway_Code (Window_Update_Frame, U32 (100));
+      begin
+         Ada.Text_IO.Put_Line
+           ("  idle DATA GOAWAY code " & Decimal (Data_Code) &
+              ", idle WINDOW_UPDATE GOAWAY code " & Decimal (Update_Code));
+         Check (Data_Code = 1, "idle DATA is a connection PROTOCOL_ERROR");
+         Check
+           (Update_Code = 1,
+            "idle WINDOW_UPDATE is a connection PROTOCOL_ERROR");
       end;
    end;
 
