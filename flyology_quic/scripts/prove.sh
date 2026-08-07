@@ -23,6 +23,7 @@ alr gnatprove \
   flyology-quic-long_header_policy.adb \
   flyology-quic-packet_number_policy.adb \
   flyology-quic-protection_policy.adb \
+  flyology-quic-tls_extension_policy.adb \
   flyology-quic-transport_parameter_policy.adb \
   flyology-quic-varint_policy.adb
 

@@ -50,6 +50,12 @@ for the next layer.
   known and unknown identifiers, sender-role violations, RFC integer limits,
   preferred-address structure, mandatory connection IDs, and the exact
   256-parameter resource boundary.
+- The complete RFC 9001 ClientHello and ServerHello extension blocks cover
+  TLS 1.3 version selection, X25519 key-share location, compatible certificate
+  signatures, ALPN framing, and QUIC transport-parameter carriage. Canonical
+  Ada encoders round-trip client, server, and EncryptedExtensions contexts;
+  negative tests cover truncation, duplicates, placement violations, missing
+  mandatory extensions, invalid versions and shares, and malformed ALPN.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 
