@@ -121,7 +121,7 @@ trap cleanup EXIT HUP INT TERM
 cd "$project_root"
 "$project_root/scripts/prepare-test-tls.sh"
 "$alr" build --release
-release_config="$project_root/config/flyology_config.gpr"
+release_config="$project_root/config/flyology_http_config.gpr"
 if ! grep -Eq 'Build_Profile[^:]*:[^=]*=[[:space:]]*"release"' "$release_config" ||
    ! grep -q '"-O3"' "$release_config"
 then
@@ -129,13 +129,34 @@ then
     "Alire did not generate the expected release/-O3 project configuration" >&2
   exit 1
 fi
-FLYOLOGY_DEFAULT=lightweight FLYOLOGY_LOOP_POOL_SIZE=1 \
-  "$project_root/scripts/prepare-rts.sh" >/dev/null
+#  prepare-rts.sh lives in the Flyology runtime, not here. Resolve it the
+#  way scripts/test.sh does: an explicit FLYOLOGY_ROOT, a sibling checkout,
+#  then whatever Alire resolved the dependency to.
+if [ -n "${FLYOLOGY_ROOT:-}" ]; then
+  flyology_root=$FLYOLOGY_ROOT
+elif [ -f "$project_root/../scripts/prepare-rts.sh" ]; then
+  flyology_root=$(CDPATH= cd -- "$project_root/.." && pwd)
+elif flyology_root=$("$alr" exec -- sh -c 'printf "%s\n" "$FLYOLOGY_ROOT"') \
+  && [ -n "$flyology_root" ] \
+  && [ -d "$flyology_root" ]
+then
+  :
+else
+  printf '%s\n' "FLYOLOGY_ROOT is required to run the WebSocket campaign" >&2
+  exit 2
+fi
+
+#  Run it through alr, as scripts/test.sh does, so the runtime's own
+#  manifest is read in the workspace Alire has already resolved.
+"$alr" exec -- env \
+  FLYOLOGY_RTS_DIR="$project_root/build/rts" \
+  FLYOLOGY_DEFAULT=lightweight FLYOLOGY_LOOP_POOL_SIZE=1 \
+  "$flyology_root/scripts/prepare-rts.sh" >/dev/null
 "$alr" exec -- env -u GPR_CONFIG gprbuild \
   --RTS="$project_root/build/rts" \
   --subdirs=autobahn \
   -f -p \
-  -P tests/runtime_smoke.gpr \
+  -P tests/http_tests.gpr \
   websocket_conformance_server.adb \
   -cargs:Ada -O3
 
