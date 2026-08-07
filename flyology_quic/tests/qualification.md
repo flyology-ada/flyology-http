@@ -43,6 +43,13 @@ for the next layer.
   transactional send-number advancement. A loopback IPv4 UDP exchange sends a
   padded client Initial, returns a server Initial ACK, parses both plaintexts,
   verifies source endpoints, and suppresses a replay after authentication.
+- The RFC 9001 ClientHello transport-parameter extension covers non-minimal
+  integer encodings and advertised flow-control limits. Round trips cover
+  canonical client and server encodings, defaults, connection IDs, reset
+  tokens, and migration policy. Negative tests cover truncation, duplicate
+  known and unknown identifiers, sender-role violations, RFC integer limits,
+  preferred-address structure, mandatory connection IDs, and the exact
+  256-parameter resource boundary.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

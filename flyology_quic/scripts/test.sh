@@ -18,6 +18,7 @@ for test in \
   flyology-quic-long_header_policy-smoke \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
+  flyology-quic-transport_parameter_policy-smoke \
   flyology-quic-varint_policy-smoke
 do
   printf '%s\n' "flyology_quic test: BEGIN $test"
