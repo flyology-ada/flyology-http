@@ -322,8 +322,36 @@ package body Flyology_IRI is
       return Result;
    end Failure;
 
+   --  Report whether RFC 3987 admits a U+E000 .. U+FFFF code point. ucschar
+   --  skips the private use area, which iprivate restores for the query
+   --  alone, and skips the noncharacters at U+FDD0 and U+FFF0.
+   function Is_IRI_Upper_BMP
+     (Code : Natural; Private_OK : Boolean) return Boolean is
+     (Code in 16#F900# .. 16#FDCF#
+      or else Code in 16#FDF0# .. 16#FFEF#
+      or else (Private_OK and then Code in 16#E000# .. 16#F8FF#));
+
+   --  Report whether RFC 3987 admits a supplementary code point. Planes 1
+   --  through 13 stop two positions below their last, plane 14 starts at
+   --  U+E1000, and planes 15 and 16 are iprivate in their entirety.
+   function Is_IRI_Supplementary
+     (Code : Natural; Private_OK : Boolean) return Boolean is
+     (if Code <= 16#D_FFFD# then Code mod 16#1_0000# <= 16#FFFD#
+      elsif Code <= 16#E_FFFD# then Code >= 16#E_1000#
+      else Private_OK and then Code mod 16#1_0000# <= 16#FFFD#);
+
+   --  Accept one UTF-8 sequence and report its width. IRI_Classes also
+   --  applies the RFC 3987 character classes, which admit ucschar in every
+   --  component and iprivate in the query alone, the latter selected by
+   --  Private_OK. The classes are tested from the bytes already loaded
+   --  here, and a three-byte lead byte at or below ED settles the whole of
+   --  U+0800 .. U+D7FF without decoding anything.
    function Is_Valid_UTF_8_At
-     (Input : String; Offset : Positive; Width : out Positive) return Boolean
+     (Input       : String;
+      Offset      : Positive;
+      IRI_Classes : Boolean;
+      Private_OK  : Boolean;
+      Width       : out Positive) return Boolean
    is
       B0 : constant Natural := Byte (Input, Offset);
       B1, B2, B3 : Natural := 0;
@@ -341,7 +369,10 @@ package body Flyology_IRI is
          end if;
          B1 := Byte (Input, Offset + 1);
          Width := 2;
-         return Continuation (B1);
+         return Continuation (B1)
+           and then (not IRI_Classes
+                     or else B0 > 16#C2#
+                     or else B1 >= 16#A0#);
       elsif B0 in 16#E0# .. 16#EF# then
          if Left < 2 then
             return False;
@@ -352,7 +383,13 @@ package body Flyology_IRI is
          return Continuation (B1)
            and then Continuation (B2)
            and then (B0 /= 16#E0# or else B1 >= 16#A0#)
-           and then (B0 /= 16#ED# or else B1 <= 16#9F#);
+           and then (B0 /= 16#ED# or else B1 <= 16#9F#)
+           and then (not IRI_Classes
+                     or else B0 <= 16#ED#
+                     or else Is_IRI_Upper_BMP
+                       ((B0 - 16#E0#) * 16#1000#
+                        + (B1 - 16#80#) * 16#40# + B2 - 16#80#,
+                        Private_OK));
       elsif B0 in 16#F0# .. 16#F4# then
          if Left < 3 then
             return False;
@@ -365,7 +402,13 @@ package body Flyology_IRI is
            and then Continuation (B2)
            and then Continuation (B3)
            and then (B0 /= 16#F0# or else B1 >= 16#90#)
-           and then (B0 /= 16#F4# or else B1 <= 16#8F#);
+           and then (B0 /= 16#F4# or else B1 <= 16#8F#)
+           and then (not IRI_Classes
+                     or else Is_IRI_Supplementary
+                       ((B0 - 16#F0#) * 16#4_0000#
+                        + (B1 - 16#80#) * 16#1000#
+                        + (B2 - 16#80#) * 16#40# + B3 - 16#80#,
+                        Private_OK));
       else
          return False;
       end if;
@@ -381,12 +424,18 @@ package body Flyology_IRI is
       Width    : Positive;
       C        : Character;
       Allowed  : Boolean;
+
+      --  RFC 3987 restricts the non-ASCII code points, and grants iprivate
+      --  to the query alone. Both are fixed for the whole range.
+      IRI_Classes : constant Boolean := Syntax = IRI_Syntax;
+      Private_OK  : constant Boolean := Context = 'q';
    begin
       while Position /= 0 and then Position <= Last loop
          C := Char_At (Input, Position);
          if Character'Pos (C) >= 16#80# then
             if Syntax = URI_Syntax
-              or else not Is_Valid_UTF_8_At (Input, Position, Width)
+              or else not Is_Valid_UTF_8_At
+                (Input, Position, IRI_Classes, Private_OK, Width)
               or else Position + Width - 1 > Last
             then
                return (Kind => Invalid_Character, Offset => Position);
@@ -407,7 +456,7 @@ package body Flyology_IRI is
             end if;
          else
             Allowed :=
-              (if Syntax = Web_URL_Syntax and then Context in 'p' | 'q'
+              (if Syntax = Web_URL_Syntax and then Context in 'p' | 'q' | 'f'
                then Character'Pos (C) in 16#20# .. 16#7E#
                else (case Context is
                   when 'u' => Is_Unreserved (C) or else Is_Sub_Delimiter (C)
@@ -792,9 +841,11 @@ package body Flyology_IRI is
          Result.Error := Check;
          return Result;
       end if;
+      --  Context 'f' shares the query's ASCII grammar but not its iprivate
+      --  allowance, which RFC 3987 grants to the query alone.
       Check := Validate_Range
         (Input, Result.Fragment_Part.First, Result.Fragment_Part.Last,
-         Syntax, 'q');
+         Syntax, 'f');
       if Check.Kind /= No_Error then
          Result.Error := Check;
          return Result;

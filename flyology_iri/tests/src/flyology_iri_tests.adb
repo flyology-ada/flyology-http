@@ -47,6 +47,49 @@ procedure Flyology_IRI_Tests is
       end;
    end Check_Resolution;
 
+   --  Encode one code point at or above U+0080 as UTF-8.
+   function UTF8 (Code : Natural) return String is
+   begin
+      if Code < 16#800# then
+         return Character'Val (16#C0# + Code / 16#40#)
+           & Character'Val (16#80# + Code mod 16#40#);
+      elsif Code < 16#1_0000# then
+         return Character'Val (16#E0# + Code / 16#1000#)
+           & Character'Val (16#80# + (Code / 16#40#) mod 16#40#)
+           & Character'Val (16#80# + Code mod 16#40#);
+      else
+         return Character'Val (16#F0# + Code / 16#4_0000#)
+           & Character'Val (16#80# + (Code / 16#1000#) mod 16#40#)
+           & Character'Val (16#80# + (Code / 16#40#) mod 16#40#)
+           & Character'Val (16#80# + Code mod 16#40#);
+      end if;
+   end UTF8;
+
+   --  RFC 3987 admits ucschar in every IRI component and iprivate in the
+   --  query alone. URI_Syntax admits neither.
+   procedure Check_IRI_Code_Point
+     (Code : Natural; UCS_OK, Query_OK : Boolean)
+   is
+      Text  : constant String := UTF8 (Code);
+      Label : constant String := " at code point" & Natural'Image (Code);
+   begin
+      Assert
+        (Can_Parse ("http://a" & Text & "b/", IRI_Syntax) = UCS_OK,
+         "IRI host" & Label);
+      Assert
+        (Can_Parse ("http://a/p" & Text, IRI_Syntax) = UCS_OK,
+         "IRI path" & Label);
+      Assert
+        (Can_Parse ("http://a/p#" & Text, IRI_Syntax) = UCS_OK,
+         "IRI fragment" & Label);
+      Assert
+        (Can_Parse ("http://a/p?x=" & Text, IRI_Syntax) = Query_OK,
+         "IRI query" & Label);
+      Assert
+        (not Can_Parse ("http://a/p?x=" & Text, URI_Syntax),
+         "URI query" & Label);
+   end Check_IRI_Code_Point;
+
    procedure Check_Resolution_Base
      (Base_Text     : String;
       Relative      : String;
@@ -210,6 +253,38 @@ begin
    Assert
      (Diagnose ("http://example.com", URI_Syntax, 4).Kind = Too_Long,
       "length bound");
+
+   --  RFC 3987 ucschar starts at U+00A0 and skips the surrogate, the
+   --  private use and the noncharacter blocks; iprivate is confined to the
+   --  query. Well-formed UTF-8 alone is not the IRI grammar.
+   Reject ("http://a" & UTF8 (16#85#) & "b/", IRI_Syntax, Invalid_Authority);
+   Check_IRI_Code_Point (16#80#, False, False);
+   Check_IRI_Code_Point (16#85#, False, False);
+   Check_IRI_Code_Point (16#9F#, False, False);
+   Check_IRI_Code_Point (16#A0#, True, True);
+   --  U+2028 LINE SEPARATOR lies inside ucschar's U+00A0 .. U+D7FF range,
+   --  so RFC 3987 admits it however unwelcome it is downstream.
+   Check_IRI_Code_Point (16#2028#, True, True);
+   Check_IRI_Code_Point (16#D7FF#, True, True);
+   Check_IRI_Code_Point (16#E000#, False, True);
+   Check_IRI_Code_Point (16#F8FF#, False, True);
+   Check_IRI_Code_Point (16#F900#, True, True);
+   Check_IRI_Code_Point (16#FDCF#, True, True);
+   Check_IRI_Code_Point (16#FDD0#, False, False);
+   Check_IRI_Code_Point (16#FDF0#, True, True);
+   Check_IRI_Code_Point (16#FFEF#, True, True);
+   Check_IRI_Code_Point (16#FFFE#, False, False);
+   Check_IRI_Code_Point (16#1_0000#, True, True);
+   Check_IRI_Code_Point (16#1_FFFD#, True, True);
+   Check_IRI_Code_Point (16#1_FFFE#, False, False);
+   Check_IRI_Code_Point (16#E_0FFF#, False, False);
+   Check_IRI_Code_Point (16#E_1000#, True, True);
+   Check_IRI_Code_Point (16#F_0000#, False, True);
+   Check_IRI_Code_Point (16#10_FFFD#, False, True);
+   Check_IRI_Code_Point (16#10_FFFE#, False, False);
+   Assert
+     (Can_Parse ("https://例え.テスト/道?名前=値#部分", IRI_Syntax),
+      "legitimate ucschar IRI rejected");
 
    Check_Resolution ("g:h", "g:h");
    Check_Resolution ("g", "http://a/b/c/g");
