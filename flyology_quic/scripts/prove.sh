@@ -26,6 +26,7 @@ alr gnatprove \
   flyology-quic-one_rtt_packet_policy.adb \
   flyology-quic-packet_number_policy.adb \
   flyology-quic-protection_policy.adb \
+  flyology-quic-stream_frame_policy.adb \
   flyology-quic-tls_authentication_policy.adb \
   flyology-quic-tls_extension_policy.adb \
   flyology-quic-tls_handshake_policy.adb \
