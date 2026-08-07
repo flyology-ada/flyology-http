@@ -1,3 +1,4 @@
+with Ada.Characters.Handling;
 with Ada.Real_Time;
 with Ada.Strings.Fixed;
 with Flyology.HTTP.Decoded_Path_Policy;
@@ -84,16 +85,41 @@ package body Flyology.HTTP.Server.Routing is
       return True;
    end Valid_UTF8;
 
+   function Has_Scheme_Prefix (Target, Prefix : String) return Boolean is
+   begin
+      if Target'Length < Prefix'Length then
+         return False;
+      end if;
+      for Offset in 0 .. Prefix'Length - 1 loop
+         if Ada.Characters.Handling.To_Lower (Target (Target'First + Offset))
+           /= Prefix (Prefix'First + Offset)
+         then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Has_Scheme_Prefix;
+
+   --  Absolute form is recognized by an anchored scheme prefix only, matching
+   --  how the request-head parser and Requests.Authority classify the target.
+   --  Searching the whole target for "://" would treat a query string that
+   --  carries a URL as the request-target's own authority and route the path
+   --  found inside it.
+   function Absolute_Form_Authority (Target : String) return Natural is
+     (if Has_Scheme_Prefix (Target, "http://") then Target'First + 7
+      elsif Has_Scheme_Prefix (Target, "https://") then Target'First + 8
+      else 0);
+
    function Raw_Path (Target : String) return String is
       Query : Natural := Ada.Strings.Fixed.Index (Target, "?");
       Start : Natural := Target'First;
-      Scheme : constant Natural := Ada.Strings.Fixed.Index (Target, "://");
+      Authority : constant Natural := Absolute_Form_Authority (Target);
    begin
       if Target = "*" then
          return "*";
-      elsif Scheme /= 0 then
+      elsif Authority /= 0 then
          Start := 0;
-         for Index in Scheme + 3 .. Target'Last loop
+         for Index in Authority .. Target'Last loop
             if Target (Index) = '/' then
                Start := Index;
                exit;
