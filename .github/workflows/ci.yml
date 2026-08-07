@@ -39,8 +39,26 @@ jobs:
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      # The WPT URL corpus that gates flyology_iri is third-party data, so it
+      # is pinned by commit rather than followed by tag or branch. 32dabc8d is
+      # the ada-url/ada revision flyology_iri/BENCHMARKS.md already pins as Ada
+      # URL 4.0.0, so the conformance corpus and the published benchmark
+      # medians come from one reviewed revision. It lands under build/, which
+      # is ignored, so the checkout leaves no untracked files behind.
+      - name: Check out the pinned WPT URL corpus
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ada-url/ada
+          ref: 32dabc8d39a919633f31f692c358012b2105fd61
+          path: build/ada-url
+          persist-credentials: false
       - name: Run HTTP tests
+        env:
+          ADA_URL_ROOT: ${{ github.workspace }}/build/ada-url
+          FLYOLOGY_IRI_REQUIRE_WPT: "1"
         run: ./scripts/test.sh
+      - name: Check the WPT gate wiring
+        run: ./flyology_iri/scripts/wpt-gate-test.sh
 
   http2-qualification:
     name: HTTP/2 qualification
