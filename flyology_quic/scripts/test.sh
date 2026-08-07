@@ -7,6 +7,7 @@ cd "$crate_root/tests"
 alr build
 
 for test in \
+  flyology-quic-ack_range_policy-smoke \
   flyology-quic-application_connection-smoke \
   flyology-quic-application_frame_policy-smoke \
   flyology-quic-connection_state_policy-smoke \
