@@ -185,11 +185,17 @@ procedure HTTP_Client_Upload_Controls_Smoke is
       Address  : Sockets.Endpoint;
       Status   : Sockets.Selector_Status;
 
+      --  Octets already read past the marker a caller asked for. A client is
+      --  free to write a request head and its body in one segment, so the
+      --  script must not assume a read boundary falls between them.
+      Pending : Unbounded_String;
+
       procedure Accept_Peer is
       begin
          Sockets.Accept_Socket
            (Listener, Peer, Address, Timeout => 3.0, Status => Status);
          pragma Assert (Status = Sockets.Completed);
+         Pending := Null_Unbounded_String;
       end Accept_Peer;
 
       procedure Send (Value : String) is
@@ -207,17 +213,26 @@ procedure HTTP_Client_Upload_Controls_Smoke is
       function Receive_Until (Marker : String) return String is
          Buffer : Stream_Element_Array (1 .. 2_048);
          Last   : Stream_Element_Offset;
-         Result : Unbounded_String;
+         Result : Unbounded_String := Pending;
+         Mark   : Natural;
       begin
+         Pending := Null_Unbounded_String;
          loop
+            Mark := Ada.Strings.Fixed.Index (To_String (Result), Marker);
+            exit when Mark /= 0;
             Sockets.Receive (Peer, Buffer, Last, Timeout => 3.0);
             pragma Assert (Last >= Buffer'First);
             for Index in Buffer'First .. Last loop
                Append (Result, Character'Val (Buffer (Index)));
             end loop;
-            exit when Ada.Strings.Fixed.Index (To_String (Result), Marker) /= 0;
          end loop;
-         return To_String (Result);
+         declare
+            Text : constant String := To_String (Result);
+            Stop : constant Natural := Mark + Marker'Length - 1;
+         begin
+            Pending := To_Unbounded_String (Text (Stop + 1 .. Text'Last));
+            return Text (Text'First .. Stop);
+         end;
       end Receive_Until;
 
       procedure Expect_Head_Only
@@ -231,8 +246,22 @@ procedure HTTP_Client_Upload_Controls_Smoke is
            (Ada.Strings.Fixed.Index
               (Text, "POST " & Target & " HTTP/1.1" & CRLF) = 1);
          pragma Assert (Mark + 3 = Text'Last);
+         pragma Assert
+           (Length (Pending) = 0,
+            "a body followed the head of " & Target);
          Head := To_Unbounded_String (Text);
       end Expect_Head_Only;
+
+      --  The head of a request that does carry a body. Whatever arrived with
+      --  it stays buffered for the caller's next Receive_Until.
+      procedure Expect_Head (Target : String; Head : out Unbounded_String) is
+         Text : constant String := Receive_Until (CRLF & CRLF);
+      begin
+         pragma Assert
+           (Ada.Strings.Fixed.Index
+              (Text, "POST " & Target & " HTTP/1.1" & CRLF) = 1);
+         Head := To_Unbounded_String (Text);
+      end Expect_Head;
 
       procedure Expect_Close is
          Buffer : Stream_Element_Array (1 .. 32);
@@ -276,7 +305,7 @@ procedure HTTP_Client_Upload_Controls_Smoke is
          Expect_Close;
 
          Accept_Peer;
-         Expect_Head_Only ("/fallback", Head);
+         Expect_Head ("/fallback", Head);
          declare
             Payload : constant String := Receive_Until ("fallback-body");
          begin
