@@ -12,7 +12,8 @@ package Flyology.HTTP.Server.WebSocket_Handlers is
 
    --  One queued outgoing WebSocket application message.
    --  @field Kind Text or binary frame
-   --  @field Data Complete message payload
+   --  @field Data Complete message payload, which must be valid UTF-8 for a
+   --     Text_Frame
    type Outgoing_Message is record
       Kind : WebSocket_Data_Kind := Text_Frame;
       Data : Flyology.Bytes.Unbounded_Bytes;
@@ -39,7 +40,9 @@ package Flyology.HTTP.Server.WebSocket_Handlers is
 
    --  Enqueue with backpressure, or return Accepted false after close.
    --  Owner-thread lifecycle callbacks should use Try_Publish to avoid
-   --  waiting on their own queue.
+   --  waiting on their own queue. An oversized payload, and a Text_Frame
+   --  payload that is not valid UTF-8, are refused through Accepted rather
+   --  than by failing the connection when the message is sent.
    --  @param Item WebSocket session
    --  @param Value Outgoing message
    --  @param Accepted Whether the message was queued
@@ -49,7 +52,9 @@ package Flyology.HTTP.Server.WebSocket_Handlers is
       Value    : Outgoing_Message;
       Accepted : out Boolean);
 
-   --  Enqueue with bounded, cancellation-aware backpressure.
+   --  Enqueue with bounded, cancellation-aware backpressure. An oversized
+   --  payload, and a Text_Frame payload that is not valid UTF-8, are refused
+   --  through Accepted without waiting.
    --  @param Item WebSocket session
    --  @param Value Outgoing message
    --  @param Accepted Whether the message was queued
@@ -65,7 +70,9 @@ package Flyology.HTTP.Server.WebSocket_Handlers is
       Timed_Out : out Boolean;
       Token     : access Flyology.Cancellation.Token := null);
 
-   --  Attempt to enqueue without waiting.
+   --  Attempt to enqueue without waiting. An oversized payload, and a
+   --  Text_Frame payload that is not valid UTF-8, are refused through
+   --  Accepted.
    --  @param Item WebSocket session
    --  @param Value Outgoing message
    --  @param Accepted Whether the message was queued
@@ -76,7 +83,8 @@ package Flyology.HTTP.Server.WebSocket_Handlers is
       Accepted : out Boolean);
 
    --  Enqueue a pooled payload by transferring ownership without copying.
-   --  Item must be configured with Value's pool.
+   --  Item must be configured with Value's pool. A Text_Frame payload that
+   --  is not valid UTF-8 is refused like an oversized one.
    --  Success leaves Value vacant; close or admission failure preserves it.
    --  @param Item WebSocket session with a configured buffer pool
    --  @param Kind Text or binary frame
@@ -91,7 +99,7 @@ package Flyology.HTTP.Server.WebSocket_Handlers is
           Post => Accepted = (not Flyology.Buffers.Has_Buffer (Value));
 
    --  Enqueue a pooled payload with bounded, cancellation-aware backpressure.
-   --  Timeout or close preserves Value.
+   --  Timeout, close, or admission failure preserves Value.
    --  @param Item WebSocket session with a configured buffer pool
    --  @param Kind Text or binary frame
    --  @param Value Acquired payload buffer
@@ -110,7 +118,8 @@ package Flyology.HTTP.Server.WebSocket_Handlers is
      with Pre => Flyology.Buffers.Has_Buffer (Value),
           Post => Accepted = (not Flyology.Buffers.Has_Buffer (Value));
 
-   --  Attempt to transfer a pooled payload without waiting.
+   --  Attempt to transfer a pooled payload without waiting. Admission failure
+   --  preserves Value.
    --  @param Item WebSocket session with a configured buffer pool
    --  @param Kind Text or binary frame
    --  @param Value Acquired payload buffer

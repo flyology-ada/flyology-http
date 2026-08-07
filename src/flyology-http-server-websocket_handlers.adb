@@ -66,6 +66,114 @@ package body Flyology.HTTP.Server.WebSocket_Handlers is
    function Payload_Bytes (Value : Outgoing_Message) return Natural is
      (Flyology.Bytes.Length (Value.Data));
 
+   --  Incremental acceptor for well-formed UTF-8 (RFC 3629). Pending counts
+   --  the continuation bytes still expected and Lower .. Upper restricts the
+   --  next one, which is what excludes overlong forms, surrogates, and code
+   --  points above U+10FFFF.
+   type UTF8_State is record
+      Pending : Natural := 0;
+      Lower   : Natural := 16#80#;
+      Upper   : Natural := 16#BF#;
+      Valid   : Boolean := True;
+   end record;
+
+   procedure Accept_Octet (State : in out UTF8_State; Octet : Natural)
+     with Inline;
+
+   procedure Accept_Octet (State : in out UTF8_State; Octet : Natural) is
+   begin
+      if State.Pending > 0 then
+         if Octet in State.Lower .. State.Upper then
+            State.Pending := State.Pending - 1;
+            State.Lower := 16#80#;
+            State.Upper := 16#BF#;
+         else
+            State.Valid := False;
+         end if;
+         return;
+      end if;
+      case Octet is
+         when 16#00# .. 16#7F# =>
+            null;
+         when 16#C2# .. 16#DF# =>
+            State.Pending := 1;
+         when 16#E0# =>
+            State.Pending := 2;
+            State.Lower := 16#A0#;
+         when 16#E1# .. 16#EC# | 16#EE# .. 16#EF# =>
+            State.Pending := 2;
+         when 16#ED# =>
+            State.Pending := 2;
+            State.Upper := 16#9F#;
+         when 16#F0# =>
+            State.Pending := 3;
+            State.Lower := 16#90#;
+         when 16#F1# .. 16#F3# =>
+            State.Pending := 3;
+         when 16#F4# =>
+            State.Pending := 3;
+            State.Upper := 16#8F#;
+         when others =>
+            State.Valid := False;
+      end case;
+   end Accept_Octet;
+
+   function Valid_UTF8
+     (Value : Flyology.Bytes.Unbounded_Bytes) return Boolean
+   is
+      State : UTF8_State;
+   begin
+      for Index in 1 .. Flyology.Bytes.Length (Value) loop
+         Accept_Octet
+           (State, Natural (Flyology.Bytes.Element (Value, Index)));
+         if not State.Valid then
+            return False;
+         end if;
+      end loop;
+      return State.Pending = 0;
+   end Valid_UTF8;
+
+   function Valid_UTF8
+     (Value : Ada.Streams.Stream_Element_Array) return Boolean
+   is
+      State : UTF8_State;
+   begin
+      for Octet of Value loop
+         Accept_Octet (State, Natural (Octet));
+         if not State.Valid then
+            return False;
+         end if;
+      end loop;
+      return State.Pending = 0;
+   end Valid_UTF8;
+
+   --  A text payload that is not valid UTF-8 is refused by the send path by
+   --  destroying the connection, so admission has to refuse it first.
+   function Admissible (Value : Outgoing_Message) return Boolean is
+     (Payload_Bytes (Value) <= Max_Queued_Message_Bytes
+      and then (Value.Kind /= Text_Frame
+                or else Valid_UTF8 (Value.Data)));
+
+   function Admissible
+     (Kind  : WebSocket_Data_Kind;
+      Value : Flyology.Buffers.Unique_Buffer) return Boolean
+   is
+      Result : Boolean := True;
+
+      procedure Check (Data : Ada.Streams.Stream_Element_Array) is
+      begin
+         Result := Valid_UTF8 (Data);
+      end Check;
+   begin
+      if Flyology.Buffers.Length (Value) > Max_Queued_Message_Bytes then
+         return False;
+      elsif Kind /= Text_Frame then
+         return True;
+      end if;
+      Flyology.Buffers.With_Readable_Data (Value, Check'Access);
+      return Result;
+   end Admissible;
+
    function Encode_Kind
      (Kind : WebSocket_Data_Kind)
       return Buffer_Channels.Transfer_Metadata is
@@ -177,7 +285,7 @@ package body Flyology.HTTP.Server.WebSocket_Handlers is
       Guard   : Reservation_Guard;
    begin
       Require_Value_Outbox (Item);
-      if Flyology.Bytes.Length (Value.Data) > Max_Queued_Message_Bytes then
+      if not Admissible (Value) then
          Accepted := False;
       else
          Guard.Transferred := Queued'Unchecked_Access;
@@ -206,7 +314,7 @@ package body Flyology.HTTP.Server.WebSocket_Handlers is
       Accepted := False;
       Timed_Out := False;
       Require_Value_Outbox (Item);
-      if Flyology.Bytes.Length (Value.Data) > Max_Queued_Message_Bytes then
+      if not Admissible (Value) then
          return;
       end if;
       Guard.Transferred := Queued'Unchecked_Access;
@@ -247,7 +355,7 @@ package body Flyology.HTTP.Server.WebSocket_Handlers is
       Guard   : Reservation_Guard;
    begin
       Require_Value_Outbox (Item);
-      if Flyology.Bytes.Length (Value.Data) > Max_Queued_Message_Bytes then
+      if not Admissible (Value) then
          Accepted := False;
       else
          Guard.Transferred := Queued'Unchecked_Access;
@@ -279,7 +387,7 @@ package body Flyology.HTTP.Server.WebSocket_Handlers is
    begin
       Accepted := False;
       Require_Buffer_Outbox (Item);
-      if Flyology.Buffers.Length (Value) > Max_Queued_Message_Bytes then
+      if not Admissible (Kind, Value) then
          return;
       end if;
       Guard.Transferred := Queued'Unchecked_Access;
@@ -315,7 +423,7 @@ package body Flyology.HTTP.Server.WebSocket_Handlers is
       Accepted := False;
       Timed_Out := False;
       Require_Buffer_Outbox (Item);
-      if Flyology.Buffers.Length (Value) > Max_Queued_Message_Bytes then
+      if not Admissible (Kind, Value) then
          return;
       end if;
       Guard.Transferred := Queued'Unchecked_Access;
@@ -370,7 +478,7 @@ package body Flyology.HTTP.Server.WebSocket_Handlers is
    begin
       Accepted := False;
       Require_Buffer_Outbox (Item);
-      if Flyology.Buffers.Length (Value) > Max_Queued_Message_Bytes then
+      if not Admissible (Kind, Value) then
          return;
       end if;
       Guard.Transferred := Queued'Unchecked_Access;
