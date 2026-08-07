@@ -2777,7 +2777,7 @@ procedure HTTP_Smoke is
       procedure Authenticate
         (Scheme        : String;
          Credential    : String;
-         Authenticated : out Boolean;
+         Authenticated : in out Boolean;
          Principal     : out Unbounded_String)
       is
       begin

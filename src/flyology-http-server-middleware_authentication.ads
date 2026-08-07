@@ -15,7 +15,7 @@ generic
    with procedure Authenticate
      (Scheme        : String;
       Credential    : String;
-      Authenticated : out Boolean;
+      Authenticated : in out Boolean;
       Principal     : out Ada.Strings.Unbounded.Unbounded_String);
    Challenge : String := "Bearer";
 package Flyology.HTTP.Server.Middleware_Authentication is

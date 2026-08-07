@@ -711,7 +711,7 @@ procedure HTTP_Routing_Audit is
       procedure Verify
         (Scheme        : String;
          Credential    : String;
-         Authenticated : out Boolean;
+         Authenticated : in out Boolean;
          Principal     : out Unbounded_String) is
       begin
          Authenticated := Scheme = "Basic" and then Credential = "ok";
@@ -842,7 +842,7 @@ procedure HTTP_Routing_Audit is
       procedure Anonymous_Verify
         (Scheme        : String;
          Credential    : String;
-         Authenticated : out Boolean;
+         Authenticated : in out Boolean;
          Principal     : out Unbounded_String)
       is
          pragma Unreferenced (Scheme, Credential);
@@ -896,6 +896,87 @@ procedure HTTP_Routing_Audit is
         ("finding 11 principal-less acceptance",
          Answer ("/private", "Basic AAAA"), "HTTP/1.1 401");
    end Check_Authentication_Backstop;
+
+   --  Finding 11. A hook with a path that returns without assigning the
+   --  decision used to hand the middleware whatever byte the hook's frame
+   --  held, because an out scalar is copied out over the middleware's own
+   --  Accepted : Boolean := False and never copied in. With the formal
+   --  declared in out that False now reaches the hook and survives the
+   --  unassigned path, so the refusal is deterministic and can be pinned.
+   procedure Check_Partially_Written_Hook_Fails_Closed is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      --  Decides Bearer and silently ignores every other scheme, which is the
+      --  omission the audit describes.
+      procedure Bearer_Only_Verify
+        (Scheme        : String;
+         Credential    : String;
+         Authenticated : in out Boolean;
+         Principal     : out Unbounded_String) is
+      begin
+         Principal := To_Unbounded_String ("attacker");
+         if Scheme = "Bearer" then
+            Authenticated := Credential = "secret";
+         end if;
+      end Bearer_Only_Verify;
+
+      package Bearer_Auth is new
+        Flyology.HTTP.Server.Middleware_Authentication
+          (Context, Routing.Components, Bearer_Only_Verify);
+
+      procedure Private_Page
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "private");
+      end Private_Page;
+
+      Guarded : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State   : Context;
+
+      function Answer (Credentials : String) return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /private HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Authorization: " & Credentials & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Guarded.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Answer;
+   begin
+      Guarded.Get
+        ("/private", Private_Page'Access, Name => "private",
+         Policy =>
+           (Routing.Default_Route_Policy with delta
+              Authentication => Routing.Required_Authentication));
+      Guarded.Add_Middleware
+        (Bearer_Auth.Call'Access, Name => "authentication");
+
+      --  Prime the frame with a decision of True, so a hook that leaves the
+      --  flag alone on the next call would read True if it were copied out.
+      Expect_In
+        ("finding 11 accepted Bearer",
+         Answer ("Bearer secret"), "HTTP/1.1 200");
+      Expect_In
+        ("finding 11 unassigned decision",
+         Answer ("Basic AAAA"), "HTTP/1.1 401");
+      Expect_In
+        ("finding 11 rejected Bearer",
+         Answer ("Bearer wrong"), "HTTP/1.1 401");
+   end Check_Partially_Written_Hook_Fails_Closed;
 
    --  Finding 26. Create rejected the wildcard/credentials combination only
    --  when Allowed_Origins was exactly "*", but Origin_Allowed matches whole
@@ -1267,6 +1348,7 @@ begin
    Check_Mount_Sealing;
    Check_Authentication_Challenge;
    Check_Authentication_Backstop;
+   Check_Partially_Written_Hook_Fails_Closed;
    Check_CORS_List_Member_Validation;
    Check_Response_Header_Replacement;
    Check_Request_ID_Unpredictability;
