@@ -9,7 +9,9 @@ project Flyology_IRI_Benchmarks is
    for Create_Missing_Dirs use "True";
 
    package Compiler is
+      --  The harness carries no -gnatp of its own: suppressing checks in the
+      --  corpus loop moved neither median, so the timing loop keeps them.
       for Default_Switches ("Ada") use
-        ("-gnat2022", "-O3", "-gnatn2", "-gnatp", "-gnatwJ");
+        ("-gnat2022", "-O3", "-gnatn2", "-gnatwJ");
    end Compiler;
 end Flyology_IRI_Benchmarks;

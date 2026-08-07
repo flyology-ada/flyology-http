@@ -12,13 +12,23 @@ project Flyology_IRI is
    for Create_Missing_Dirs use "True";
 
    package Compiler is
+      Common := ("-gnat2022", "-O3", "-gnatn2", "-gnatwJ", "-gnatwa");
+      for Default_Switches ("Ada") use Common;
+
       case Build_Mode is
          when "checked" =>
-            for Default_Switches ("Ada") use
-              ("-gnat2022", "-O3", "-gnatn2", "-gnatwJ", "-gnatwa");
+            null;
          when "release" =>
-            for Default_Switches ("Ada") use
-              ("-gnat2022", "-O3", "-gnatn2", "-gnatp", "-gnatwJ", "-gnatwa");
+            --  Release suppresses runtime checks in this one body, whose
+            --  index arithmetic over plain String is what the published
+            --  medians measure. Nothing discharges those obligations, so
+            --  proof/proof-status.md records them as an open obligation and
+            --  the checked default keeps every check on for test and fuzz
+            --  builds. The WHATWG serialization and IDNA bodies keep their
+            --  checks in every mode: measurement showed suppressing them
+            --  buys nothing, and they are the bodies that decode percent
+            --  escapes, punycode, and IP literals.
+            for Switches ("flyology_iri.adb") use Common & ("-gnatp");
       end case;
    end Compiler;
 

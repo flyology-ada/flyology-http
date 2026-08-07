@@ -1,3 +1,6 @@
+with Ada.Directories;
+with Ada.Exceptions;
+with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Flyology_IRI;
 with Flyology_IRI_Differential;
@@ -158,6 +161,143 @@ procedure Flyology_IRI_Tests is
       end;
       Assert (Raised, "Parse accepted host " & Host_Text);
    end Reject_Host;
+
+   --  Locate a project file from either the crate root or the tests
+   --  directory the test script runs the binary from. An empty result means
+   --  the file was not found, which the caller reports as a failure rather
+   --  than skipping the check.
+   function Project_File (Relative : String) return String is
+      From_Tests : constant String := "../" & Relative;
+   begin
+      if Ada.Directories.Exists (From_Tests) then
+         return From_Tests;
+      elsif Ada.Directories.Exists (Relative) then
+         return Relative;
+      elsif Ada.Directories.Exists ("flyology_iri/" & Relative) then
+         return "flyology_iri/" & Relative;
+      else
+         return "";
+      end if;
+   end Project_File;
+
+   --  Hold the release profile to the suppression scope proof-status.md
+   --  records. Only Allowed_Unit may carry -gnatp; an empty Allowed_Unit
+   --  forbids suppression outright. Reading the project file back is what
+   --  keeps a widened suppression from landing unnoticed, because a build
+   --  with checks removed compiles and passes exactly like one without.
+   procedure Check_Suppression_Scope
+     (Relative : String; Allowed_Unit : String)
+   is
+      use Ada.Strings.Fixed;
+      Path  : constant String := Project_File (Relative);
+      File  : Ada.Text_IO.File_Type;
+      Found : Natural := 0;
+   begin
+      Assert
+        (Path /= "",
+         Relative & " not found from " & Ada.Directories.Current_Directory);
+      Ada.Text_IO.Open (File, Ada.Text_IO.In_File, Path);
+      while not Ada.Text_IO.End_Of_File (File) loop
+         declare
+            Line    : constant String := Ada.Text_IO.Get_Line (File);
+            Trimmed : constant String := Trim (Line, Ada.Strings.Both);
+         begin
+            if Index (Trimmed, "--") /= Trimmed'First
+              and then Index (Line, "-gnatp") > 0
+            then
+               Found := Found + 1;
+               Assert
+                 (Allowed_Unit /= ""
+                  and then Index (Line, '"' & Allowed_Unit & '"') > 0,
+                  Relative & " suppresses checks"
+                  & (if Allowed_Unit = "" then ""
+                     else " outside " & Allowed_Unit)
+                  & ": " & Trimmed);
+            end if;
+         end;
+      end loop;
+      Ada.Text_IO.Close (File);
+      Assert
+        (Found = (if Allowed_Unit = "" then 0 else 1),
+         Relative & " carries" & Natural'Image (Found)
+         & " check suppressions");
+   end Check_Suppression_Scope;
+
+   function Repeat (Text : String; Count : Positive) return String is
+      Result : String (1 .. Text'Length * Count);
+   begin
+      for Index in 1 .. Count loop
+         Result (Text'Length * (Index - 1) + 1 .. Text'Length * Index) := Text;
+      end loop;
+      return Result;
+   end Repeat;
+
+   --  Drive every entry point in every syntax over one hostile input. The
+   --  release profile compiles the Flyology_IRI body with -gnatp, so a
+   --  latent index or slice bound error there becomes an out-of-bounds
+   --  access instead of a Constraint_Error. This binary is built with every
+   --  check on, which is what turns the corpus below into a guard for that
+   --  body: nothing but Malformed_Reference may escape.
+   procedure Stress (Input : String; Label : String) is
+      Value : Reference;
+      Error : Parse_Error;
+      Base  : constant Reference :=
+        Parse ("http://base.example/a/b?q", Web_URL_Syntax);
+   begin
+      for Grammar in Syntax_Kind loop
+         declare
+            Accepted : constant Boolean :=
+              Can_Parse (Input, Grammar, Positive'Last);
+            Raised   : Boolean := False;
+         begin
+            Assert
+              ((Diagnose (Input, Grammar, Positive'Last).Kind = No_Error)
+                 = Accepted,
+               Label & ": Can_Parse and Diagnose disagree");
+            Try_Parse (Input, Value, Error, Grammar, Positive'Last);
+            Assert
+              ((Error.Kind = No_Error) = Accepted
+               and then Is_Valid (Value) = Accepted,
+               Label & ": Try_Parse and Can_Parse disagree");
+            begin
+               declare
+                  Ignored : constant Reference :=
+                    Parse (Input, Grammar, Positive'Last);
+               begin
+                  Assert
+                    (Is_Valid (Ignored), Label & ": Parse returned invalid");
+               end;
+            exception
+               when Malformed_Reference =>
+                  Raised := True;
+            end;
+            Assert
+              (Raised /= Accepted, Label & ": Parse and Can_Parse disagree");
+         end;
+      end loop;
+      Try_Parse (Input, Base, Value, Error, Positive'Last);
+      Assert
+        (Is_Valid (Value) = (Error.Kind = No_Error),
+         Label & ": based Try_Parse validity and error disagree");
+      begin
+         declare
+            Ignored : constant Reference :=
+              Resolve (Base, Input, Positive'Last);
+         begin
+            Assert (Is_Valid (Ignored), Label & ": Resolve returned invalid");
+         end;
+      exception
+         when Malformed_Reference =>
+            null;
+      end;
+   exception
+      when Escaped : others =>
+         Assert
+           (False,
+            Label & " escaped as "
+            & Ada.Exceptions.Exception_Name (Escaped)
+            & ": " & Ada.Exceptions.Exception_Message (Escaped));
+   end Stress;
 
    URL : constant Reference := Parse
      ("HTTPS://user:pass@Example.COM:8443/a/b?x=1#frag", Web_URL_Syntax);
@@ -521,6 +661,58 @@ begin
         (Found = 0,
          "entry points disagree on" & Natural'Image (Found) & " cases");
    end;
+
+   --  Finding 43: the release profile trades runtime checks for the
+   --  published medians. Pin the scope of that trade, and exercise the one
+   --  body it covers with the input shapes that would reach an unchecked
+   --  index: oversized components, deep dot-segment nesting, truncated
+   --  percent escapes, malformed punycode, control bytes, and numbers past
+   --  every bound the parser converts.
+   Check_Suppression_Scope ("flyology_iri.gpr", "flyology_iri.adb");
+   Check_Suppression_Scope
+     ("benchmarks/flyology_iri_benchmarks.gpr", "");
+   Stress ("", "empty input");
+   Stress ("http://", "scheme without host");
+   Stress ("http://a", "shortest fast-path host");
+   Stress ("https://a", "shortest fast-path https host");
+   Stress ("http://" & Repeat ("a", 64 * 1024) & "/", "64 KiB host label");
+   Stress
+     ("http://" & Repeat ("a.", 32 * 1024) & "b/", "32768 host labels");
+   Stress ("http://a/" & Repeat ("b", 64 * 1024), "64 KiB path");
+   Stress ("http://a/" & Repeat ("../", 5_000), "5000 dot segments");
+   Stress ("http://a/" & Repeat ("./", 5_000), "5000 single dot segments");
+   Stress
+     ("http://a/" & Repeat ("%2e%2e/", 2_000), "2000 encoded dot segments");
+   Stress ("http://a/?" & Repeat ("x", 64 * 1024), "64 KiB query");
+   Stress ("http://a/#" & Repeat ("f", 64 * 1024), "64 KiB fragment");
+   Stress ("http://a/" & Repeat ("%", 4_096), "4096 bare percent signs");
+   Stress ("http://a/" & Repeat ("%4", 4_096), "4096 truncated escapes");
+   Stress ("http://a/p%", "percent at end of path");
+   Stress ("http://a/p%4", "one hex digit at end of path");
+   Stress ("http://a%", "percent at end of host");
+   Stress ("http://xn--/", "empty punycode label");
+   Stress ("http://xn--a/", "truncated punycode label");
+   Stress ("http://xn--" & Repeat ("9", 4_096) & "/", "punycode overflow");
+   Stress ("http://a:" & Repeat ("9", 4_096) & "/", "oversized port");
+   Stress ("http://a:65536/", "port past 16 bits");
+   Stress ("http://a:-1/", "negative port");
+   Stress ("http://" & Repeat ("255.", 1_024) & "255/", "IPv4 label flood");
+   Stress ("http://[" & Repeat (":", 4_096) & "]/", "IPv6 colon flood");
+   Stress ("http://[::" & Repeat ("f", 4_096) & "]/", "IPv6 hex flood");
+   Stress ("http://[::1.2.3.4.5.6.7.8]/", "overlong IPv4-in-IPv6");
+   Stress ("http://a/" & Character'Val (0), "NUL in path");
+   Stress ("http://a" & Character'Val (0) & "/", "NUL in host");
+   Stress ("http://a/" & Character'Val (16#7F#), "DEL in path");
+   Stress
+     ("http://a/" & Repeat (Character'Val (9) & "", 4_096), "tab flood");
+   Stress ("//" & Repeat ("a", 64 * 1024), "network path reference");
+   Stress (Repeat ("/", 64 * 1024), "slash flood");
+   Stress (Repeat ("a", 64 * 1024) & ":", "64 KiB scheme");
+   Stress (Repeat (UTF8 (16#1_0000#), 8_192), "supplementary plane flood");
+   Stress (Repeat (Character'Val (16#80#) & "", 8_192), "bare continuation");
+   Stress
+     ("http://a/" & Repeat (Character'Val (16#F4#) & "", 8_192),
+      "truncated four byte leads");
 
    Ada.Text_IO.Put_Line ("flyology_iri tests passed");
 end Flyology_IRI_Tests;

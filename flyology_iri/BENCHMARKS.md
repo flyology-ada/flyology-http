@@ -15,6 +15,14 @@ the stored serialization length, matching Ada's `url_aggregator` benchmark
 shape. Both binaries use `-O3` release optimization and process identical
 strings in the same order.
 
+`scripts/benchmark.sh` selects `FLYOLOGY_IRI_BUILD_MODE=release`, which adds
+`-gnatp` to one body, `flyology_iri.adb`. That is what the numbers below cost:
+with its checks left on, the same corpus measures 26 ns `can_parse` and 165 ns
+`parse_href`. The WHATWG serialization and IDNA bodies and the harness itself
+keep every runtime check in both modes, because suppressing theirs moved
+neither median. `proof/proof-status.md` records the obligation that suppression
+leaves undischarged.
+
 Both implementations accept exactly 99,999 of 100,025 inputs. Flyology's URL
 parser also matches all 919 href, failure, and component expectations in Ada
 4.0.0's pinned WPT parsing data.

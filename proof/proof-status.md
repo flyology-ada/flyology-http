@@ -74,6 +74,35 @@ identity, trailer-field definition rules, or the connection-lifecycle actions
 selected by those classifications. Exhaustive policy matrices and focused
 wire, adapter, ownership, and retry tests cover that integration boundary.
 
+Finding #43 records an undischarged obligation rather than a proof. The
+`flyology_iri` release profile passes `-gnatp` to one body, `flyology_iri.adb`,
+suppressing every runtime check in it: index, range, discriminant, overflow,
+and the rest. Nothing discharges those obligations. GNATprove does not support
+`Ada.Strings.Unbounded`, on which `Reference`, `Set_Reference`,
+`Remove_Dot_Segments`, and `Resolve` are built, so the unit cannot enter SPARK
+as it stands, and an absence-of-runtime-error proof would first require
+separating its plain-`String` index arithmetic from its construction half.
+Measurement decided the scope. On the pinned 100,025-URL corpus that body's
+checks cost `can_parse` 26 ns against 20 ns and `parse_href` 165 ns against
+96 ns, so the suppression buys the published medians; suppressing
+`flyology_iri-web.adb`, `flyology_iri-idna.adb`, and the benchmark harness
+bought nothing, so those three now keep every check in every mode and the
+WHATWG serialization, punycode, percent decoding, and IP-literal code is
+checked even in a release build. Narrowing further, to
+`pragma Suppress (Index_Check, Range_Check, Overflow_Check)` inside `Char_At`,
+`Fast_Dot_Segment`, `Fast_Web_Analysis`, `Fast_Can_Parse_Web`, `Can_Parse`,
+`Is_Valid_UTF_8_At`, `Validate_Range`, and `Analyze`, recovered `parse_href` at
+94 ns but left `can_parse` at 22 ns against the 20 ns gate, and it would have
+removed those checks from the default build as well, so it was not taken. What
+substitutes for proof today is dynamic and partial: `checked` is the default
+build, no lane in this repository selects `release` except the benchmark
+harness, the crate's tests are compiled with `-gnata -gnatVa` against the
+checked library, and they drive every entry point in all three syntaxes over a
+hostile corpus of oversized components, deep dot-segment nesting, truncated
+percent escapes, malformed punycode, control bytes, and out-of-range ports. A
+test reads both project files back so a widened suppression cannot land
+unnoticed. That is coverage of the suppressed body, not a proof of it.
+
 ## Proved and Finalized
 <!-- Before marking an item complete here, follow the Widen Scope step
      (Strategic Loop Step 5) in workflow.md in the /gnatprove Skill.
@@ -214,7 +243,13 @@ wire, adapter, ownership, and retry tests cover that integration boundary.
      during assessment (Strategic Loop Steps 1-2), list it here so it
      is not forgotten. -->
 
-- None.
+- [ ] Finding #43 absence-of-runtime-error proof for the `flyology_iri.adb`
+      index arithmetic the release profile suppresses checks in:
+      `Flyology_IRI.Char_At`, `Flyology_IRI.Fast_Dot_Segment`,
+      `Flyology_IRI.Fast_Web_Analysis`, `Flyology_IRI.Fast_Can_Parse_Web`,
+      `Flyology_IRI.Is_Valid_UTF_8_At`, `Flyology_IRI.Validate_Range`,
+      `Flyology_IRI.Valid_IPv4`, `Flyology_IRI.Valid_IP_Literal`, and
+      `Flyology_IRI.Analyze`
 
 ## Discovered Obligations
 
@@ -370,3 +405,14 @@ wire, adapter, ownership, and retry tests cover that integration boundary.
       trailer-field semantics, and connection disposal outside the SPARK model
 - [ ] GNATcoverage was not run because the required `gnatcov_bin` tool crate
       is not installed in the available Alire tool environment
+- [x] Measure what `-gnatp` buys per operation and per body, and keep it only
+      where it does
+- [x] Pin the release profile's suppression scope with a test that reads both
+      `flyology_iri` project files back
+- [x] Cover the suppressed body with a hostile corpus through every entry
+      point in every syntax, built with `-gnata -gnatVa`
+- [ ] Separate `flyology_iri.adb`'s plain-`String` scanning from its
+      `Ada.Strings.Unbounded` construction so the scanning half can enter
+      SPARK at all
+- [ ] Fuzz the checked `flyology_iri` build in continuous integration so the
+      release profile's unchecked body has a standing dynamic guard
