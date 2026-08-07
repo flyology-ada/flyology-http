@@ -28,6 +28,7 @@ for test in \
   flyology-quic-protection_policy-smoke \
   flyology-quic-stream_frame_policy-smoke \
   flyology-quic-stream_reassembly_policy-smoke \
+  flyology-quic-stream_table_policy-smoke \
   flyology-quic-tls_authentication_policy-smoke \
   flyology-quic-tls_extension_policy-smoke \
   flyology-quic-tls_handshake_policy-smoke \

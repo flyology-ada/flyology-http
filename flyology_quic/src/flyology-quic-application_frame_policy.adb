@@ -168,8 +168,15 @@ is
                when Stream_Frame_Policy.Parsed =>
                   Result.Consumed := Result.Stream_Frame.Consumed;
                   Result.Stream_ID := Result.Stream_Frame.Stream_ID;
+                  pragma Assert
+                    (Result.Stream_Frame.Data_Offset <= Data_Length - Cursor);
                   Result.Stream_Data_Offset :=
                     Cursor + Result.Stream_Frame.Data_Offset;
+                  pragma Assert
+                    (Result.Stream_Data_Offset <= Data_Length);
+                  pragma Assert
+                    (Result.Stream_Frame.Data_Length <=
+                       Data_Length - Result.Stream_Data_Offset);
                   Result.Status := Parsed;
                when Stream_Frame_Policy.Truncated =>
                   Result.Status := Truncated;

@@ -27,6 +27,7 @@ project Flyology_QUIC_Tests is
       "flyology-quic-protection_policy-smoke.adb",
       "flyology-quic-stream_frame_policy-smoke.adb",
       "flyology-quic-stream_reassembly_policy-smoke.adb",
+      "flyology-quic-stream_table_policy-smoke.adb",
       "flyology-quic-tls_authentication_policy-smoke.adb",
       "flyology-quic-tls_extension_policy-smoke.adb",
       "flyology-quic-tls_handshake_policy-smoke.adb",
