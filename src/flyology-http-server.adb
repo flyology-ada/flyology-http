@@ -359,6 +359,11 @@ package body Flyology.HTTP.Server is
    function Header (Item : Request; Name : String) return String is
       Block  : constant String := To_String (Item.Header_Block);
       Wanted : constant String := Lower (Name);
+      --  Cookie is the one request field whose repeated lines are not a
+      --  comma list; RFC 6265 section 5.4 makes its delimiter a semicolon,
+      --  so comma-joining it would fold one line's value into the next.
+      Joiner : constant String :=
+        (if Wanted = "cookie" then "; " else ", ");
       Result : Unbounded_String;
       First  : Positive := 1;
    begin
@@ -376,7 +381,7 @@ package body Flyology.HTTP.Server is
               and then Lower (Line (Line'First .. Colon - 1)) = Wanted
             then
                if Length (Result) > 0 then
-                  Append (Result, ", ");
+                  Append (Result, Joiner);
                end if;
                Append (Result, Trim (Line (Colon + 1 .. Line'Last)));
             end if;

@@ -155,7 +155,9 @@ package Flyology.HTTP.Server is
    --  @return HTTP/1.1 for HTTP/1.x parsing or HTTP/2 for an HTTP/2 stream
    function Request_Protocol (Item : Request) return Protocol;
    --  Return a case-insensitive header value with surrounding whitespace
-   --  removed. Repeated fields are comma-joined in wire order.
+   --  removed. Repeated fields are comma-joined in wire order, except
+   --  Cookie, whose repeated lines are joined with a semicolon and a space
+   --  because RFC 6265 gives that field a semicolon-delimited syntax.
    --  @param Item Request to inspect
    --  @param Name Header field name
    --  @return Header value, or an empty string when absent
@@ -163,7 +165,7 @@ package Flyology.HTTP.Server is
    --  Count physical occurrences of one case-insensitive request field.
    --  @param Item Request to inspect
    --  @param Name Header field name
-   --  @return Physical field count before comma joining
+   --  @return Physical field count before joining
    function Header_Count (Item : Request; Name : String) return Natural;
    --  Report whether a comma-separated header contains a token.
    --  @param Item Request to inspect

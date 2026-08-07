@@ -6,15 +6,24 @@ with Ada.Strings.Unbounded;
 with Flyology.Cancellation;
 with Flyology.HTTP;
 with Flyology.HTTP.Server;
+with Flyology.HTTP.Server.Applications;
+with Flyology.HTTP.Server.Requests;
+with Flyology.HTTP.Server.Responses;
+with Flyology.HTTP.Server.Routing;
+with Flyology.IO.Sockets;
 
 procedure HTTP_Server_Audit is
    package HTTP_Server renames Flyology.HTTP.Server;
+   package Sockets renames Flyology.IO.Sockets;
 
    use Ada.Strings.Unbounded;
    use type Flyology.HTTP.HTTP_Version;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    LF   : constant Character := Character'Val (10);
+
+   Test_Peer : constant Sockets.Endpoint :=
+     Sockets.Network_Endpoint (Sockets.Loopback_IPv4, 12_345);
 
    --  Render control bytes as escapes so a failing assertion reports the
    --  observed wire bytes rather than swallowing them.
@@ -235,6 +244,59 @@ procedure HTTP_Server_Audit is
       end;
    end Check_Per_Request_Response_Shape;
 
+   --  Finding 24. Repeated Cookie field lines were joined with ", " like a
+   --  comma-list field, so every cookie value on the first line absorbed
+   --  the next line.
+   procedure Check_Repeated_Cookie_Fields is
+      package Applications renames Flyology.HTTP.Server.Applications;
+      package Requests renames Flyology.HTTP.Server.Requests;
+      package Responses renames Flyology.HTTP.Server.Responses;
+      type Context is null record;
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      Session : Unbounded_String;
+      Extra   : Unbounded_String;
+      Joined  : Unbounded_String;
+
+      procedure Show
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+         Builder : Responses.Builder;
+      begin
+         Session := To_Unbounded_String (Requests.Cookie (X, "sid"));
+         Extra := To_Unbounded_String (Requests.Cookie (X, "x"));
+         Joined := To_Unbounded_String (X.Request_Header ("Cookie"));
+         Builder.Initialize (200, "text/plain");
+         Builder.Set_Payload ("ok");
+         Builder.Send (X);
+      end Show;
+
+      Routes : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+      Wire   : aliased Memory_Transport;
+   begin
+      Routes.Get ("/cookies", Show'Access, Name => "cookies");
+      Wire.Input := To_Unbounded_String
+        ("GET /cookies HTTP/1.1" & CRLF
+         & "Host: example.test" & CRLF
+         & "Cookie: sid=good" & CRLF
+         & "Cookie: x=y" & CRLF
+         & "Connection: close" & CRLF & CRLF);
+      declare
+         Client : aliased HTTP_Server.Connection (Wire'Access);
+      begin
+         Routes.Serve (State, Client, Test_Peer);
+      end;
+      pragma Assert (To_String (Session) = "good", To_String (Session));
+      pragma Assert (To_String (Extra) = "y", To_String (Extra));
+      pragma Assert
+        (To_String (Joined) = "sid=good; x=y", To_String (Joined));
+   end Check_Repeated_Cookie_Fields;
+
 begin
    Check_Per_Request_Response_Shape;
+   Check_Repeated_Cookie_Fields;
 end HTTP_Server_Audit;

@@ -26,7 +26,9 @@ package Flyology.HTTP.Server.Requests is
       Occurrence : Positive := 1) return Boolean;
 
    --  Return one cookie value. Cookie names are case-sensitive; the first
-   --  duplicate wins. Fields above 4096 bytes or 64 pairs are rejected.
+   --  duplicate wins. Repeated Cookie field lines are semicolon-joined
+   --  before splitting, so each line keeps its own pairs. Fields above 4096
+   --  bytes or 64 pairs are rejected.
    --  @param X Request exchange
    --  @param Name Cookie name
    --  @return Cookie value or an empty string
