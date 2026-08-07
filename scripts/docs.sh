@@ -22,6 +22,8 @@ if ! command -v gnatdoc >/dev/null 2>&1; then
   export PATH
 fi
 
+"$project_root/flyology_quic/scripts/docs.sh"
+
 cd "$project_root"
 FLYOLOGY_HTTP_DOCUMENTATION=true
 export FLYOLOGY_HTTP_DOCUMENTATION

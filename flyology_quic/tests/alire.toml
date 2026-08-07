@@ -1,0 +1,19 @@
+name = "flyology_quic_tests"
+description = "RFC-vector tests for flyology_quic"
+version = "0.1.0-dev"
+
+authors = ["Yurii Rashkovskii"]
+maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
+licenses = "MIT OR Apache-2.0"
+executables = [
+  "flyology-quic-crypto_openssl-smoke",
+  "flyology-quic-packet_number_policy-smoke",
+  "flyology-quic-protection_policy-smoke",
+  "flyology-quic-varint_policy-smoke",
+]
+
+[[depends-on]]
+flyology_quic = "*"
+
+[[pins]]
+flyology_quic = { path = ".." }

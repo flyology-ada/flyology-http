@@ -8,6 +8,11 @@ includes bounded client pools, an origin-bound WebSocket client, streaming
 request and response bodies, routing, middleware, server-sent events,
 WebSocket servers, and plain or TLS transports built on Flyology I/O.
 
+This repository also contains `flyology_quic`, an independently built
+Ada-native QUIC transport crate. Its current foundation covers proved wire
+primitives and RFC-vector-checked Initial packet cryptography. HTTP/3 client
+and server support is not implemented yet.
+
 Documentation is published at [http.flyology.org](https://http.flyology.org/).
 The [client guide](https://http.flyology.org/guide/client/), dedicated
 [HTTP/2 guide](https://http.flyology.org/guide/http2/), and

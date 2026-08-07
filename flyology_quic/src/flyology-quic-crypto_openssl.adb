@@ -1,0 +1,205 @@
+with Interfaces.C;
+with Interfaces.C.Strings;
+
+package body Flyology.QUIC.Crypto_OpenSSL is
+   package C renames Interfaces.C;
+   package CS renames Interfaces.C.Strings;
+
+   use type C.int;
+   use type System.Address;
+
+   Error_Capacity : constant := 1_024;
+   subtype Error_Buffer is C.char_array (0 .. C.size_t (Error_Capacity - 1));
+
+   function C_Create
+     (Directory  : CS.chars_ptr;
+      Error      : System.Address;
+      Error_Size : C.size_t) return System.Address;
+   pragma Import (C, C_Create, "flyology_quic_openssl_create");
+
+   procedure C_Release (Handle : System.Address);
+   pragma Import (C, C_Release, "flyology_quic_openssl_release");
+
+   function C_Initial_Keys
+     (Handle        : System.Address;
+      Connection_ID : System.Address;
+      ID_Length     : C.size_t;
+      Client_Secret : System.Address;
+      Client_Key    : System.Address;
+      Client_IV     : System.Address;
+      Client_HP     : System.Address;
+      Server_Secret : System.Address;
+      Server_Key    : System.Address;
+      Server_IV     : System.Address;
+      Server_HP     : System.Address;
+      Error         : System.Address;
+      Error_Size    : C.size_t) return C.int;
+   pragma Import
+     (C, C_Initial_Keys, "flyology_quic_openssl_initial_keys");
+
+   function C_Protect
+     (Handle            : System.Address;
+      Key               : System.Address;
+      Nonce             : System.Address;
+      Header            : System.Address;
+      Header_Length     : C.size_t;
+      Plaintext         : System.Address;
+      Plaintext_Length  : C.size_t;
+      Ciphertext        : System.Address;
+      Ciphertext_Length : C.size_t;
+      Error             : System.Address;
+      Error_Size        : C.size_t) return C.int;
+   pragma Import (C, C_Protect, "flyology_quic_openssl_protect");
+
+   function C_Header_Mask
+     (Handle     : System.Address;
+      Key        : System.Address;
+      Sample     : System.Address;
+      Mask       : System.Address;
+      Error      : System.Address;
+      Error_Size : C.size_t) return C.int;
+   pragma Import
+     (C, C_Header_Mask, "flyology_quic_openssl_header_mask");
+
+   function Image (Buffer : Error_Buffer) return String is
+     (C.To_Ada (Buffer, Trim_Nul => True));
+
+   function Contains_Nul (Value : String) return Boolean is
+   begin
+      for Element of Value loop
+         if Element = Character'Val (0) then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Contains_Nul;
+
+   procedure Initialize_Provider
+     (Item              : in out Provider;
+      Library_Directory : String := "")
+   is
+      Directory : CS.chars_ptr := CS.Null_Ptr;
+      Error     : aliased Error_Buffer := (others => C.nul);
+   begin
+      if Item.Handle /= System.Null_Address then
+         raise Program_Error with
+           "QUIC crypto provider is already initialized";
+      elsif Contains_Nul (Library_Directory) then
+         raise Program_Error with
+           "OpenSSL library path contains an embedded NUL";
+      end if;
+
+      Directory := CS.New_String (Library_Directory);
+      Item.Handle :=
+        C_Create
+          (Directory, Error (Error'First)'Address, C.size_t (Error'Length));
+      CS.Free (Directory);
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   exception
+      when others =>
+         CS.Free (Directory);
+         raise;
+   end Initialize_Provider;
+
+   function Is_Available (Item : Provider) return Boolean is
+     (Item.Handle /= System.Null_Address);
+
+   procedure Derive_V1_Initial
+     (Item                       : Provider;
+      Destination_Connection_ID : Ada.Streams.Stream_Element_Array;
+      Keys                       : out Initial_Keys)
+   is
+      Result : aliased Initial_Keys :=
+        (Client_Secret | Client_Key | Client_IV | Client_HP |
+         Server_Secret | Server_Key | Server_IV | Server_HP => (others => 0));
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Initial_Keys
+          (Item.Handle,
+           (if Destination_Connection_ID'Length = 0
+            then System.Null_Address
+            else Destination_Connection_ID
+              (Destination_Connection_ID'First)'Address),
+           C.size_t (Destination_Connection_ID'Length),
+           Result.Client_Secret (Result.Client_Secret'First)'Address,
+           Result.Client_Key (Result.Client_Key'First)'Address,
+           Result.Client_IV (Result.Client_IV'First)'Address,
+           Result.Client_HP (Result.Client_HP'First)'Address,
+           Result.Server_Secret (Result.Server_Secret'First)'Address,
+           Result.Server_Key (Result.Server_Key'First)'Address,
+           Result.Server_IV (Result.Server_IV'First)'Address,
+           Result.Server_HP (Result.Server_HP'First)'Address,
+           Error (Error'First)'Address, C.size_t (Error'Length));
+      if Status /= 0 then
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+      Keys := Result;
+   end Derive_V1_Initial;
+
+   procedure Protect
+     (Item       : Provider;
+      Key        : AES_128_Key;
+      Nonce      : AES_GCM_IV;
+      Header     : Ada.Streams.Stream_Element_Array;
+      Plaintext  : Ada.Streams.Stream_Element_Array;
+      Ciphertext : out Ada.Streams.Stream_Element_Array)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Protect
+          (Item.Handle, Key (Key'First)'Address, Nonce (Nonce'First)'Address,
+           (if Header'Length = 0 then System.Null_Address
+            else Header (Header'First)'Address),
+           C.size_t (Header'Length),
+           (if Plaintext'Length = 0 then System.Null_Address
+            else Plaintext (Plaintext'First)'Address),
+           C.size_t (Plaintext'Length), Ciphertext (Ciphertext'First)'Address,
+           C.size_t (Ciphertext'Length), Error (Error'First)'Address,
+           C.size_t (Error'Length));
+      if Status /= 0 then
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Protect;
+
+   procedure Make_Header_Mask
+     (Item   : Provider;
+      Key    : AES_128_Key;
+      Sample : Header_Sample;
+      Mask   : out Header_Mask)
+   is
+      Error  : aliased Error_Buffer := (others => C.nul);
+      Status : C.int;
+   begin
+      if Item.Handle = System.Null_Address then
+         raise Crypto_Error with "OpenSSL QUIC crypto provider is unavailable";
+      end if;
+      Status :=
+        C_Header_Mask
+          (Item.Handle, Key (Key'First)'Address, Sample (Sample'First)'Address,
+           Mask (Mask'First)'Address, Error (Error'First)'Address,
+           C.size_t (Error'Length));
+      if Status /= 0 then
+         raise Crypto_Error with "OpenSSL: " & Image (Error);
+      end if;
+   end Make_Header_Mask;
+
+   overriding procedure Finalize (Item : in out Provider) is
+   begin
+      if Item.Handle /= System.Null_Address then
+         C_Release (Item.Handle);
+         Item.Handle := System.Null_Address;
+      end if;
+   end Finalize;
+end Flyology.QUIC.Crypto_OpenSSL;

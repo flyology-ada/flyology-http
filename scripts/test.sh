@@ -81,6 +81,16 @@ compile_and_link () {
 
 cd "$http_root"
 "$http_root/flyology_iri/scripts/test.sh"
+if [ -n "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
+  env \
+    -u FLYOLOGY_ALIRE_PREFIX \
+    -u FLYOLOGY_ROOT \
+    -u GPR_CONFIG \
+    -u GPR_PROJECT_PATH \
+    "$http_root/flyology_quic/scripts/test.sh"
+else
+  "$http_root/flyology_quic/scripts/test.sh"
+fi
 "$http_root/scripts/prepare-test-tls.sh"
 if [ -z "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
   "$alr" build
