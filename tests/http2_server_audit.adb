@@ -102,6 +102,13 @@ procedure HTTP2_Server_Audit is
          X.No_Content;
       elsif X.Request_Target = "/bigheaders" then
          X.Respond (200, Fragmented_Type.all, "h");
+      elsif X.Request_Target = "/hpack" then
+         --  Report which of the two dynamic-table entries the peer's encoder
+         --  inserted actually came back through an indexed reference.
+         X.Text
+           (200,
+            "probe=" & X.Request_Header ("x-probe") &
+              " decoy=" & X.Request_Header ("x-decoy"));
       elsif X.Request_Target = "/flood" then
          X.Begin_Stream (200, "application/octet-stream");
          for Index in 1 .. 64 loop
@@ -182,11 +189,40 @@ procedure HTTP2_Server_Audit is
      ((1 => 16#00#, 2 => Stream_Element (Name'Length)) & Text_Bytes (Name) &
       (1 => Stream_Element (Value'Length)) & Text_Bytes (Value));
 
+   --  The same shape with incremental indexing, so the representation also
+   --  inserts its field into the connection-scoped dynamic table.
+   function Indexed_Literal
+     (Name, Value : String) return Stream_Element_Array
+   is
+     ((1 => 16#40#, 2 => Stream_Element (Name'Length)) & Text_Bytes (Name) &
+      (1 => Stream_Element (Value'Length)) & Text_Bytes (Value));
+
+   --  One indexed field representation. Indices stay below 127 so the
+   --  seven-bit prefix fits a single octet.
+   function Table_Reference (Index : Positive) return Stream_Element_Array is
+     (1 => 16#80# or Stream_Element (Index));
+
    function Request_Block
      (Method, Path : String) return Stream_Element_Array
    is
      (Literal (":method", Method) & Literal (":scheme", "http") &
       Literal (":authority", "localhost") & Literal (":path", Path));
+
+   --  A field section refused for a stream-scoped reason -- ":path" is a
+   --  pseudo-field after the regular "x-decoy" -- that still carries an
+   --  incremental-indexing representation past the refusal point. The peer's
+   --  encoder inserts all three; a decoder that abandons the block on the
+   --  refusal never sees "x-probe".
+   Desync_Block : constant Stream_Element_Array :=
+     Indexed_Literal (":method", "GET") &
+     Indexed_Literal ("x-decoy", "decoy") &
+     Literal (":path", "/") &
+     Indexed_Literal ("x-probe", "real");
+
+   --  A well-formed section whose one regular field is dynamic-table index
+   --  62, which the peer's encoder means as the entry it inserted last.
+   Reference_Block : constant Stream_Element_Array :=
+     Request_Block ("GET", "/hpack") & Table_Reference (62);
 
    --  The same field section with every pseudo-header under test control,
    --  so an authority or a target may carry octets the encoder would never
@@ -268,7 +304,7 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 9;
+   Sessions : constant := 10;
 
    Router_Manager  : aliased Connections.Server (Capacity => 1);
    Router_Listener : Sockets.Socket_Type;
@@ -709,6 +745,39 @@ begin
          Check
            (not Refused and then Index (Response, "target=*") /= 0,
             "asterisk-form :path is still admitted for OPTIONS");
+      end;
+
+      ------------------------------------------------------------------------
+      --  Finding 9: a field section refused as a stream error must still
+      --  apply every incremental-indexing representation it carries. The
+      --  HPACK context is connection-scoped, so an abandoned block leaves the
+      --  decoder's table one entry behind the peer's encoder and the next
+      --  indexed reference resolves to the wrong field.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line
+        ("finding 9: HPACK table across a refused field section");
+      declare
+         Socket   : Sockets.Socket_Type;
+         Response : Unbounded_String;
+         Refused  : Boolean;
+      begin
+         Connect_Peer (Socket);
+         Probe_Stream (Socket, 1, Desync_Block, Response, Refused);
+         Check
+           (Refused,
+            "a pseudo-field after a regular field is a stream error");
+         Probe_Stream (Socket, 3, Reference_Block, Response, Refused);
+         Ada.Text_IO.Put_Line
+           ("  index 62 on the following stream yielded " &
+              (if Refused then "a refused stream"
+               else '"' & To_String (Response) & '"'));
+         Check
+           (not Refused and then Index (Response, "probe=real") /= 0,
+            "the dynamic table still matches the peer's encoder");
+         Check
+           (Index (Response, "decoy=decoy") = 0,
+            "no field the peer never sent reaches the application");
+         Sockets.Close_Socket (Socket);
       end;
    end;
 

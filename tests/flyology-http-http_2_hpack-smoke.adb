@@ -136,6 +136,55 @@ begin
            "application/octet-stream");
    end;
 
+   --  Audit finding 9: a field section refused for stream-scoped reasons must
+   --  still apply every incremental-indexing representation it carries, or the
+   --  connection-scoped table drifts from the peer's encoder and a later
+   --  indexed reference resolves to the wrong field.
+   declare
+      Item   : Decoder;
+      Fields : Flyology.HTTP.Headers.List;
+      Method, Scheme, Authority, Path :
+        Ada.Strings.Unbounded.Unbounded_String;
+      Refused : Boolean := False;
+
+      --  Literal with incremental indexing ":method: GET"; literal with
+      --  incremental indexing "foo: bar"; literal without indexing
+      --  ":path: /", which is a pseudo-field after a regular field and so is
+      --  refused; literal with incremental indexing "baz: qux".
+      Refused_Block : constant String :=
+        "40073a6d6574686f6403474554" & "4003666f6f03626172" &
+        "00053a70617468012f" & "400362617a03717578";
+
+      --  ":method: GET", ":scheme: http", ":authority: h", ":path: /" and
+      --  then indexed field 62, which the peer's encoder means as "baz: qux".
+      Following_Block : constant String := "828601016884be";
+   begin
+      begin
+         Decode_Request
+           (Item, Hex (Refused_Block), False, Fields,
+            Method, Scheme, Authority, Path);
+      exception
+         when Invalid_Request_Fields =>
+            Refused := True;
+      end;
+      pragma Assert (Refused);
+      Decode_Request
+        (Item, Hex (Following_Block), False, Fields,
+         Method, Scheme, Authority, Path);
+      if Flyology.HTTP.Headers.Count (Fields) /= 1
+        or else Flyology.HTTP.Headers.Name (Fields, 1) /= "baz"
+        or else Flyology.HTTP.Headers.Value (Fields, 1) /= "qux"
+      then
+         raise Program_Error with
+           "HPACK index 62 resolved to """ &
+             (if Flyology.HTTP.Headers.Count (Fields) = 0 then "<nothing>"
+              else Flyology.HTTP.Headers.Name (Fields, 1) & ": " &
+                Flyology.HTTP.Headers.Value (Fields, 1)) &
+             """ after a refused field section";
+      end if;
+      pragma Assert (Item.Count = 3);
+   end;
+
    Reject ("");
    Reject ("8820");
    Reject ("88be");

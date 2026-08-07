@@ -397,12 +397,18 @@ package body Flyology.HTTP.HTTP_2_HPACK is
    --  pseudo-fields bypass it and go on to become the request target and the
    --  reconstructed Host line, neither of which admits whitespace or DEL in
    --  the HTTP/1 parser. Each accepted pseudo-field value is scanned once,
-   --  where it is accepted; the refusal itself waits until the whole field
-   --  section has been decoded, so the shared compression context stays in
-   --  step with the peer and the request remains a stream error.
+   --  where it is accepted.
    function Valid_Pseudo_Value (Value : String) return Boolean is
      (for all Item of Value =>
         Character'Pos (Item) > 32 and then Character'Pos (Item) /= 127);
+
+   --  Every refusal a request field section can earn is stream-scoped under
+   --  RFC 9113 8.8, but the HPACK context the section mutates is scoped to
+   --  the connection. A refusal is therefore recorded and raised only once
+   --  the whole section has been decoded, so the representations after it
+   --  still bind their entries and the decoder's table stays in step with
+   --  the peer's encoder for the rest of the connection.
+   type Refusal_Kind is (No_Refusal, Size_Refusal, Field_Refusal);
 
    procedure Decode_Request
      (Item        : in out Decoder;
@@ -423,6 +429,16 @@ package body Flyology.HTTP.HTTP_2_HPACK is
       Saw_Path      : Boolean := False;
       Bad_Pseudo    : Boolean := False;
       List_Size     : Natural := 0;
+      Refusal       : Refusal_Kind := No_Refusal;
+      Refusal_Text  : Unbounded_String;
+
+      procedure Refuse (Kind : Refusal_Kind; Text : String := "") is
+      begin
+         if Refusal = No_Refusal then
+            Refusal := Kind;
+            Refusal_Text := To_Unbounded_String (Text);
+         end if;
+      end Refuse;
    begin
       Flyology.HTTP.Headers.Clear (Fields);
       Method := Null_Unbounded_String;
@@ -499,52 +515,66 @@ package body Flyology.HTTP.HTTP_2_HPACK is
                   Added : constant Natural :=
                     Name'Length + Value'Length + 32;
                begin
-                  if Added > Flyology.HTTP.Headers.Default_Max_Bytes
+                  if Refusal /= No_Refusal then
+                     --  Drained: the section is already refused, but its
+                     --  remaining representations still bind table entries.
+                     null;
+                  elsif Added > Flyology.HTTP.Headers.Default_Max_Bytes
                     or else List_Size >
                       Flyology.HTTP.Headers.Default_Max_Bytes - Added
                   then
-                     raise Header_List_Too_Large;
+                     Refuse (Size_Refusal);
                   elsif Name = "" or else Name /= Lower then
-                     raise Invalid_Request_Fields with
-                       "invalid HTTP/2 field name";
+                     Refuse (Field_Refusal, "invalid HTTP/2 field name");
                   elsif Name (Name'First) = ':' then
                      if Is_Trailers or else Saw_Regular then
-                        raise Invalid_Request_Fields with
-                          "invalid HTTP/2 request pseudo-field position";
-                     end if;
-                     Bad_Pseudo :=
-                       Bad_Pseudo or else not Valid_Pseudo_Value (Value);
-                     if Name = ":method" then
-                        if Saw_Method then
-                           raise Invalid_Request_Fields with
-                             "duplicate HTTP/2 method pseudo-field";
-                        end if;
-                        Method := Field_Value;
-                        Saw_Method := True;
-                     elsif Name = ":scheme" then
-                        if Saw_Scheme then
-                           raise Invalid_Request_Fields with
-                             "duplicate HTTP/2 scheme pseudo-field";
-                        end if;
-                        Scheme := Field_Value;
-                        Saw_Scheme := True;
-                     elsif Name = ":authority" then
-                        if Saw_Authority then
-                           raise Invalid_Request_Fields with
-                             "duplicate HTTP/2 authority pseudo-field";
-                        end if;
-                        Authority := Field_Value;
-                        Saw_Authority := True;
-                     elsif Name = ":path" then
-                        if Saw_Path then
-                           raise Invalid_Request_Fields with
-                             "duplicate HTTP/2 path pseudo-field";
-                        end if;
-                        Path := Field_Value;
-                        Saw_Path := True;
+                        Refuse
+                          (Field_Refusal,
+                           "invalid HTTP/2 request pseudo-field position");
                      else
-                        raise Invalid_Request_Fields with
-                          "unsupported HTTP/2 request pseudo-field";
+                        Bad_Pseudo :=
+                          Bad_Pseudo or else not Valid_Pseudo_Value (Value);
+                        if Name = ":method" then
+                           if Saw_Method then
+                              Refuse
+                                (Field_Refusal,
+                                 "duplicate HTTP/2 method pseudo-field");
+                           else
+                              Method := Field_Value;
+                              Saw_Method := True;
+                           end if;
+                        elsif Name = ":scheme" then
+                           if Saw_Scheme then
+                              Refuse
+                                (Field_Refusal,
+                                 "duplicate HTTP/2 scheme pseudo-field");
+                           else
+                              Scheme := Field_Value;
+                              Saw_Scheme := True;
+                           end if;
+                        elsif Name = ":authority" then
+                           if Saw_Authority then
+                              Refuse
+                                (Field_Refusal,
+                                 "duplicate HTTP/2 authority pseudo-field");
+                           else
+                              Authority := Field_Value;
+                              Saw_Authority := True;
+                           end if;
+                        elsif Name = ":path" then
+                           if Saw_Path then
+                              Refuse
+                                (Field_Refusal,
+                                 "duplicate HTTP/2 path pseudo-field");
+                           else
+                              Path := Field_Value;
+                              Saw_Path := True;
+                           end if;
+                        else
+                           Refuse
+                             (Field_Refusal,
+                              "unsupported HTTP/2 request pseudo-field");
+                        end if;
                      end if;
                   else
                      Saw_Regular := True;
@@ -553,20 +583,25 @@ package body Flyology.HTTP.HTTP_2_HPACK is
                        "transfer-encoding" | "upgrade"
                        or else (Lower = "te" and then Value /= "trailers")
                      then
-                        raise Invalid_Request_Fields with
-                          "connection-specific HTTP/2 request field";
+                        Refuse
+                          (Field_Refusal,
+                           "connection-specific HTTP/2 request field");
+                     else
+                        begin
+                           Flyology.HTTP.Headers.Add (Fields, Name, Value);
+                        exception
+                           when Flyology.HTTP.Headers.Headers_Too_Large =>
+                              Refuse (Size_Refusal);
+                           when Constraint_Error =>
+                              Refuse
+                                (Field_Refusal,
+                                 "invalid HTTP/2 request field value");
+                        end;
                      end if;
-                     begin
-                        Flyology.HTTP.Headers.Add (Fields, Name, Value);
-                     exception
-                        when Flyology.HTTP.Headers.Headers_Too_Large =>
-                           raise Header_List_Too_Large;
-                        when Constraint_Error =>
-                           raise Invalid_Request_Fields with
-                             "invalid HTTP/2 request field value";
-                     end;
                   end if;
-                  List_Size := List_Size + Added;
+                  if Refusal = No_Refusal then
+                     List_Size := List_Size + Added;
+                  end if;
                   if Incremental then
                      Insert (Item, Name, Value);
                   end if;
@@ -575,7 +610,11 @@ package body Flyology.HTTP.HTTP_2_HPACK is
          end;
       end loop;
 
-      if Bad_Pseudo then
+      if Refusal = Size_Refusal then
+         raise Header_List_Too_Large;
+      elsif Refusal = Field_Refusal then
+         raise Invalid_Request_Fields with To_String (Refusal_Text);
+      elsif Bad_Pseudo then
          raise Invalid_Request_Fields with
            "invalid HTTP/2 request pseudo-field value";
       elsif Is_Trailers then

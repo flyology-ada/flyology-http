@@ -27,7 +27,10 @@ private package Flyology.HTTP.HTTP_2_HPACK is
       Has_Status  : out Boolean);
 
    --  Decode a complete request field section. Request pseudo-fields are
-   --  returned separately and regular fields retain their wire order.
+   --  returned separately and regular fields retain their wire order. A
+   --  section that earns a stream-scoped refusal is still decoded to its
+   --  end, so its dynamic-table insertions all land before the refusal is
+   --  raised and the context stays in step with the peer's encoder.
    procedure Decode_Request
      (Item        : in out Decoder;
       Block       : Ada.Streams.Stream_Element_Array;
