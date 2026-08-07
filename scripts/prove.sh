@@ -33,6 +33,7 @@ cd "$http_root/proof"
   flyology-http-http_3_message_policy.adb \
   flyology-http-http_3_settings_policy.adb \
   flyology-http-http_3_stream_policy.adb \
+  flyology-http-http_3_stream_receive_policy.adb \
   flyology-http-qpack_field_section_policy.adb \
   flyology-http-qpack_integer_policy.adb \
   flyology-http-qpack_static_table.adb \

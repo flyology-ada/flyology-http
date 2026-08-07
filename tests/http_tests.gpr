@@ -40,6 +40,7 @@ project HTTP_Tests is
       "flyology-http-http_3_message_policy-smoke.adb",
       "flyology-http-http_3_settings_policy-smoke.adb",
       "flyology-http-http_3_stream_policy-smoke.adb",
+      "flyology-http-http_3_stream_receive_policy-smoke.adb",
       "flyology-http-qpack_field_section_policy-smoke.adb",
       "flyology-http-qpack_integer_policy-smoke.adb",
       "flyology-http-qpack_static_table-smoke.adb",
