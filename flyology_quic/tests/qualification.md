@@ -62,6 +62,8 @@ for the next layer.
   EncryptedExtensions message and a coalesced-message prefix cover subsequent
   CRYPTO-stream framing; truncated, unsupported, structurally invalid, and
   extension-invalid messages are rejected separately.
+  Canonical full-message encoders round-trip all three handshake contexts,
+  including bounded server session-ID echo and exact nested vector lengths.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

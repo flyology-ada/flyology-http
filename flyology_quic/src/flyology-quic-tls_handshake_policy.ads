@@ -46,4 +46,46 @@ is
        (if Parse'Result.Status = Parsed then
            Parse'Result.Extensions.Status =
              TLS_Extension_Policy.Parsed);
+
+   subtype Hello_Random is Ada.Streams.Stream_Element_Array (1 .. 32);
+   subtype Session_ID_Length is Natural range 0 .. 32;
+   type Session_ID is record
+      Data   : Ada.Streams.Stream_Element_Array (1 .. 32) := (others => 0);
+      Length : Session_ID_Length := 0;
+   end record;
+
+   Max_Encoded_Handshake : constant := 1_200;
+   type Encode_Status is (Encoded, Extension_Encoding_Failed);
+   type Encode_Result is record
+      Status : Encode_Status := Extension_Encoding_Failed;
+      Data   : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Encoded_Handshake) := (others => 0);
+      Length : Natural range 0 .. Max_Encoded_Handshake := 0;
+   end record;
+
+   function Encode_Client_Hello
+     (Random               : Hello_Random;
+      Key                  : TLS_Extension_Policy.X25519_Public_Key;
+      ALPN                 : Ada.Streams.Stream_Element_Array;
+      Transport_Parameters : Ada.Streams.Stream_Element_Array)
+      return Encode_Result
+   with
+     Global => null,
+     Pre => ALPN'Length in 1 .. 255
+       and then Transport_Parameters'Length <= 512;
+
+   function Encode_Server_Hello
+     (Random  : Hello_Random;
+      Session : Session_ID;
+      Key     : TLS_Extension_Policy.X25519_Public_Key) return Encode_Result
+   with Global => null;
+
+   function Encode_Encrypted_Extensions
+     (ALPN                 : Ada.Streams.Stream_Element_Array;
+      Transport_Parameters : Ada.Streams.Stream_Element_Array)
+      return Encode_Result
+   with
+     Global => null,
+     Pre => ALPN'Length in 1 .. 255
+       and then Transport_Parameters'Length <= 512;
 end Flyology.QUIC.TLS_Handshake_Policy;

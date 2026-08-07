@@ -49,6 +49,15 @@ procedure Flyology.QUIC.TLS_Handshake_Policy.Smoke is
         "001d00209d3c940d89690b84d08a6099" &
         "3c144eca684d1081287c834d5311bcf3" &
         "2bb9da1a002b00020304");
+
+   Random : constant Hello_Random :=
+     Hex
+       ("000102030405060708090a0b0c0d0e0f" &
+        "101112131415161718191a1b1c1d1e1f");
+   Key : constant TLS_Extension_Policy.X25519_Public_Key :=
+     Hex
+       ("202122232425262728292a2b2c2d2e2f" &
+        "303132333435363738393a3b3c3d3e3f");
 begin
    declare
       Result : constant Parse_Result := Parse (Client);
@@ -72,6 +81,52 @@ begin
          and then Result.Consumed = Server'Length
          and then Result.Random_Offset = 6
          and then Result.Extensions_Length = 46);
+   end;
+
+   declare
+      Encoded : constant Encode_Result :=
+        Encode_Client_Hello (Random, Key, Hex ("6833"), Hex ("0f00"));
+      Result : constant Parse_Result :=
+        Parse
+          (Encoded.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)));
+   begin
+      pragma Assert
+        (Encoded.Status = TLS_Handshake_Policy.Encoded
+         and then Result.Status = Parsed
+         and then Result.Kind = Client_Hello
+         and then Result.Consumed = Encoded.Length);
+   end;
+
+   declare
+      Session : constant Session_ID :=
+        (Data => (1 => 1, 2 => 2, 3 => 3, 4 => 4, others => 0),
+         Length => 4);
+      Encoded : constant Encode_Result :=
+        Encode_Server_Hello (Random, Session, Key);
+      Result : constant Parse_Result :=
+        Parse
+          (Encoded.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)));
+   begin
+      pragma Assert
+        (Encoded.Status = TLS_Handshake_Policy.Encoded
+         and then Result.Status = Parsed
+         and then Result.Kind = Server_Hello
+         and then Result.Session_ID_Length = 4);
+   end;
+
+   declare
+      Encoded : constant Encode_Result :=
+        Encode_Encrypted_Extensions (Hex ("6833"), Hex ("00000f00"));
+   begin
+      pragma Assert
+        (Encoded.Status = TLS_Handshake_Policy.Encoded
+         and then
+           Parse
+             (Encoded.Data
+                (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)))
+             .Status = Parsed);
    end;
 
    declare

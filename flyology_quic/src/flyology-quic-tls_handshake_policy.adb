@@ -2,6 +2,7 @@ package body Flyology.QUIC.TLS_Handshake_Policy
   with SPARK_Mode => On
 is
    use type Ada.Streams.Stream_Element_Offset;
+   use type TLS_Extension_Policy.Encode_Status;
    use type TLS_Extension_Policy.Parse_Status;
 
    function Parse
@@ -229,4 +230,204 @@ is
       Result.Status := Parsed;
       return Result;
    end Parse;
+
+   procedure Append_Byte
+     (Result   : in out Encode_Result;
+      Position : in out Natural;
+      Value    : Ada.Streams.Stream_Element;
+      Success  : in out Boolean)
+   with
+     Pre => Position <= Max_Encoded_Handshake,
+     Post => Position >= Position'Old and then Position <= Max_Encoded_Handshake;
+
+   procedure Append_Byte
+     (Result   : in out Encode_Result;
+      Position : in out Natural;
+      Value    : Ada.Streams.Stream_Element;
+      Success  : in out Boolean)
+   is
+   begin
+      if not Success then
+         return;
+      elsif Position = Max_Encoded_Handshake then
+         Success := False;
+         return;
+      end if;
+      Position := Position + 1;
+      Result.Data (Ada.Streams.Stream_Element_Offset (Position)) := Value;
+   end Append_Byte;
+
+   procedure Append_U16
+     (Result   : in out Encode_Result;
+      Position : in out Natural;
+      Value    : Natural;
+      Success  : in out Boolean)
+   with
+     Pre => Position <= Max_Encoded_Handshake and then Value <= 65_535,
+     Post => Position >= Position'Old and then Position <= Max_Encoded_Handshake;
+
+   procedure Append_U16
+     (Result   : in out Encode_Result;
+      Position : in out Natural;
+      Value    : Natural;
+      Success  : in out Boolean)
+   is
+   begin
+      Append_Byte
+        (Result, Position, Ada.Streams.Stream_Element (Value / 256), Success);
+      Append_Byte
+        (Result, Position, Ada.Streams.Stream_Element (Value mod 256), Success);
+   end Append_U16;
+
+   procedure Append_Bytes
+     (Result   : in out Encode_Result;
+      Position : in out Natural;
+      Data     : Ada.Streams.Stream_Element_Array;
+      Success  : in out Boolean)
+   with
+     Pre => Position <= Max_Encoded_Handshake
+       and then Data'Length <= Max_Encoded_Handshake,
+     Post => Position >= Position'Old and then Position <= Max_Encoded_Handshake;
+
+   procedure Append_Bytes
+     (Result   : in out Encode_Result;
+      Position : in out Natural;
+      Data     : Ada.Streams.Stream_Element_Array;
+      Success  : in out Boolean)
+   is
+   begin
+      if not Success then
+         return;
+      elsif Natural (Data'Length) > Max_Encoded_Handshake - Position then
+         Success := False;
+         return;
+      end if;
+      if Data'Length > 0 then
+         for Offset in Natural range 0 .. Natural (Data'Length) - 1 loop
+            pragma Loop_Invariant
+              (Offset < Natural (Data'Length)
+               and then Offset < Max_Encoded_Handshake - Position);
+            Result.Data
+              (Ada.Streams.Stream_Element_Offset (Position + Offset + 1)) :=
+                Data
+                  (Data'First + Ada.Streams.Stream_Element_Offset (Offset));
+         end loop;
+      end if;
+      Position := Position + Natural (Data'Length);
+   end Append_Bytes;
+
+   procedure Finish_Message
+     (Result   : in out Encode_Result;
+      Position : Natural;
+      Success  : Boolean)
+   with Pre => Position in 4 .. Max_Encoded_Handshake;
+
+   procedure Finish_Message
+     (Result   : in out Encode_Result;
+      Position : Natural;
+      Success  : Boolean)
+   is
+      Body_Length : constant Natural := Position - 4;
+   begin
+      if Success then
+         Result.Data (2) :=
+           Ada.Streams.Stream_Element (Body_Length / 65_536);
+         Result.Data (3) :=
+           Ada.Streams.Stream_Element ((Body_Length / 256) mod 256);
+         Result.Data (4) := Ada.Streams.Stream_Element (Body_Length mod 256);
+         Result.Status := Encoded;
+         Result.Length := Position;
+      end if;
+   end Finish_Message;
+
+   function Encode_Client_Hello
+     (Random               : Hello_Random;
+      Key                  : TLS_Extension_Policy.X25519_Public_Key;
+      ALPN                 : Ada.Streams.Stream_Element_Array;
+      Transport_Parameters : Ada.Streams.Stream_Element_Array)
+      return Encode_Result
+   is
+      Extensions : constant TLS_Extension_Policy.Encode_Result :=
+        TLS_Extension_Policy.Encode_Client_Hello
+          (Key, ALPN, Transport_Parameters);
+      Result   : Encode_Result;
+      Position : Natural := 4;
+      Success  : Boolean :=
+        Extensions.Status = TLS_Extension_Policy.Encoded;
+   begin
+      Result.Data (1) := 1;
+      Append_Bytes (Result, Position, (3, 3), Success);
+      Append_Bytes (Result, Position, Random, Success);
+      Append_Byte (Result, Position, 0, Success);
+      Append_U16 (Result, Position, 2, Success);
+      Append_Bytes (Result, Position, (16#13#, 16#01#), Success);
+      Append_Bytes (Result, Position, (1, 0), Success);
+      Append_U16 (Result, Position, Extensions.Length, Success);
+      Append_Bytes
+        (Result, Position,
+         Extensions.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Extensions.Length)),
+         Success);
+      Finish_Message (Result, Position, Success);
+      return Result;
+   end Encode_Client_Hello;
+
+   function Encode_Server_Hello
+     (Random  : Hello_Random;
+      Session : Session_ID;
+      Key     : TLS_Extension_Policy.X25519_Public_Key) return Encode_Result
+   is
+      Extensions : constant TLS_Extension_Policy.Encode_Result :=
+        TLS_Extension_Policy.Encode_Server_Hello (Key);
+      Result   : Encode_Result;
+      Position : Natural := 4;
+      Success  : Boolean :=
+        Extensions.Status = TLS_Extension_Policy.Encoded;
+   begin
+      Result.Data (1) := 2;
+      Append_Bytes (Result, Position, (3, 3), Success);
+      Append_Bytes (Result, Position, Random, Success);
+      Append_Byte
+        (Result, Position, Ada.Streams.Stream_Element (Session.Length), Success);
+      if Session.Length > 0 then
+         Append_Bytes
+           (Result, Position,
+            Session.Data
+              (1 .. Ada.Streams.Stream_Element_Offset (Session.Length)),
+            Success);
+      end if;
+      Append_Bytes (Result, Position, (16#13#, 16#01#, 0), Success);
+      Append_U16 (Result, Position, Extensions.Length, Success);
+      Append_Bytes
+        (Result, Position,
+         Extensions.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Extensions.Length)),
+         Success);
+      Finish_Message (Result, Position, Success);
+      return Result;
+   end Encode_Server_Hello;
+
+   function Encode_Encrypted_Extensions
+     (ALPN                 : Ada.Streams.Stream_Element_Array;
+      Transport_Parameters : Ada.Streams.Stream_Element_Array)
+      return Encode_Result
+   is
+      Extensions : constant TLS_Extension_Policy.Encode_Result :=
+        TLS_Extension_Policy.Encode_Encrypted_Extensions
+          (ALPN, Transport_Parameters);
+      Result   : Encode_Result;
+      Position : Natural := 4;
+      Success  : Boolean :=
+        Extensions.Status = TLS_Extension_Policy.Encoded;
+   begin
+      Result.Data (1) := 8;
+      Append_U16 (Result, Position, Extensions.Length, Success);
+      Append_Bytes
+        (Result, Position,
+         Extensions.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Extensions.Length)),
+         Success);
+      Finish_Message (Result, Position, Success);
+      return Result;
+   end Encode_Encrypted_Extensions;
 end Flyology.QUIC.TLS_Handshake_Policy;
