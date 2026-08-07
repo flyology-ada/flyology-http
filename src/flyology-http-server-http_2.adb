@@ -2009,6 +2009,8 @@ package body Flyology.HTTP.Server.HTTP_2 is
                  Scheme_Text not in "http" | "https"
                  or else Path_Text = ""
                  or else Ada.Strings.Fixed.Index (Path_Text, "#") /= 0
+                 or else (Path_Text = "*"
+                   and then Method_Text /= "OPTIONS")
                then
                   raise Request_Message_Error with
                     "unsupported HTTP/2 request target";

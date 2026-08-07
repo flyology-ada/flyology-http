@@ -58,6 +58,13 @@ class Peer:
         self.flush()
         return stream_id
 
+    def send_pseudo_headers(self, headers: list[tuple[str, str]]) -> int:
+        """Send a field section verbatim, bypassing the request template."""
+        stream_id = self.connection.get_next_available_stream_id()
+        self.connection.send_headers(stream_id, headers, end_stream=True)
+        self.flush()
+        return stream_id
+
     def pump(self) -> None:
         payload = self.socket.recv(65535)
         if not payload:
@@ -81,6 +88,14 @@ class Peer:
         while not all(stream_id in self.ended for stream_id in stream_ids):
             if time.monotonic() >= deadline:
                 raise AssertionError(f"timed out waiting for streams {stream_ids}")
+            self.pump()
+
+    def wait_settled(self, stream_id: int) -> None:
+        """Wait until a stream is either answered or reset."""
+        deadline = time.monotonic() + 10.0
+        while stream_id not in self.reset and stream_id not in self.ended:
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"timed out waiting for {stream_id}")
             self.pump()
 
     def wait_reset(self, stream_id: int) -> None:
@@ -171,6 +186,44 @@ def run(port: int, tls: bool, certificate: str) -> None:
     peer.wait(healthy)
     assert status(peer.headers[healthy]) == "200"
     assert bytes(peer.bodies[healthy]) == b"/basic"
+
+    # Pseudo-header values are not field values as far as HPACK is concerned,
+    # so nothing on the wire keeps CR LF out of them. :authority is spliced
+    # into the header block the application layer re-parses as CRLF-delimited
+    # lines, :path becomes the target handed to the log sink, and asterisk
+    # form is legal only for OPTIONS. Each has to be a stream error, and the
+    # connection has to survive it.
+    scheme = "https" if tls else "http"
+    for injected in (
+        [
+            (":method", "GET"),
+            (":scheme", scheme),
+            (":authority", "localhost\r\nTransfer-Encoding: chunked"),
+            (":path", "/basic"),
+        ],
+        [
+            (":method", "GET"),
+            (":scheme", scheme),
+            (":authority", "localhost"),
+            (":path", "/basic\r\nforged-log-line"),
+        ],
+        [
+            (":method", "GET"),
+            (":scheme", scheme),
+            (":authority", "localhost"),
+            (":path", "*"),
+        ],
+    ):
+        spliced = peer.send_pseudo_headers(injected)
+        peer.wait_settled(spliced)
+        assert spliced in peer.reset and spliced not in peer.headers, (
+            f"server answered an unvalidated field section {injected} "
+            f"with {peer.headers.get(spliced)}"
+        )
+
+    survivor = peer.request("GET", "/basic")
+    peer.wait(survivor)
+    assert status(peer.headers[survivor]) == "200"
 
     large = peer.request("GET", "/large")
     peer.wait(large)

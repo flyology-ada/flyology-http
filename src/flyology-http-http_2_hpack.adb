@@ -392,6 +392,18 @@ package body Flyology.HTTP.HTTP_2_HPACK is
       end if;
    end Decode_Response;
 
+   --  RFC 9113 8.2.1 forbids NUL, CR, and LF anywhere in a field value.
+   --  Regular fields reach that rule through Headers.Add; the request
+   --  pseudo-fields bypass it and go on to become the request target and the
+   --  reconstructed Host line, neither of which admits whitespace or DEL in
+   --  the HTTP/1 parser. Each accepted pseudo-field value is scanned once,
+   --  where it is accepted; the refusal itself waits until the whole field
+   --  section has been decoded, so the shared compression context stays in
+   --  step with the peer and the request remains a stream error.
+   function Valid_Pseudo_Value (Value : String) return Boolean is
+     (for all Item of Value =>
+        Character'Pos (Item) > 32 and then Character'Pos (Item) /= 127);
+
    procedure Decode_Request
      (Item        : in out Decoder;
       Block       : Ada.Streams.Stream_Element_Array;
@@ -409,6 +421,7 @@ package body Flyology.HTTP.HTTP_2_HPACK is
       Saw_Scheme    : Boolean := False;
       Saw_Authority : Boolean := False;
       Saw_Path      : Boolean := False;
+      Bad_Pseudo    : Boolean := False;
       List_Size     : Natural := 0;
    begin
       Flyology.HTTP.Headers.Clear (Fields);
@@ -499,6 +512,8 @@ package body Flyology.HTTP.HTTP_2_HPACK is
                         raise Invalid_Request_Fields with
                           "invalid HTTP/2 request pseudo-field position";
                      end if;
+                     Bad_Pseudo :=
+                       Bad_Pseudo or else not Valid_Pseudo_Value (Value);
                      if Name = ":method" then
                         if Saw_Method then
                            raise Invalid_Request_Fields with
@@ -560,7 +575,10 @@ package body Flyology.HTTP.HTTP_2_HPACK is
          end;
       end loop;
 
-      if Is_Trailers then
+      if Bad_Pseudo then
+         raise Invalid_Request_Fields with
+           "invalid HTTP/2 request pseudo-field value";
+      elsif Is_Trailers then
          if Saw_Method or else Saw_Scheme or else Saw_Authority
            or else Saw_Path
          then

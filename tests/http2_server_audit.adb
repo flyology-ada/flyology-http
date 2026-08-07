@@ -4,21 +4,27 @@
 --  connection-level flow control and output scheduling stay observable.
 with Ada.Streams;
 with Ada.Strings.Fixed;
+with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology;
 with Flyology.IO;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.HTTP_2;
+with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Connections;
 with Flyology.IO.Sockets;
 with Interfaces;
 
 procedure HTTP2_Server_Audit is
    use Ada.Streams;
+   use Ada.Strings.Unbounded;
    use type Interfaces.Unsigned_32;
    package App renames Flyology.HTTP.Server.Applications;
    package Connections renames Flyology.IO.Connections;
    package Sockets renames Flyology.IO.Sockets;
+
+   CR : constant Character := Character'Val (13);
+   LF : constant Character := Character'Val (10);
 
    Failures : Natural := 0;
 
@@ -40,6 +46,21 @@ procedure HTTP2_Server_Audit is
    procedure Handle (State : in out Context; X : in out App.Exchange);
 
    package Engine is new Flyology.HTTP.Server.HTTP_2 (Context, Handle);
+   package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+   --  A routed counterpart of the raw engine handler. An asterisk-form
+   --  target only reaches a handler once it has matched a one-segment
+   --  parameter.
+   procedure By_Id (State : in out Context; X : in out App.Exchange);
+
+   Routes : Routing.Router
+     (Capacity => 2, Slashes => Routing.Strict_Slashes);
+
+   procedure By_Id (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+   begin
+      X.Text (200, "id=" & X.Parameter ("id"));
+   end By_Id;
 
    --  A response field section far larger than one frame, so the encoded head
    --  spans many CONTINUATION fragments and the connection output stays
@@ -69,7 +90,14 @@ procedure HTTP2_Server_Audit is
          end loop;
          X.End_Stream;
       else
-         X.Text (200, "ok");
+         --  Report what the pseudo-headers turned into: the raw target the
+         --  log sink would see, and the fields the reconstructed header
+         --  block re-parses out of the spliced authority.
+         X.Text
+           (200,
+            "target=" & X.Request_Target &
+              " te=" & X.Request_Header ("transfer-encoding") &
+              " hosts=" & Decimal (X.Request_Header_Count ("host")));
       end if;
    end Handle;
 
@@ -140,6 +168,15 @@ procedure HTTP2_Server_Audit is
    is
      (Literal (":method", Method) & Literal (":scheme", "http") &
       Literal (":authority", "localhost") & Literal (":path", Path));
+
+   --  The same field section with every pseudo-header under test control,
+   --  so an authority or a target may carry octets the encoder would never
+   --  produce on its own.
+   function Pseudo_Block
+     (Method, Path, Authority : String) return Stream_Element_Array
+   is
+     (Literal (":method", Method) & Literal (":scheme", "http") &
+      Literal (":authority", Authority) & Literal (":path", Path));
 
    procedure Send_Frame
      (Socket    : Sockets.Socket_Type;
@@ -212,20 +249,93 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 5;
+   Sessions : constant := 9;
 
-   procedure Connect_Peer (Socket : in out Sockets.Socket_Type) is
+   Router_Manager  : aliased Connections.Server (Capacity => 1);
+   Router_Listener : Sockets.Socket_Type;
+   Router_Address  : Sockets.Endpoint;
+
+   procedure Connect_Peer
+     (Socket : in out Sockets.Socket_Type;
+      Where  : Sockets.Endpoint) is
    begin
       Sockets.Create_Socket (Socket);
       Sockets.Connect
         (Socket,
-         Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Address.Port),
+         Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Where.Port),
          Timeout => 10.0);
       Sockets.Send_All (Socket, Preface, Timeout => 10.0);
       Send_Frame (Socket, Settings_Frame, 0, 0, Empty);
    end Connect_Peer;
 
+   procedure Connect_Peer (Socket : in out Sockets.Socket_Type) is
+   begin
+      Connect_Peer (Socket, Address);
+   end Connect_Peer;
+
+   --  Drive one request field section on an established connection and
+   --  report what the server made of it: the response body it produced, or
+   --  the fact that it refused the stream outright.
+   procedure Probe_Stream
+     (Socket    : Sockets.Socket_Type;
+      Stream_ID : Positive;
+      Block     : Stream_Element_Array;
+      Response  : out Unbounded_String;
+      Refused   : out Boolean)
+   is
+      Info    : Frame_Info;
+      Payload : Stream_Element_Array (1 .. 16_384) := (others => 0);
+      Settled : Boolean := False;
+   begin
+      Response := Null_Unbounded_String;
+      Refused := False;
+      Send_Frame
+        (Socket, Headers_Frame, End_Stream_Flag or End_Headers_Flag,
+         Stream_ID, Block);
+      while not Settled loop
+         Read_Frame_Header (Socket, Info, Wait => 5.0);
+         Read_Payload (Socket, Info, Payload, Wait => 5.0);
+         if Info.Stream_ID = Stream_ID
+           and then Info.Kind = Data_Frame
+         then
+            for Offset in 1 .. Stream_Element_Offset (Info.Length) loop
+               Append
+                 (Response, Character'Val (Natural (Payload (Offset))));
+            end loop;
+            Settled := (Info.Flags and End_Stream_Flag) /= 0;
+         elsif Info.Stream_ID = Stream_ID
+           and then Info.Kind in Headers_Frame | Continuation_Frame
+         then
+            Settled := (Info.Flags and End_Stream_Flag) /= 0;
+         elsif Info.Stream_ID = Stream_ID
+           and then Info.Kind = Reset_Stream_Frame
+         then
+            Refused := True;
+            Settled := True;
+         elsif Info.Kind = Goaway_Frame then
+            Refused := True;
+            Settled := True;
+         end if;
+      end loop;
+   end Probe_Stream;
+
+   --  The same probe on a connection of its own, so a refusal that escalates
+   --  to the connection cannot disturb the following probe.
+   procedure Probe
+     (Block    : Stream_Element_Array;
+      Response : out Unbounded_String;
+      Refused  : out Boolean)
+   is
+      Socket : Sockets.Socket_Type;
+   begin
+      Connect_Peer (Socket);
+      Probe_Stream (Socket, 1, Block, Response, Refused);
+      Sockets.Close_Socket (Socket);
+   end Probe;
+
 begin
+   Routes.Get ("/{id}", By_Id'Access, Name => "byid");
+
    Sockets.Create_Socket (Listener);
    Sockets.Set_Socket_Option
      (Listener, Sockets.Socket_Level, (Sockets.Reuse_Address, True));
@@ -234,6 +344,16 @@ begin
       Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Sockets.Any_Port));
    Sockets.Listen_Socket (Listener, Length => 4);
    Address := Sockets.Get_Socket_Name (Listener);
+
+   Sockets.Create_Socket (Router_Listener);
+   Sockets.Set_Socket_Option
+     (Router_Listener, Sockets.Socket_Level,
+      (Sockets.Reuse_Address, True));
+   Sockets.Bind_Socket
+     (Router_Listener,
+      Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Sockets.Any_Port));
+   Sockets.Listen_Socket (Router_Listener, Length => 4);
+   Router_Address := Sockets.Get_Socket_Name (Router_Listener);
 
    declare
       task Server_Task is
@@ -509,8 +629,108 @@ begin
            (Update_Code = 1,
             "idle WINDOW_UPDATE is a connection PROTOCOL_ERROR");
       end;
+
+      ------------------------------------------------------------------------
+      --  Findings 3, 16 and 31: HPACK returns the four request pseudo-header
+      --  values as raw octets. :authority is spliced into the header block
+      --  the application layer re-parses as CRLF-delimited "Name: Value"
+      --  lines, :path becomes the target handed to the log sink, and an
+      --  asterisk-form :path reaches a handler for methods HTTP/1 refuses
+      --  it for.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line
+        ("findings 3, 16, 31: unvalidated HTTP/2 pseudo-header octets");
+      declare
+         Response : Unbounded_String;
+         Refused  : Boolean;
+      begin
+         Probe
+           (Pseudo_Block
+              ("GET", "/probe",
+               "localhost" & CR & LF & "Transfer-Encoding: chunked"),
+            Response, Refused);
+         Ada.Text_IO.Put_Line
+           ("  spliced :authority yielded " &
+              (if Refused then "a refused stream"
+               else '"' & To_String (Response) & '"'));
+         Check
+           (Refused,
+            "an :authority carrying CR LF is refused");
+         Check
+           (Index (Response, "te=chunked") = 0,
+            "no Transfer-Encoding is injected through :authority");
+
+         Probe
+           (Pseudo_Block
+              ("GET", "/x" & CR & LF & "forged-log-line", "localhost"),
+            Response, Refused);
+         Ada.Text_IO.Put_Line
+           ("  control-byte :path yielded " &
+              (if Refused then "a refused stream"
+               else '"' & To_String (Response) & '"'));
+         Check (Refused, "a :path carrying CR LF is refused");
+         Check
+           (Index (Response, "forged-log-line") = 0,
+            "no forged line reaches the request target");
+
+         Probe (Pseudo_Block ("GET", "*", "localhost"), Response, Refused);
+         Ada.Text_IO.Put_Line
+           ("  asterisk-form GET yielded " &
+              (if Refused then "a refused stream"
+               else '"' & To_String (Response) & '"'));
+         Check (Refused, "asterisk-form :path is refused for GET");
+
+         Probe
+           (Pseudo_Block ("OPTIONS", "*", "localhost"), Response, Refused);
+         Check
+           (not Refused and then Index (Response, "target=*") /= 0,
+            "asterisk-form :path is still admitted for OPTIONS");
+      end;
    end;
 
+   ---------------------------------------------------------------------------
+   --  Finding 31 reaches its parameterized route only through the router,
+   --  so the routed half of it needs a session of its own.
+   ---------------------------------------------------------------------------
+   declare
+      task Router_Task is
+         pragma Task_Info (Flyology.Native_Task);
+      end Router_Task;
+
+      task body Router_Task is
+         Channel : aliased Connections.Connection;
+         Peer    : Sockets.Endpoint;
+      begin
+         Connections.Accept_Connection
+           (Router_Manager, Router_Listener, Channel, Peer, Timeout => 20.0);
+         Routes.Serve
+           (State, Channel, Peer,
+            Mode => Flyology.HTTP.Server.HTTP_2_Only,
+            Timeout => 20.0, Max_Connection_Age => 20.0);
+         Connections.Close (Channel);
+      exception
+         when others => null;
+      end Router_Task;
+
+      Socket   : Sockets.Socket_Type;
+      Response : Unbounded_String;
+      Refused  : Boolean;
+   begin
+      Connect_Peer (Socket, Router_Address);
+      Probe_Stream
+        (Socket, 1, Pseudo_Block ("GET", "*", "localhost"),
+         Response, Refused);
+      Ada.Text_IO.Put_Line
+        ("  routed asterisk-form GET yielded " &
+           (if Refused then "a refused stream"
+            else '"' & To_String (Response) & '"'));
+      Check
+        (Refused and then Index (Response, "id=*") = 0,
+         "asterisk-form :path never binds a route parameter");
+      Sockets.Close_Socket (Socket);
+   end;
+
+   Sockets.Close_Socket (Router_Listener);
    Sockets.Close_Socket (Listener);
    if Failures /= 0 then
       raise Program_Error with
