@@ -49,4 +49,17 @@ begin
       pragma Assert (Server.Encoded_Number (3 .. 4) = (0, 0));
       pragma Assert (Server.Truncated_Number = 1);
    end;
+
+   declare
+      Short : constant Unprotected_Long_Header :=
+        Remove_Short_Header_Protection
+          (16#5D#,
+           (16#AB#, 16#AA#, 16#AA#, 16#AA#),
+           (16#1C#, 16#AA#, 16#BB#, 16#CC#, 16#DD#));
+   begin
+      pragma Assert (Short.First_Byte = 16#41#);
+      pragma Assert (Short.Number_Length = 2);
+      pragma Assert (Short.Encoded_Number (1 .. 2) = (1, 16#11#));
+      pragma Assert (Short.Truncated_Number = 16#0111#);
+   end;
 end Flyology.QUIC.Protection_Policy.Smoke;

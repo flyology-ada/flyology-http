@@ -46,4 +46,19 @@ is
            ((Remove_Long_Header_Protection'Result.First_Byte and 16#03#) + 1)
        and then Remove_Long_Header_Protection'Result.Truncated_Number <
          2**(8 * Remove_Long_Header_Protection'Result.Number_Length);
+
+   function Remove_Short_Header_Protection
+     (First_Byte            : Ada.Streams.Stream_Element;
+      Protected_Number      : Packet_Number_Prefix;
+      Mask                  : Header_Mask) return Unprotected_Long_Header
+   with
+     Global => null,
+     Post =>
+       Remove_Short_Header_Protection'Result.First_Byte =
+         (First_Byte xor (Mask (1) and 16#1F#))
+       and then Remove_Short_Header_Protection'Result.Number_Length =
+         Natural
+           ((Remove_Short_Header_Protection'Result.First_Byte and 16#03#) + 1)
+       and then Remove_Short_Header_Protection'Result.Truncated_Number <
+         2**(8 * Remove_Short_Header_Protection'Result.Number_Length);
 end Flyology.QUIC.Protection_Policy;
