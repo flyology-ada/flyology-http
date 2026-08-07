@@ -15,6 +15,7 @@ alr gnatprove \
   --report=all \
   -f \
   -u \
+  flyology-quic-initial_packet_policy.adb \
   flyology-quic-long_header_policy.adb \
   flyology-quic-packet_number_policy.adb \
   flyology-quic-protection_policy.adb \

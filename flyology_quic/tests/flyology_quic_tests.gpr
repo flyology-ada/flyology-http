@@ -7,6 +7,7 @@ project Flyology_QUIC_Tests is
    for Exec_Dir use "bin";
    for Main use
      ("flyology-quic-crypto_openssl-smoke.adb",
+      "flyology-quic-initial_packet_policy-smoke.adb",
       "flyology-quic-long_header_policy-smoke.adb",
       "flyology-quic-packet_number_policy-smoke.adb",
       "flyology-quic-protection_policy-smoke.adb",

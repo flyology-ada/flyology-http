@@ -8,6 +8,8 @@ for the next layer.
 - RFC 9000 examples cover variable integers and packet-number reconstruction.
 - RFC 8999 and RFC 9000 long-header invariants cover version dispatch,
   connection-ID boundaries, truncation, and QUIC v1 packet-type framing.
+- RFC 9001 client and server Initial packets cover token and protected-length
+  envelope boundaries, including coalesced packet accounting.
 - Boundary tests cover every variable-integer width and the maximum packet
   number gap representable by QUIC's four-byte packet-number field.
 - RFC 9001 Appendix A covers both v1 Initial traffic secrets, keys, IVs,
