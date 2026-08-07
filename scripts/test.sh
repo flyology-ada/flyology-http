@@ -121,6 +121,15 @@ flyology-http-http_2_payloads-smoke
 flyology-http-http_2_policy-smoke
 flyology-http-http_2_requests-smoke
 flyology-http-http_2_settings-smoke
+flyology-http-http_3_control_policy-smoke
+flyology-http-http_3_frame_policy-smoke
+flyology-http-http_3_header_policy-smoke
+flyology-http-http_3_message_policy-smoke
+flyology-http-http_3_settings_policy-smoke
+flyology-http-http_3_stream_policy-smoke
+flyology-http-qpack_field_section_policy-smoke
+flyology-http-qpack_integer_policy-smoke
+flyology-http-qpack_static_table-smoke
 flyology-http-route_parameter_policy-smoke
 flyology-websocket_deflate_policy_smoke
 buffers_smoke

@@ -6,7 +6,7 @@ crate_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$crate_root"
 FLYOLOGY_QUIC_DOCUMENTATION=true
 export FLYOLOGY_QUIC_DOCUMENTATION
-alr build
+alr build --stop-after=generation
 alr exec -- gnatdoc \
   --backend=html \
   --warnings \

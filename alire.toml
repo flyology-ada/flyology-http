@@ -12,6 +12,10 @@ project-files = ["flyology_http.gpr"]
 
 [[depends-on]]
 flyology = "~0.1.0-dev"
+flyology_quic = "*"
+
+[[pins]]
+flyology_quic = { path = "flyology_quic" }
 
 [[actions]]
 type = "test"

@@ -16,12 +16,6 @@ for test in \
   flyology-quic-handshake_connection-smoke \
   flyology-quic-handshake_packet_policy-smoke \
   flyology-quic-handshake_sender-smoke \
-  flyology-quic-http_3_control_policy-smoke \
-  flyology-quic-http_3_frame_policy-smoke \
-  flyology-quic-http_3_header_policy-smoke \
-  flyology-quic-http_3_message_policy-smoke \
-  flyology-quic-http_3_settings_policy-smoke \
-  flyology-quic-http_3_stream_policy-smoke \
   flyology-quic-initial_frame_policy-smoke \
   flyology-quic-initial_connection-smoke \
   flyology-quic-initial_receiver-smoke \
@@ -32,9 +26,6 @@ for test in \
   flyology-quic-one_rtt_sender-smoke \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
-  flyology-quic-qpack_field_section_policy-smoke \
-  flyology-quic-qpack_integer_policy-smoke \
-  flyology-quic-qpack_static_table-smoke \
   flyology-quic-stream_frame_policy-smoke \
   flyology-quic-stream_reassembly_policy-smoke \
   flyology-quic-tls_authentication_policy-smoke \

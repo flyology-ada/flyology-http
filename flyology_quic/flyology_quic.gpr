@@ -18,7 +18,9 @@ library project Flyology_QUIC is
          null;
       when "true" =>
          for Languages use ("Ada");
-         for Source_Files use ("flyology-quic.ads");
+         for Source_Files use
+           ("flyology-quic.ads",
+            "flyology-quic-varint_policy.ads");
    end case;
 
    package Compiler is

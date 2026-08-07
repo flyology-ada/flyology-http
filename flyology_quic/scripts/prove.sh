@@ -21,21 +21,12 @@ alr gnatprove \
   flyology-quic-crypto_frame_policy.adb \
   flyology-quic-crypto_reassembly_policy.adb \
   flyology-quic-handshake_packet_policy.adb \
-  flyology-quic-http_3_control_policy.adb \
-  flyology-quic-http_3_frame_policy.adb \
-  flyology-quic-http_3_header_policy.adb \
-  flyology-quic-http_3_message_policy.adb \
-  flyology-quic-http_3_settings_policy.adb \
-  flyology-quic-http_3_stream_policy.adb \
   flyology-quic-initial_frame_policy.adb \
   flyology-quic-initial_packet_policy.adb \
   flyology-quic-long_header_policy.adb \
   flyology-quic-one_rtt_packet_policy.adb \
   flyology-quic-packet_number_policy.adb \
   flyology-quic-protection_policy.adb \
-  flyology-quic-qpack_field_section_policy.adb \
-  flyology-quic-qpack_integer_policy.adb \
-  flyology-quic-qpack_static_table.adb \
   flyology-quic-stream_frame_policy.adb \
   flyology-quic-stream_reassembly_policy.adb \
   flyology-quic-tls_authentication_policy.adb \

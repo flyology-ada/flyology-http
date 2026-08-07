@@ -11,7 +11,9 @@ project-files = ["http_policy.gpr"]
 
 [[depends-on]]
 flyology_http = "*"
+flyology_quic = "*"
 gnatprove = "^16.1.0"
 
 [[pins]]
 flyology_http = { path = ".." }
+flyology_quic = { path = "../flyology_quic" }
