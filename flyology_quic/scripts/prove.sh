@@ -20,6 +20,7 @@ alr gnatprove \
   flyology-quic-crypto_frame_policy.adb \
   flyology-quic-crypto_reassembly_policy.adb \
   flyology-quic-handshake_packet_policy.adb \
+  flyology-quic-http_3_control_policy.adb \
   flyology-quic-http_3_frame_policy.adb \
   flyology-quic-http_3_settings_policy.adb \
   flyology-quic-http_3_stream_policy.adb \
