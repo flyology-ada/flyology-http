@@ -19,6 +19,7 @@ project Flyology_QUIC_Tests is
       "flyology-quic-initial_sender-smoke.adb",
       "flyology-quic-initial_packet_policy-smoke.adb",
       "flyology-quic-long_header_policy-smoke.adb",
+      "flyology-quic-one_rtt_packet_policy-smoke.adb",
       "flyology-quic-packet_number_policy-smoke.adb",
       "flyology-quic-protection_policy-smoke.adb",
       "flyology-quic-tls_authentication_policy-smoke.adb",

@@ -20,6 +20,7 @@ for test in \
   flyology-quic-initial_sender-smoke \
   flyology-quic-initial_packet_policy-smoke \
   flyology-quic-long_header_policy-smoke \
+  flyology-quic-one_rtt_packet_policy-smoke \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
   flyology-quic-tls_authentication_policy-smoke \
