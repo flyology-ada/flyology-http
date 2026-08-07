@@ -7,6 +7,7 @@ cd "$crate_root/tests"
 alr build
 
 for test in \
+  flyology-quic-application_connection-smoke \
   flyology-quic-connection_state_policy-smoke \
   flyology-quic-crypto_frame_policy-smoke \
   flyology-quic-crypto_openssl-smoke \
