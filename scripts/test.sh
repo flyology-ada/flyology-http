@@ -132,7 +132,12 @@ http_client_tls_closure
 http_client_tls_smoke
 http2_server_integration
 websocket_client_smoke
-websocket_client_tls_smoke'
+websocket_client_tls_smoke
+http_server_audit
+http_routing_audit
+http2_server_audit
+http_client_audit
+websocket_server_audit'
 
 connection_hook_mains='http_client_pool_races
 http_client_deadline_matrix

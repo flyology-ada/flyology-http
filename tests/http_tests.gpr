@@ -61,7 +61,12 @@ project HTTP_Tests is
       "http2_conformance_server.adb",
       "http2_client_soak.adb",
       "http2_interop_client.adb",
-      "websocket_conformance_server.adb");
+      "websocket_conformance_server.adb",
+      "http_server_audit.adb",
+      "http_routing_audit.adb",
+      "http2_server_audit.adb",
+      "http_client_audit.adb",
+      "websocket_server_audit.adb");
    for Create_Missing_Dirs use "True";
 
    package Compiler is
