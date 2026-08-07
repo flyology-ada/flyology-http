@@ -48,13 +48,32 @@ procedure HTTP2_Server_Audit is
    package Engine is new Flyology.HTTP.Server.HTTP_2 (Context, Handle);
    package Routing is new Flyology.HTTP.Server.Routing (Context);
 
-   --  A routed counterpart of the raw engine handler. An asterisk-form
-   --  target only reaches a handler once it has matched a one-segment
-   --  parameter.
+   --  Routed counterparts of the raw engine handlers. SSE is only reachable
+   --  through a route that permits it, and an asterisk-form target only
+   --  reaches a handler once it has matched a one-segment parameter.
+   procedure Events (State : in out Context; X : in out App.Exchange);
    procedure By_Id (State : in out Context; X : in out App.Exchange);
 
    Routes : Routing.Router
      (Capacity => 2, Slashes => Routing.Strict_Slashes);
+
+   procedure Events (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+   begin
+      X.Begin_SSE;
+      if X.Request_Target = "/sse/event" then
+         X.Send_SSE (Data => "safe", Event => "tick" & LF & "data: forged");
+      elsif X.Request_Target = "/sse/id" then
+         X.Send_SSE (Data => "safe", Id => "1" & LF & "data: forged");
+      elsif X.Request_Target = "/sse/comment" then
+         X.Send_SSE_Comment ("ping" & LF & "data: forged");
+      elsif X.Request_Target = "/sse/utf8" then
+         X.Send_SSE (Data => "bad" & Character'Val (16#FF#) & "byte");
+      else
+         X.Send_SSE (Data => "hello", Event => "ok");
+      end if;
+      X.End_SSE;
+   end Events;
 
    procedure By_Id (State : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (State);
@@ -334,6 +353,11 @@ procedure HTTP2_Server_Audit is
    end Probe;
 
 begin
+   Routes.Get
+     ("/sse/{kind}", Events'Access, Name => "sse",
+      Policy =>
+        (Routing.Default_Route_Policy with delta
+           Upgrade => Routing.Allow_SSE));
    Routes.Get ("/{id}", By_Id'Access, Name => "byid");
 
    Sockets.Create_Socket (Listener);
@@ -689,8 +713,11 @@ begin
    end;
 
    ---------------------------------------------------------------------------
-   --  Finding 31 reaches its parameterized route only through the router,
-   --  so the routed half of it needs a session of its own.
+   --  Finding 4: the HTTP/2 stream backend re-implements SSE serialization
+   --  and drops the newline and UTF-8 validation the HTTP/1.1 writer
+   --  applies, so an event name, an id, or a comment splits the stream into
+   --  attacker-chosen events. Finding 31 reaches its parameterized route
+   --  only through the router, so both share this session.
    ---------------------------------------------------------------------------
    declare
       task Router_Task is
@@ -715,10 +742,52 @@ begin
       Socket   : Sockets.Socket_Type;
       Response : Unbounded_String;
       Refused  : Boolean;
+
+      Forged : constant String := LF & "data: forged";
    begin
+      Ada.Text_IO.Put_Line
+        ("finding 4: SSE field validation on the HTTP/2 backend");
       Connect_Peer (Socket, Router_Address);
+
       Probe_Stream
-        (Socket, 1, Pseudo_Block ("GET", "*", "localhost"),
+        (Socket, 1, Request_Block ("GET", "/sse/event"), Response, Refused);
+      Ada.Text_IO.Put_Line
+        ("  newline event name produced " &
+           (if Refused then "a refused stream"
+            else Decimal (Length (Response)) & " body bytes"));
+      Check
+        (Index (Response, Forged) = 0,
+         "a newline in an SSE event name cannot forge a data line");
+
+      Probe_Stream
+        (Socket, 3, Request_Block ("GET", "/sse/id"), Response, Refused);
+      Check
+        (Index (Response, Forged) = 0,
+         "a newline in an SSE id cannot forge a data line");
+
+      Probe_Stream
+        (Socket, 5, Request_Block ("GET", "/sse/comment"), Response, Refused);
+      Ada.Text_IO.Put_Line
+        ("  newline comment produced """ & To_String (Response) & '"');
+      Check
+        (Index (Response, Forged) = 0,
+         "a newline in an SSE comment cannot forge a data line");
+
+      Probe_Stream
+        (Socket, 7, Request_Block ("GET", "/sse/utf8"), Response, Refused);
+      Check
+        (Index (Response, String'(1 => Character'Val (16#FF#))) = 0,
+         "invalid UTF-8 never reaches the SSE body");
+
+      Probe_Stream
+        (Socket, 9, Request_Block ("GET", "/sse/ok"), Response, Refused);
+      Check
+        (not Refused and then Index (Response, "event: ok") /= 0
+           and then Index (Response, "data: hello") /= 0,
+         "a well-formed SSE event is still served over HTTP/2");
+
+      Probe_Stream
+        (Socket, 11, Pseudo_Block ("GET", "*", "localhost"),
          Response, Refused);
       Ada.Text_IO.Put_Line
         ("  routed asterisk-form GET yielded " &

@@ -1668,6 +1668,84 @@ package body Flyology.HTTP.Server.HTTP_2 is
    function Decimal (Value : Natural) return String is
      (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
 
+   --  Refuse an SSE field whose value would end the field's line and start
+   --  another one. The HTTP/1.1 writer applies the identical rule before it
+   --  serializes, and both transports must reject the same call.
+   procedure Validate_SSE_Field (Value : String; Name : String) is
+   begin
+      if Ada.Strings.Fixed.Index
+        (Value, String'(1 => Character'Val (10))) /= 0
+        or else Ada.Strings.Fixed.Index
+          (Value, String'(1 => Character'Val (13))) /= 0
+      then
+         raise Program_Error with Name & " contains a newline";
+      end if;
+   end Validate_SSE_Field;
+
+   --  Accept exactly the well-formed UTF-8 sequences the HTTP/1.1 SSE
+   --  writer accepts: no overlong forms, no surrogates, nothing above
+   --  U+10FFFF.
+   function Valid_UTF8 (Value : String) return Boolean is
+      Index : Natural := Value'First;
+
+      function Byte (Offset : Natural) return Natural is
+        (Character'Pos (Value (Index + Offset)));
+
+      function Continuation (Offset : Natural) return Boolean is
+        (Index + Offset <= Value'Last
+         and then Byte (Offset) in 16#80# .. 16#BF#);
+   begin
+      while Index <= Value'Last loop
+         if Byte (0) <= 16#7F# then
+            Index := Index + 1;
+         elsif Byte (0) in 16#C2# .. 16#DF#
+           and then Continuation (1)
+         then
+            Index := Index + 2;
+         elsif Byte (0) = 16#E0#
+           and then Index + 2 <= Value'Last
+           and then Byte (1) in 16#A0# .. 16#BF#
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) in 16#E1# .. 16#EC# | 16#EE# .. 16#EF#
+           and then Continuation (1)
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) = 16#ED#
+           and then Index + 2 <= Value'Last
+           and then Byte (1) in 16#80# .. 16#9F#
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) = 16#F0#
+           and then Index + 3 <= Value'Last
+           and then Byte (1) in 16#90# .. 16#BF#
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         elsif Byte (0) in 16#F1# .. 16#F3#
+           and then Continuation (1)
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         elsif Byte (0) = 16#F4#
+           and then Index + 3 <= Value'Last
+           and then Byte (1) in 16#80# .. 16#8F#
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         else
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Valid_UTF8;
+
    overriding procedure Send_Event
      (Item          : in out Stream_Backend;
       Data          : String;
@@ -1683,6 +1761,16 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Payload : Unbounded_String;
       First : Integer := Data'First;
    begin
+      Validate_SSE_Field (Event, "SSE event name");
+      Validate_SSE_Field (Id, "SSE id");
+      if not Valid_UTF8 (Data)
+        or else not Valid_UTF8 (Event)
+        or else not Valid_UTF8 (Id)
+        or else Ada.Strings.Fixed.Index
+          (Id, String'(1 => Character'Val (0))) /= 0
+      then
+         raise Program_Error with "SSE fields must contain valid UTF-8";
+      end if;
       if Event /= "" then
          Append (Payload, "event: " & Event & Character'Val (10));
       end if;
@@ -1738,12 +1826,49 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Token   : access Flyology.Cancellation.Token)
    is
       pragma Unreferenced (Timeout, Token);
+      Payload : Unbounded_String;
+      First : Integer := Comment'First;
    begin
+      if not Valid_UTF8 (Comment) then
+         raise Program_Error with "SSE comment must contain valid UTF-8";
+      end if;
+      if Comment = "" then
+         Append (Payload, ":" & Character'Val (10));
+      else
+         while First <= Comment'Last loop
+            declare
+               Break : Natural := 0;
+               Last : Integer;
+            begin
+               for Index in First .. Comment'Last loop
+                  if Comment (Index) in
+                    Character'Val (10) | Character'Val (13)
+                  then
+                     Break := Index;
+                     exit;
+                  end if;
+               end loop;
+               Last := (if Break = 0 then Comment'Last else Break - 1);
+               Append (Payload, ":");
+               if Last >= First then
+                  Append (Payload, " " & Comment (First .. Last));
+               end if;
+               Append (Payload, Character'Val (10));
+               exit when Break = 0;
+               First := Break + 1;
+               if Comment (Break) = Character'Val (13)
+                 and then First <= Comment'Last
+                 and then Comment (First) = Character'Val (10)
+               then
+                  First := First + 1;
+               end if;
+            end;
+         end loop;
+      end if;
+      Append (Payload, Character'Val (10));
       Queue_Data
         (Item, Bytes.To_Array
-          (Bytes.From_Byte_String
-             ((if Comment = "" then ":" else ": " & Comment)
-              & Character'Val (10) & Character'Val (10))));
+          (Bytes.From_Byte_String (To_String (Payload))));
    end Send_SSE_Comment;
 
    overriding procedure End_SSE
