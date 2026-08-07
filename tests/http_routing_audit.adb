@@ -44,6 +44,20 @@ procedure HTTP_Routing_Audit is
       end if;
    end Expect;
 
+   procedure Expect_In
+     (Label    : String;
+      Output   : String;
+      Fragment : String) is
+   begin
+      if Ada.Strings.Fixed.Index (Output, Fragment) = 0 then
+         Failures := Failures + 1;
+         Ada.Text_IO.Put_Line
+           (Ada.Text_IO.Standard_Error,
+            "FAIL " & Label & ": expected [" & Fragment
+            & "] in [" & Output & "]");
+      end if;
+   end Expect_In;
+
    type Memory_Transport is limited new HTTP_Server.Transport with record
       Input  : Unbounded_String;
       Output : Unbounded_String;
@@ -702,20 +716,6 @@ procedure HTTP_Routing_Audit is
          end;
          return To_String (Wire.Output);
       end Answer;
-
-      procedure Expect_In
-        (Label    : String;
-         Output   : String;
-         Fragment : String) is
-      begin
-         if Ada.Strings.Fixed.Index (Output, Fragment) = 0 then
-            Failures := Failures + 1;
-            Ada.Text_IO.Put_Line
-              (Ada.Text_IO.Standard_Error,
-               "FAIL " & Label & ": expected [" & Fragment
-               & "] in [" & Output & "]");
-         end if;
-      end Expect_In;
    begin
       Late.Get
         ("/private", Private_Page'Access, Name => "private",
@@ -781,6 +781,84 @@ procedure HTTP_Routing_Audit is
       end;
    end Check_Authentication_Challenge;
 
+   --  Finding 11. The Authenticate generic formal returns its security
+   --  decision through an out-mode Boolean, which Ada passes with copy-out
+   --  and no copy-in, so a hook with a path that returns without assigning it
+   --  leaves the middleware reading whatever the callee's frame held. Whether
+   --  that byte is nonzero is a property of the generated frame layout, so
+   --  the bypass itself cannot be pinned deterministically; changing the mode
+   --  to in out is the fix. What is pinned here is the only deterministic
+   --  backstop the middleware has: an accepted decision that installs no
+   --  principal must still be refused.
+   procedure Check_Authentication_Backstop is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      --  Accepts everything but names nobody.
+      procedure Anonymous_Verify
+        (Scheme        : String;
+         Credential    : String;
+         Authenticated : out Boolean;
+         Principal     : out Unbounded_String)
+      is
+         pragma Unreferenced (Scheme, Credential);
+      begin
+         Authenticated := True;
+         Principal := Null_Unbounded_String;
+      end Anonymous_Verify;
+
+      package Anonymous_Auth is new
+        Flyology.HTTP.Server.Middleware_Authentication
+          (Context, Routing.Components, Anonymous_Verify);
+
+      procedure Private_Page
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "private");
+      end Private_Page;
+
+      Guarded : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State   : Context;
+
+      function Answer (Target, Credentials : String) return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET " & Target & " HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Authorization: " & Credentials & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Guarded.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Answer;
+   begin
+      Guarded.Get
+        ("/private", Private_Page'Access, Name => "private",
+         Policy =>
+           (Routing.Default_Route_Policy with delta
+              Authentication => Routing.Required_Authentication));
+      Guarded.Add_Middleware
+        (Anonymous_Auth.Call'Access, Name => "authentication");
+
+      Expect_In
+        ("finding 11 principal-less acceptance",
+         Answer ("/private", "Basic AAAA"), "HTTP/1.1 401");
+   end Check_Authentication_Backstop;
+
+
+
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -788,6 +866,7 @@ begin
    Check_Automatic_Response_Admission;
    Check_Mount_Sealing;
    Check_Authentication_Challenge;
+   Check_Authentication_Backstop;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
