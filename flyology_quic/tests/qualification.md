@@ -38,6 +38,11 @@ for the next layer.
   authenticate the client packet through the receive path. Token encoding,
   non-1-based output arrays, undersized output, insufficient header protection
   samples, and the maximum packet boundary are covered separately.
+- Connection-state tests cover in-window reordering, duplicate suppression,
+  modulo-slot reuse, stale-packet rejection, expected receive numbers, and
+  transactional send-number advancement. A loopback IPv4 UDP exchange sends a
+  padded client Initial, returns a server Initial ACK, parses both plaintexts,
+  verifies source endpoints, and suppresses a replay after authentication.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

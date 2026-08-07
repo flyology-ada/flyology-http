@@ -22,7 +22,10 @@ CRYPTO buffer reassembles out-of-order handshake fragments, accepts matching
 retransmissions, and rejects conflicting overlaps atomically. The Initial
 transmit path encodes packet envelopes and packet numbers, applies AES-GCM and
 header protection, and supports token-bearing packets and arbitrary Ada array
-bounds.
+bounds. Initial client/server state derives directional keys, reserves packet
+numbers only after successful construction, suppresses authenticated replays
+through a proved 256-packet window, and exchanges datagrams through Flyology's
+portable UDP sockets.
 
 ## Build and test
 
