@@ -27,6 +27,7 @@ for test in \
   flyology-quic-one_rtt_sender-smoke \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
+  flyology-quic-sent_packet_policy-smoke \
   flyology-quic-stream_frame_policy-smoke \
   flyology-quic-stream_reassembly_policy-smoke \
   flyology-quic-stream_table_policy-smoke \
