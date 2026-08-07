@@ -523,11 +523,126 @@ procedure HTTP_Routing_Audit is
       end loop;
    end Check_Automatic_Response_Admission;
 
+   --  Finding 30. Mount snapshots the source router's routes and middleware
+   --  into the destination, so a registration on the source afterwards
+   --  reached nothing. Setup code that mounted a subrouter and only then
+   --  added its authorization middleware left every mounted route running
+   --  unprotected with no diagnostic.
+   procedure Check_Mount_Sealing is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      procedure Secret
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "secret");
+      end Secret;
+
+      procedure Deny
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler)
+      is
+         pragma Unreferenced (State, Next);
+      begin
+         X.Problem (403, "forbidden", "Access is denied");
+      end Deny;
+
+      Ordered  : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      Ordered_Sub : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      Late     : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      Late_Sub : Routing.Router
+        (Capacity => 3, Slashes => Routing.Strict_Slashes);
+      State    : Context;
+
+      function Status
+        (Routes : in out Routing.Router;
+         Target : String) return String
+      is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET " & Target & " HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         declare
+            Output : constant String := To_String (Wire.Output);
+         begin
+            return
+              (if Output'Length >= 12
+               then Output (Output'First + 9 .. Output'First + 11)
+               else "---");
+         end;
+      end Status;
+
+      Raised : Boolean;
+   begin
+      --  Registering before mounting keeps working and does protect.
+      Ordered_Sub.Get ("/secret", Secret'Access, Name => "secret");
+      Ordered_Sub.Add_Middleware (Deny'Access, Name => "deny");
+      Ordered.Mount ("/api", Ordered_Sub, Name_Prefix => "api.");
+      Expect
+        ("finding 30 protected mount",
+         Status (Ordered, "/api/secret"), "403");
+
+      --  Registering after mounting is a setup-time error, not a silently
+      --  unprotected route.
+      Late_Sub.Get ("/secret", Secret'Access, Name => "secret");
+      Late.Mount ("/api", Late_Sub, Name_Prefix => "api.");
+      Raised := False;
+      begin
+         Late_Sub.Add_Middleware (Deny'Access, Name => "deny");
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("finding 30 late middleware", Raised'Image, "TRUE");
+      if not Raised then
+         Expect
+           ("finding 30 late middleware effect",
+            Status (Late, "/api/secret"), "403");
+      end if;
+
+      Raised := False;
+      begin
+         Late_Sub.Add_Route_Middleware
+           ("secret", Deny'Access, Middleware_Name => "deny");
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("finding 30 late route middleware", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         Late_Sub.Get ("/other", Secret'Access, Name => "other");
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("finding 30 late route", Raised'Image, "TRUE");
+   end Check_Mount_Sealing;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
    Check_Bulkhead_Counter_Reuse;
    Check_Automatic_Response_Admission;
+   Check_Mount_Sealing;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

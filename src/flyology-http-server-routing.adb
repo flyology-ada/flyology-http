@@ -378,10 +378,22 @@ package body Flyology.HTTP.Server.Routing is
            and then Is_Remainder (To_String (R.Values (R.Count))));
    end Patterns_Overlap;
 
+   --  Mounting copies the router's routes and middleware, so a registration
+   --  afterwards cannot reach the copies. Refusing it at setup keeps the
+   --  ordering hazard from becoming a silently unprotected mounted route.
+   procedure Check_Not_Mounted (Item : Router) is
+   begin
+      if Item.Mounted then
+         raise Route_Error with
+           "HTTP router is already mounted; register before mounting";
+      end if;
+   end Check_Not_Mounted;
+
    procedure Check_Add
      (Item : Router; Method, Pattern : String)
    is
    begin
+      Check_Not_Mounted (Item);
       Validate_Method (Method);
       Validate_Pattern (Pattern);
       if Item.Count = Item.Capacity then
@@ -512,6 +524,7 @@ package body Flyology.HTTP.Server.Routing is
       Name      : String := "")
    is
    begin
+      Check_Not_Mounted (Item);
       if Item.Middleware_Count = Max_Global_Middleware then
          raise Route_Error with "global HTTP middleware capacity exhausted";
       end if;
@@ -530,6 +543,7 @@ package body Flyology.HTTP.Server.Routing is
       Middleware_Name : String := "")
    is
    begin
+      Check_Not_Mounted (Item);
       for Index in 1 .. Item.Count loop
          if To_String (Item.Routes (Index).Name) = Name then
             if Item.Routes (Index).Middleware_Count = Max_Route_Middleware
@@ -638,33 +652,36 @@ package body Flyology.HTTP.Server.Routing is
    procedure Mount
      (Item        : in out Router;
       Prefix      : String;
-      Source      : Router;
+      Source      : in out Router;
       Name_Prefix : String := "")
    is
    begin
+      Check_Not_Mounted (Item);
       Validate_Pattern (Prefix, Static_Only => True);
       if Source.Count > Item.Capacity - Item.Count then
          raise Route_Error with "HTTP router capacity exhausted by mount";
       end if;
       for Index in 1 .. Source.Count loop
          declare
-            Mounted_Route : Route_Entry renames Source.Routes (Index);
-            New_Index     : Positive;
+            --  Source is a variable view now that mounting seals it, so its
+            --  discriminant-dependent route component cannot be renamed.
+            New_Index : Positive;
          begin
-            if Source.Middleware_Count + Mounted_Route.Middleware_Count >
-              Max_Route_Middleware
+            if Source.Middleware_Count
+              + Source.Routes (Index).Middleware_Count > Max_Route_Middleware
             then
                raise Route_Error with
                  "mounted HTTP middleware capacity exhausted";
             end if;
             Add
               (Item,
-               To_String (Mounted_Route.Method),
-               Join_Pattern (Prefix, To_String (Mounted_Route.Pattern)),
-               Mounted_Route.Handler,
-               (if Name_Prefix = "" then To_String (Mounted_Route.Name)
-               else Name_Prefix & To_String (Mounted_Route.Name)),
-               Mounted_Route.Policy);
+               To_String (Source.Routes (Index).Method),
+               Join_Pattern
+                 (Prefix, To_String (Source.Routes (Index).Pattern)),
+               Source.Routes (Index).Handler,
+               (if Name_Prefix = "" then To_String (Source.Routes (Index).Name)
+               else Name_Prefix & To_String (Source.Routes (Index).Name)),
+               Source.Routes (Index).Policy);
             New_Index := Item.Count;
             for Middleware_Index in 1 .. Source.Middleware_Count loop
                Item.Routes (New_Index).Middleware_Count :=
@@ -673,15 +690,18 @@ package body Flyology.HTTP.Server.Routing is
                  (Item.Routes (New_Index).Middleware_Count) :=
                    Source.Middleware (Middleware_Index);
             end loop;
-            for Middleware_Index in 1 .. Mounted_Route.Middleware_Count loop
+            for Middleware_Index in
+              1 .. Source.Routes (Index).Middleware_Count
+            loop
                Item.Routes (New_Index).Middleware_Count :=
                  Item.Routes (New_Index).Middleware_Count + 1;
                Item.Routes (New_Index).Middleware
                  (Item.Routes (New_Index).Middleware_Count) :=
-                   Mounted_Route.Middleware (Middleware_Index);
+                   Source.Routes (Index).Middleware (Middleware_Index);
             end loop;
          end;
       end loop;
+      Source.Mounted := True;
    end Mount;
 
    function Match_Path

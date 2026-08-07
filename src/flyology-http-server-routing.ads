@@ -183,6 +183,8 @@ package Flyology.HTTP.Server.Routing is
    --  @param Component Around-handler component
    --  @param Stage Body-admission boundary for the component
    --  @param Name Optional stable diagnostic name for introspection
+   --  @exception Route_Error Item has already been mounted, so the component
+   --  would not reach the copied routes
    procedure Add_Middleware
      (Item      : in out Router;
       Component : not null Middleware_Access;
@@ -196,6 +198,8 @@ package Flyology.HTTP.Server.Routing is
    --  @param Component Around-handler component
    --  @param Stage Body-admission boundary for the component
    --  @param Middleware_Name Optional stable diagnostic name
+   --  @exception Route_Error Item has already been mounted, so the component
+   --  would not reach the copied routes
    procedure Add_Route_Middleware
      (Item      : in out Router;
       Name      : String;
@@ -210,6 +214,8 @@ package Flyology.HTTP.Server.Routing is
    --  @param Handler Application endpoint
    --  @param Name Stable route name; empty derives Method and Pattern
    --  @param Policy Route-local application policy
+   --  @exception Route_Error Item has already been mounted, so the route
+   --  would not reach the copied routes
    procedure Add
      (Item    : in out Router;
       Method  : String;
@@ -337,14 +343,18 @@ package Flyology.HTTP.Server.Routing is
 
    --  Copy routes from Source under Prefix. Capacity is checked before any
    --  route is copied. Prefix must be a static path without parameters.
+   --  Mounting snapshots Source, so Source is sealed against further route
+   --  and middleware registration: a later registration on it raises rather
+   --  than silently leaving the copied routes unprotected. Register
+   --  everything on a subrouter before mounting it.
    --  @param Item Destination router
    --  @param Prefix Static mount path
-   --  @param Source Source subrouter
+   --  @param Source Source subrouter, sealed by this call
    --  @param Name_Prefix Optional prefix for nonempty route names
    procedure Mount
      (Item        : in out Router;
       Prefix      : String;
-      Source      : Router;
+      Source      : in out Router;
       Name_Prefix : String := "");
 
    --  Match and invoke one already parsed request. Automatic 404, 405, HEAD
@@ -476,6 +486,7 @@ private
       Middleware_Count : Natural := 0;
       Automatic_Concurrency : Natural := 0;
       Automatic_Rate        : Natural := 0;
+      Mounted               : Boolean := False;
    end record;
 
 end Flyology.HTTP.Server.Routing;
