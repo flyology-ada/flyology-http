@@ -133,6 +133,7 @@ Admin_Routes.Get
   ("/status", Admin_Status'Access, Name =&gt; "status");
 State.Routes.Mount
   ("/admin", Admin_Routes, Name_Prefix =&gt; "admin.");</code></pre></figure>
+            <p><code>Mount</code> copies the subrouter's routes and middleware at the moment it is called, so a subrouter must be complete before it is mounted. Registering a route or middleware on an already-mounted router raises <code>Route_Error</code> rather than leaving the mounted copies without it.</p>
             <p>Query parsing is lazy. Repeated values retain occurrence order, invalid percent escapes are rejected, and <code>+</code> becomes a space only in the query component.</p>
             <p>After setup, <code>Route_Count</code>, <code>Describe_Route</code>, and the matching middleware-description operations return owned metadata in deterministic registration order. Applications can build diagnostics without exposing handler access values. Registration and introspection must not run concurrently; dispatch itself does not allocate descriptions or perform extra dynamic lookup.</p>
           </section>
