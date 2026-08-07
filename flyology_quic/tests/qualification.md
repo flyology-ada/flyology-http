@@ -89,6 +89,11 @@ for the next layer.
   identical opposite-direction Handshake and 1-RTT keys, validate the pinned
   Ed25519 leaf, and decode role-correct peer transport parameters. Corrupting
   the server Finished is rejected and moves the client to a failed state.
+- The same exchange is carried through production CRYPTO framing, Initial
+  packet protection, Handshake packet protection, packet-number reconstruction,
+  and authenticated replay admission. The client Initial is padded to 1,200
+  bytes, and success requires matching directional 1-RTT keys after both
+  endpoints process the encrypted peer flight.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 

@@ -41,6 +41,9 @@ The bounded Ada TLS session now runs the no-PSK client and server handshake,
 splits the server flight at QUIC's Initial/Handshake key boundary, validates a
 pinned Ed25519 leaf, verifies both Finished messages, decodes peer transport
 parameters, and derives matching directional Handshake and 1-RTT keys.
+An end-to-end transport test carries those messages in protected Initial and
+Handshake CRYPTO frames, including the client's required 1,200-byte Initial,
+with independent packet-number and replay state at each encryption level.
 
 ## Build and test
 

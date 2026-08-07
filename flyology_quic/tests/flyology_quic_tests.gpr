@@ -27,6 +27,7 @@ project Flyology_QUIC_Tests is
       "flyology-quic-tls_key_schedule-smoke.adb",
       "flyology-quic-tls_session-smoke.adb",
       "flyology-quic-tls_signature_policy-smoke.adb",
+      "flyology-quic-tls_transport_smoke.adb",
       "flyology-quic-transport_parameter_policy-smoke.adb",
       "flyology-quic-varint_policy-smoke.adb");
    for Create_Missing_Dirs use "True";
