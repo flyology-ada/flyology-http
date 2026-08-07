@@ -1,5 +1,4 @@
 procedure Flyology.QUIC.Protection_Policy.Smoke is
-   use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Array;
 
    IV : constant Nonce :=
@@ -24,5 +23,30 @@ begin
       Apply_Header_Protection (First, Number, True, Mask);
       pragma Assert (First = 16#C3#);
       pragma Assert (Number = (0, 0, 0, 2));
+   end;
+
+   declare
+      Client : constant Unprotected_Long_Header :=
+        Remove_Long_Header_Protection
+          (16#C0#,
+           (16#7B#, 16#9A#, 16#EC#, 16#34#),
+           (16#43#, 16#7B#, 16#9A#, 16#EC#, 16#36#));
+      Server : constant Unprotected_Long_Header :=
+        Remove_Long_Header_Protection
+          (16#CF#,
+           (16#C0#, 16#D9#, 16#5A#, 16#48#),
+           (16#2E#, 16#C0#, 16#D8#, 16#35#, 16#6A#));
+   begin
+      --  RFC 9001 Appendices A.2 and A.3 receive-side results.
+      pragma Assert (Client.First_Byte = 16#C3#);
+      pragma Assert (Client.Number_Length = 4);
+      pragma Assert (Client.Encoded_Number = (0, 0, 0, 2));
+      pragma Assert (Client.Truncated_Number = 2);
+
+      pragma Assert (Server.First_Byte = 16#C1#);
+      pragma Assert (Server.Number_Length = 2);
+      pragma Assert (Server.Encoded_Number (1 .. 2) = (0, 1));
+      pragma Assert (Server.Encoded_Number (3 .. 4) = (0, 0));
+      pragma Assert (Server.Truncated_Number = 1);
    end;
 end Flyology.QUIC.Protection_Policy.Smoke;

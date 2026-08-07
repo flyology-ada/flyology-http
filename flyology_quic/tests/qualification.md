@@ -10,6 +10,8 @@ for the next layer.
   connection-ID boundaries, truncation, and QUIC v1 packet-type framing.
 - RFC 9001 client and server Initial packets cover token and protected-length
   envelope boundaries, including coalesced packet accounting.
+- RFC 9001 client and server header masks cover receive-side first-byte,
+  packet-number-length, and truncated packet-number recovery.
 - Boundary tests cover every variable-integer width and the maximum packet
   number gap representable by QUIC's four-byte packet-number field.
 - RFC 9001 Appendix A covers both v1 Initial traffic secrets, keys, IVs,

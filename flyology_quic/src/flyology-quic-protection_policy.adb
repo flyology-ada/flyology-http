@@ -48,4 +48,28 @@ is
            Encoded_Packet_Number (First + 3) xor Mask (5);
       end if;
    end Apply_Header_Protection;
+
+   function Remove_Long_Header_Protection
+     (First_Byte            : Ada.Streams.Stream_Element;
+      Protected_Number      : Packet_Number_Prefix;
+      Mask                  : Header_Mask) return Unprotected_Long_Header
+   is
+      Result : Unprotected_Long_Header;
+      Value  : Ada.Streams.Stream_Element;
+   begin
+      Result.First_Byte := First_Byte xor (Mask (1) and 16#0F#);
+      Result.Number_Length :=
+        Natural ((Result.First_Byte and 16#03#) + 1);
+      for Index in 1 .. Result.Number_Length loop
+         Value :=
+           Protected_Number
+             (Ada.Streams.Stream_Element_Offset (Index))
+           xor Mask (Ada.Streams.Stream_Element_Offset (Index + 1));
+         Result.Encoded_Number
+           (Ada.Streams.Stream_Element_Offset (Index)) := Value;
+         Result.Truncated_Number :=
+           Result.Truncated_Number * 2**8 + Interfaces.Unsigned_64 (Value);
+      end loop;
+      return Result;
+   end Remove_Long_Header_Protection;
 end Flyology.QUIC.Protection_Policy;

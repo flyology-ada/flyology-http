@@ -12,7 +12,9 @@ buffers, deadlines, cancellation, and runtime integration remain in Flyology.
 The current foundation implements proved QUIC variable integers, QUIC v1
 long-header invariant and Initial packet envelope parsing, packet-number
 selection and reconstruction, nonce and header-protection policy, and the
-QUIC v1 Initial key schedule and packet protection using OpenSSL 3.
+QUIC v1 Initial key schedule and packet protection using OpenSSL 3. Receive
+header protection recovers packet-number length only after unmasking the
+protected first byte.
 
 ## Build and test
 
