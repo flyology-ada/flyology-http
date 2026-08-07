@@ -959,7 +959,13 @@ package body Flyology.HTTP.Server.HTTP_2 is
                   else ((Output_Cursor + Attempt - 2) mod Streams'Length) + 1);
                Item : Stream_Record renames Streams (Index);
             begin
-               if Item.Phase = Open and then Item.Response_Started
+               --  A stream that completes while its field section is still
+               --  fragmented must keep emitting: CONTINUATION frames cannot
+               --  be interleaved, so abandoning the block would leave the
+               --  connection output pinned to a slot that never produces
+               --  again.
+               if (Item.Phase = Open or else Index = Required)
+                 and then Item.Response_Started
                  and then Item.Head_Cursor <= Bytes.Length (Item.Response_Head)
                then
                   declare
@@ -1257,13 +1263,21 @@ package body Flyology.HTTP.Server.HTTP_2 is
          and then Bytes.Length (Control_Output) - Control_Cursor + 1 >=
            Maximum_Control_Backlog);
 
+      --  A slot pinned mid-field-section still owns the encoded head, so it
+      --  cannot be released until its last fragment has been emitted.
       function Can_Reap (Slot : Positive) return Boolean is
-        (Streams (Slot).Phase = Complete and then Streams (Slot).Handler_Done);
+        (Streams (Slot).Phase = Complete and then Streams (Slot).Handler_Done
+         and then Continuation_Slot /= Slot);
 
       procedure Release_Stream (Slot : Positive) is
       begin
          if not Can_Reap (Slot) then
             return;
+         end if;
+         --  A slot reaped while its field section was still fragmented would
+         --  otherwise keep the connection output pinned to it forever.
+         if Continuation_Slot = Slot then
+            Continuation_Slot := 0;
          end if;
          Streams (Slot).Phase := Free;
          Streams (Slot).ID := 0;

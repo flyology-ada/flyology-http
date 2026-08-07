@@ -6,6 +6,7 @@ with Ada.Streams;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Flyology;
+with Flyology.IO;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.HTTP_2;
 with Flyology.IO.Connections;
@@ -40,6 +41,14 @@ procedure HTTP2_Server_Audit is
 
    package Engine is new Flyology.HTTP.Server.HTTP_2 (Context, Handle);
 
+   --  A response field section far larger than one frame, so the encoded head
+   --  spans many CONTINUATION fragments and the connection output stays
+   --  pinned to its slot for longer than the socket can buffer.
+   Fragmented_Head_Size : constant := 2 * 1_024 * 1_024;
+   type Text_Access is access String;
+   Fragmented_Type : constant Text_Access :=
+     new String'(1 .. Fragmented_Head_Size => 'p');
+
    procedure Handle (State : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (State);
    begin
@@ -51,6 +60,14 @@ procedure HTTP2_Server_Audit is
          --  window stays depleted when the peer resets the stream.
          delay 0.30;
          X.No_Content;
+      elsif X.Request_Target = "/bigheaders" then
+         X.Respond (200, Fragmented_Type.all, "h");
+      elsif X.Request_Target = "/flood" then
+         X.Begin_Stream (200, "application/octet-stream");
+         for Index in 1 .. 64 loop
+            X.Write_Chunk (String'(1 .. 16_384 => 'f'));
+         end loop;
+         X.End_Stream;
       else
          X.Text (200, "ok");
       end if;
@@ -186,6 +203,7 @@ procedure HTTP2_Server_Audit is
    Ping_Frame          : constant Stream_Element := 16#06#;
    Goaway_Frame        : constant Stream_Element := 16#07#;
    Window_Update_Frame : constant Stream_Element := 16#08#;
+   Continuation_Frame  : constant Stream_Element := 16#09#;
    End_Stream_Flag     : constant Stream_Element := 16#01#;
    Ack_Flag            : constant Stream_Element := 16#01#;
    End_Headers_Flag    : constant Stream_Element := 16#04#;
@@ -194,7 +212,7 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 2;
+   Sessions : constant := 3;
 
    procedure Connect_Peer (Socket : in out Sockets.Socket_Type) is
    begin
@@ -364,6 +382,87 @@ begin
          Sockets.Close_Socket (Socket);
       end;
 
+      ------------------------------------------------------------------------
+      --  Finding 14: a stream torn down while the connection output is
+      --  pinned to its fragmented field section must not freeze the
+      --  connection. Nothing else can be written until that block ends, so
+      --  the block has to finish and the pin has to clear.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line
+        ("finding 14: continuation pin released on a torn-down stream");
+      declare
+         Socket  : Sockets.Socket_Type;
+         Info    : Frame_Info;
+         Payload : Stream_Element_Array (1 .. 16_384) := (others => 0);
+         Flood_Bytes : Natural := 0;
+         Flood_Total : constant Natural := 64 * 16_384;
+         Fragments : Natural := 0;
+         Completed_Block : Boolean := False;
+         Early_Ack : Boolean := False;
+         Finished : Boolean := False;
+      begin
+         Connect_Peer (Socket);
+         Send_Frame
+           (Socket, Headers_Frame, End_Stream_Flag or End_Headers_Flag, 1,
+            Request_Block ("GET", "/flood"));
+         Send_Frame (Socket, Window_Update_Frame, 0, 0, U32 (4_000_000));
+         Send_Frame (Socket, Window_Update_Frame, 0, 1, U32 (4_000_000));
+         Send_Frame
+           (Socket, Headers_Frame, End_Stream_Flag or End_Headers_Flag, 3,
+            Request_Block ("GET", "/bigheaders"));
+         --  Read nothing while the server fills the socket send buffer. The
+         --  field section is far larger than that buffer, so the connection
+         --  output is still pinned to stream 3 when the reset below is
+         --  parsed. The PING that follows proves it: a queued control frame
+         --  can only be written once the pin clears, so its acknowledgement
+         --  must arrive after the last field-section fragment.
+         delay 1.00;
+         Send_Frame (Socket, Reset_Stream_Frame, 0, 3, U32 (8));
+         Send_Frame
+           (Socket, Ping_Frame, 0, 0,
+            Stream_Element_Array'(1 .. 8 => 16#33#));
+         while not Finished loop
+            Read_Frame_Header (Socket, Info, Wait => 5.0);
+            Read_Payload (Socket, Info, Payload, Wait => 5.0);
+            if Info.Stream_ID = 3
+              and then Info.Kind in Headers_Frame | Continuation_Frame
+            then
+               Fragments := Fragments + 1;
+               Completed_Block := Completed_Block
+                 or else (Info.Flags and End_Headers_Flag) /= 0;
+            elsif Info.Kind = Ping_Frame
+              and then (Info.Flags and Ack_Flag) /= 0
+            then
+               Early_Ack := not Completed_Block;
+            elsif Info.Kind = Data_Frame and then Info.Stream_ID = 1 then
+               Flood_Bytes := Flood_Bytes + Info.Length;
+               Finished := (Info.Flags and End_Stream_Flag) /= 0;
+            end if;
+         end loop;
+         Ada.Text_IO.Put_Line
+           ("  flood delivered " & Decimal (Flood_Bytes) & " of " &
+              Decimal (Flood_Total) & " bytes across " & Decimal (Fragments) &
+              " field-section fragments");
+         Check
+           (Fragments > 1 and then Completed_Block,
+            "the pinned field section is completed, never truncated");
+         Check
+           (not Early_Ack,
+            "the reset was parsed while the connection output was pinned");
+         Check
+           (Flood_Bytes = Flood_Total,
+            "connection output resumes after the pinned stream is released");
+         Sockets.Close_Socket (Socket);
+      exception
+         when Flyology.IO.Timeout_Error =>
+            Ada.Text_IO.Put_Line
+              ("  connection output froze after " & Decimal (Fragments) &
+                 " field-section fragments and " & Decimal (Flood_Bytes) &
+                 " of " & Decimal (Flood_Total) & " flood bytes");
+            Check (False,
+              "connection output resumes after the pinned stream is released");
+            Sockets.Close_Socket (Socket);
+      end;
    end;
 
    Sockets.Close_Socket (Listener);
