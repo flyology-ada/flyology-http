@@ -1448,17 +1448,23 @@ package body Flyology.HTTP.Server is
       Buffer   : Ada.Streams.Stream_Element_Array (1 .. 8 * 1_024);
       Last     : Ada.Streams.Stream_Element_Offset;
       Finished : Boolean;
-      Reserved : Natural := 0;
+      Ceiling  : Natural := 0;
+      Wanted   : Natural;
    begin
       if Item.Body_Done then
          return;
       end if;
-      Reserved :=
+      Ceiling :=
         (case Item.Body_Mode is
             when No_Body      => 0,
             when Fixed_Body   => Item.Body_Remaining,
             when Chunked_Body => Item.Body_Limit);
-      Reserve_Buffered (Item, Reserved);
+      --  Reserve only the bytes the next read can deliver, then follow the
+      --  body as it arrives. Reserving the declared length or the chunked
+      --  ceiling here would let a peer pin that whole amount by sending a
+      --  request head and then stalling.
+      Reserve_Buffered
+        (Item, Natural'Min (Ceiling, Natural (Buffer'Length)));
       Accept_Body (Item, Token);
       loop
          Read_Body (Item, Buffer, Last, Finished, Token);
@@ -1468,16 +1474,15 @@ package body Flyology.HTTP.Server is
                Text (Buffer (Buffer'First .. Last)));
          end if;
          exit when Finished;
+         Wanted := Natural'Min
+           (Ceiling, Item.Body_Total + Natural (Buffer'Length));
+         if Wanted > Item.Buffered_Bytes then
+            Resize_Buffered (Item, Wanted);
+         end if;
       end loop;
 
-      if Item.Buffered_Bytes > Item.Body_Total then
-         Release
-           (Item.Reservation_Budget.all,
-            Item.Buffered_Bytes - Item.Body_Total);
-         Item.Buffered_Bytes := Item.Body_Total;
-         if Item.Buffered_Bytes = 0 then
-            Item.Reservation_Budget := null;
-         end if;
+      if Item.Buffered_Bytes /= Item.Body_Total then
+         Resize_Buffered (Item, Item.Body_Total);
       end if;
    exception
       when others =>

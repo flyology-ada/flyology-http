@@ -105,6 +105,106 @@ procedure HTTP_Server_Audit is
       end loop;
    end Send_All;
 
+   --  Admit one further buffered request against Budget and report whether
+   --  the shared ingress budget refused it. This is the reservation a real
+   --  peer's next buffered request performs, and its refusal is the
+   --  503 ingress-budget-exhausted the audit describes.
+   function Buffered_Request_Denied
+     (Budget : not null access HTTP_Server.Ingress_Budget) return Boolean
+   is
+      Wire   : aliased Memory_Transport;
+      Denied : Boolean := False;
+   begin
+      Wire.Input := To_Unbounded_String
+        ("POST /rival HTTP/1.1" & CRLF
+         & "Host: localhost" & CRLF
+         & "Content-Length: 5" & CRLF & CRLF & "hello");
+      declare
+         Client  : HTTP_Server.Connection (Wire'Access);
+         Request : HTTP_Server.Request;
+         Closed  : Boolean;
+      begin
+         HTTP_Server.Configure_Ingress_Budget (Client, Budget);
+         begin
+            HTTP_Server.Read_Request (Client, Request, Closed);
+         exception
+            when HTTP_Server.Resource_Exhausted =>
+               Denied := True;
+         end;
+      end;
+      return Denied;
+   end Buffered_Request_Denied;
+
+   --  Transport that replays a canned prefix and then stalls like a peer that
+   --  stops sending mid-body. The stall is the only point at which the
+   --  reservation a half-read body holds is observable from outside
+   --  Buffer_Request_Body, so the budget probe runs from there.
+   type Probing_Transport
+     (Budget : not null access HTTP_Server.Ingress_Budget) is
+     limited new HTTP_Server.Transport with record
+      Input        : Unbounded_String;
+      Probed       : Boolean := False;
+      Reserved     : Natural := 0;
+      Rival_Denied : Boolean := False;
+   end record;
+
+   overriding procedure Receive
+     (Item    : in out Probing_Transport;
+      Data    : out Ada.Streams.Stream_Element_Array;
+      Last    : out Ada.Streams.Stream_Element_Offset;
+      Timeout : Duration;
+      Token   : access Flyology.Cancellation.Token);
+
+   overriding procedure Send_All
+     (Item    : in out Probing_Transport;
+      Data    : Ada.Streams.Stream_Element_Array;
+      Timeout : Duration;
+      Token   : access Flyology.Cancellation.Token);
+
+   overriding procedure Receive
+     (Item    : in out Probing_Transport;
+      Data    : out Ada.Streams.Stream_Element_Array;
+      Last    : out Ada.Streams.Stream_Element_Offset;
+      Timeout : Duration;
+      Token   : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Timeout, Token);
+      use type Ada.Streams.Stream_Element_Offset;
+      Available : constant String := To_String (Item.Input);
+      Count     : Natural;
+   begin
+      Data := (others => 0);
+      Last := Data'First - 1;
+      if Available'Length = 0 then
+         if not Item.Probed then
+            Item.Probed := True;
+            Item.Reserved := HTTP_Server.Current (Item.Budget.all).Current;
+            Item.Rival_Denied := Buffered_Request_Denied (Item.Budget);
+         end if;
+         return;
+      end if;
+      Count := Natural'Min (Natural (Data'Length), Available'Length);
+      for Index in 1 .. Count loop
+         Data (Data'First + Ada.Streams.Stream_Element_Offset (Index - 1)) :=
+           Ada.Streams.Stream_Element (Character'Pos (Available (Index)));
+      end loop;
+      Last := Data'First + Ada.Streams.Stream_Element_Offset (Count - 1);
+      Item.Input :=
+        (if Count = Available'Length then Null_Unbounded_String
+         else To_Unbounded_String (Available (Count + 1 .. Available'Last)));
+   end Receive;
+
+   overriding procedure Send_All
+     (Item    : in out Probing_Transport;
+      Data    : Ada.Streams.Stream_Element_Array;
+      Timeout : Duration;
+      Token   : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Item, Data, Timeout, Token);
+   begin
+      null;
+   end Send_All;
+
    --  Return the connection output written after the last response status
    --  line, which is the error response the audit inspects.
    function Final_Response (Wire : Memory_Transport) return String is
@@ -356,8 +456,147 @@ procedure HTTP_Server_Audit is
          Visible (To_String (Observed)));
    end Check_Query_Control_Bytes;
 
+   --  Finding 12. Buffer_Request_Body reserved the whole declared length, or
+   --  the whole 1 MiB body ceiling for a chunked request, before any body
+   --  byte arrived. A peer that dribbled one chunk and stalled pinned the
+   --  entire ceiling, and every later buffered request was refused.
+   procedure Check_Buffered_Ingress_Reservation is
+      Read_Ahead : constant := 8 * 1_024;
+   begin
+      --  A chunked peer that has delivered one byte.
+      declare
+         Budget : aliased HTTP_Server.Ingress_Budget
+           (Limit => HTTP_Server.Max_Request_Body);
+         Wire   : aliased Probing_Transport (Budget'Access);
+         Stalled : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("POST /upload HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Transfer-Encoding: chunked" & CRLF & CRLF
+            & "1" & CRLF & "A" & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Closed  : Boolean;
+         begin
+            HTTP_Server.Configure_Ingress_Budget (Client, Budget'Access);
+            begin
+               HTTP_Server.Read_Request (Client, Request, Closed);
+            exception
+               when Flyology.HTTP.Protocol_Error =>
+                  Stalled := True;
+            end;
+         end;
+         pragma Assert (Stalled);
+         pragma Assert (Wire.Probed);
+         pragma Assert
+           (Wire.Reserved <= Read_Ahead,
+            "chunked reservation pinned"
+            & Natural'Image (Wire.Reserved) & " bytes for 1 body byte");
+         pragma Assert
+           (not Wire.Rival_Denied,
+            "a dribbling chunked peer starved the next buffered request");
+         pragma Assert (HTTP_Server.Current (Budget).Current = 0);
+      end;
+
+      --  A fixed-length peer that declared a full body and delivered one byte.
+      declare
+         Budget : aliased HTTP_Server.Ingress_Budget
+           (Limit => HTTP_Server.Max_Request_Body);
+         Wire   : aliased Probing_Transport (Budget'Access);
+         Stalled : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("POST /upload HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Content-Length:"
+            & Natural'Image (HTTP_Server.Max_Request_Body) & CRLF & CRLF
+            & "A");
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Closed  : Boolean;
+         begin
+            HTTP_Server.Configure_Ingress_Budget (Client, Budget'Access);
+            begin
+               HTTP_Server.Read_Request (Client, Request, Closed);
+            exception
+               when Flyology.HTTP.Protocol_Error =>
+                  Stalled := True;
+            end;
+         end;
+         pragma Assert (Stalled);
+         pragma Assert (Wire.Probed);
+         pragma Assert
+           (Wire.Reserved <= Read_Ahead,
+            "declared reservation pinned"
+            & Natural'Image (Wire.Reserved) & " bytes for 1 body byte");
+         pragma Assert
+           (not Wire.Rival_Denied,
+            "a dribbling fixed-length peer starved the next request");
+         pragma Assert (HTTP_Server.Current (Budget).Current = 0);
+      end;
+
+      --  A complete body still reserves exactly its decoded length, and the
+      --  budget still refuses a body it cannot hold.
+      declare
+         Budget : aliased HTTP_Server.Ingress_Budget (Limit => 8);
+         Wire   : aliased Memory_Transport;
+         Denied : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("POST /one HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Content-Length: 5" & CRLF & CRLF & "hello");
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Closed  : Boolean;
+         begin
+            HTTP_Server.Configure_Ingress_Budget (Client, Budget'Access);
+            HTTP_Server.Read_Request (Client, Request, Closed);
+            pragma Assert (HTTP_Server.Content (Request) = "hello");
+            pragma Assert (HTTP_Server.Current (Budget).Current = 5);
+            Denied := Buffered_Request_Denied (Budget'Access);
+         end;
+         pragma Assert (Denied);
+         pragma Assert (HTTP_Server.Current (Budget).Current = 0);
+         pragma Assert (HTTP_Server.Current (Budget).Peak = 5);
+      end;
+
+      --  A body larger than the whole budget is still refused at admission.
+      declare
+         Budget : aliased HTTP_Server.Ingress_Budget (Limit => 4);
+         Wire   : aliased Memory_Transport;
+         Denied : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("POST /one HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Content-Length: 5" & CRLF & CRLF & "hello");
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Closed  : Boolean;
+         begin
+            HTTP_Server.Configure_Ingress_Budget (Client, Budget'Access);
+            begin
+               HTTP_Server.Read_Request (Client, Request, Closed);
+            exception
+               when HTTP_Server.Resource_Exhausted =>
+                  Denied := True;
+            end;
+         end;
+         pragma Assert (Denied);
+         pragma Assert (HTTP_Server.Current (Budget).Denials = 1);
+         pragma Assert (HTTP_Server.Current (Budget).Current = 0);
+      end;
+   end Check_Buffered_Ingress_Reservation;
+
 begin
    Check_Per_Request_Response_Shape;
    Check_Repeated_Cookie_Fields;
    Check_Query_Control_Bytes;
+   Check_Buffered_Ingress_Reservation;
 end HTTP_Server_Audit;

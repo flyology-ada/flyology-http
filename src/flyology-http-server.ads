@@ -297,7 +297,9 @@ package Flyology.HTTP.Server is
 
    --  Buffer the current decoded body into Value under the configured shared
    --  ingress budget. This is the routed equivalent of Read_Request's body
-   --  phase and preserves the request-head deadline.
+   --  phase and preserves the request-head deadline. The reservation tracks
+   --  the bytes actually received rather than the declared or maximum length,
+   --  so a peer that stalls mid-body cannot pin the budget it never filled.
    --  @param Item HTTP connection with an unread body
    --  @param Value Request head previously read from Item
    --  @param Token Optional cancellation source
@@ -309,8 +311,9 @@ package Flyology.HTTP.Server is
 
    --  Read and parse the next request, buffering its complete decoded body.
    --  This compatibility operation is implemented over Read_Request_Head and
-   --  Read_Body. When Item has an ingress budget, fixed bodies reserve their
-   --  declared length and chunked bodies reserve Max_Body before allocation.
+   --  Read_Body. When Item has an ingress budget, a body reserves one read
+   --  quantum at admission and then grows its reservation as bytes arrive, so
+   --  a stalled peer holds only what it has sent.
    --  Resource_Exhausted is raised without waiting when reservation fails.
    --  Header and body limits are enforced
    --  before allocation grows beyond their public bounds. One monotonic
