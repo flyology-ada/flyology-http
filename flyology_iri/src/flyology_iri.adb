@@ -909,75 +909,6 @@ package body Flyology_IRI is
       return Result;
    end Analyze;
 
-   function Can_Parse
-     (Input      : String;
-      Syntax     : Syntax_Kind := IRI_Syntax;
-      Max_Length : Positive := Default_Max_Length) return Boolean
-   is
-   begin
-      if Input'Length > Max_Length then
-         return False;
-      end if;
-      if Syntax = Web_URL_Syntax
-        and then Fast_Can_Parse_Web (Input)
-      then
-         return True;
-      end if;
-      if Syntax = Web_URL_Syntax then
-         declare
-            Success : Boolean;
-            Parsed  : constant String :=
-              Flyology_IRI.Web.Parse (Input, "", False, Success);
-         begin
-            return Success and then Parsed'Length <= Max_Length;
-         end;
-      end if;
-      return Analyze (Input, Syntax, Max_Length).Error.Kind = No_Error;
-   end Can_Parse;
-
-   function Diagnose
-     (Input      : String;
-      Syntax     : Syntax_Kind := IRI_Syntax;
-      Max_Length : Positive := Default_Max_Length) return Parse_Error is
-     (Analyze (Input, Syntax, Max_Length).Error);
-
-   function Normalize_Web
-     (Input : String; Parsed : Analysis) return String
-   is
-      Result       : Unbounded.Unbounded_String;
-      Insert_At    : Natural := Input'Length + 1;
-      Needs_Slash  : constant Boolean :=
-        Parsed.Authority_Present
-        and then Parsed.Path_Part.First > Parsed.Path_Part.Last;
-      Offset       : Natural;
-      C            : Character;
-   begin
-      if Needs_Slash then
-         if Parsed.Query_Present then
-            Insert_At := Parsed.Query_Part.First - 1;
-         elsif Parsed.Fragment_Present then
-            Insert_At := Parsed.Fragment_Part.First - 1;
-         end if;
-      end if;
-      for Index in 1 .. Input'Length + 1 loop
-         if Needs_Slash and then Index = Insert_At then
-            Unbounded.Append (Result, '/');
-         end if;
-         exit when Index > Input'Length;
-         Offset := Index;
-         C := Char_At (Input, Offset);
-         if (Parsed.Scheme_Part.First <= Offset
-             and then Offset <= Parsed.Scheme_Part.Last)
-           or else (Parsed.Host_Part.First <= Offset
-                    and then Offset <= Parsed.Host_Part.Last)
-         then
-            C := Ada.Characters.Handling.To_Lower (C);
-         end if;
-         Unbounded.Append (Result, C);
-      end loop;
-      return Unbounded.To_String (Result);
-   end Normalize_Web;
-
    procedure Set_Reference
      (Value  : out Reference;
       Text   : String;
@@ -1000,6 +931,121 @@ package body Flyology_IRI is
       Value.Query_Present := Parsed.Query_Present;
       Value.Fragment_Present := Parsed.Fragment_Present;
    end Set_Reference;
+
+   --  A failed parse leaves the caller a default reference whose component
+   --  getters return an empty string.
+   procedure Set_Failure (Value : out Reference) is
+   begin
+      Value := (others => <>);
+   end Set_Failure;
+
+   --  Settle a web URL without allocating whenever the input is already its
+   --  own serialization. Returns False when only the WHATWG pipeline can
+   --  answer, and otherwise reports Too_Long or No_Error along with the
+   --  spans Try_Parse needs. Every entry point enters web URL mode here.
+   function Web_Fast_Path
+     (Input      : String;
+      Max_Length : Positive;
+      Result     : out Analysis;
+      Need_Slash : out Boolean;
+      Error      : out Parse_Error) return Boolean
+   is
+   begin
+      Error := (Kind => No_Error, Offset => 0);
+      if Input'Length > Max_Length then
+         Result := (others => <>);
+         Need_Slash := False;
+         Error := (Kind => Too_Long, Offset => 0);
+         return True;
+      end if;
+      if not Fast_Web_Analysis (Input, Result, Need_Slash) then
+         return False;
+      end if;
+      if Need_Slash and then Input'Length = Max_Length then
+         --  The serialization carries the path slash WHATWG inserts.
+         Error := (Kind => Too_Long, Offset => 0);
+      end if;
+      return True;
+   end Web_Fast_Path;
+
+   --  Normalize a web URL through the WHATWG parser and analyze the
+   --  serialization it produces. This is the only route to Flyology_IRI.Web
+   --  for absolute web URLs, so Can_Parse, Diagnose and Try_Parse cannot
+   --  reach different verdicts.
+   --  @param Build True to construct the reference on success
+   --  @param Value Parsed reference when Build is True and parsing
+   --  succeeds, otherwise a default reference
+   procedure Web_Slow_Path
+     (Input      : String;
+      Max_Length : Positive;
+      Build      : Boolean;
+      Value      : out Reference;
+      Error      : out Parse_Error)
+   is
+      Web_Error  : Parse_Error;
+      Normalized : constant String :=
+        Flyology_IRI.Web.Parse (Input, "", False, Web_Error);
+      Parsed     : Analysis;
+   begin
+      if Web_Error.Kind /= No_Error then
+         Error := Web_Error;
+      elsif Normalized'Length > Max_Length then
+         Error := (Kind => Too_Long, Offset => 0);
+      else
+         Parsed := Analyze (Normalized, Web_URL_Syntax, Max_Length);
+         Error := Parsed.Error;
+      end if;
+      if Error.Kind = No_Error and then Build then
+         Set_Reference (Value, Normalized, Web_URL_Syntax, Parsed);
+      else
+         Set_Failure (Value);
+      end if;
+   end Web_Slow_Path;
+
+   --  Report the failure Try_Parse would report, without constructing a
+   --  reference. The reference it declares is never handed out; it exists
+   --  so that Can_Parse and Diagnose carry no controlled object of their
+   --  own. The body sits at the end of this unit and is never inlined,
+   --  which keeps the allocating path away from the code the entry points
+   --  execute for an already-normalized URL: placing it here instead cost
+   --  the measured can_parse median three nanoseconds.
+   function Web_Validate
+     (Input : String; Max_Length : Positive) return Parse_Error;
+   pragma No_Inline (Web_Validate);
+
+   function Can_Parse
+     (Input      : String;
+      Syntax     : Syntax_Kind := IRI_Syntax;
+      Max_Length : Positive := Default_Max_Length) return Boolean
+   is
+   begin
+      if Input'Length > Max_Length then
+         return False;
+      end if;
+      if Syntax /= Web_URL_Syntax then
+         return Analyze (Input, Syntax, Max_Length).Error.Kind = No_Error;
+      end if;
+      --  Percent-encoding expands one byte to at most three and the
+      --  serialization adds at most the inserted path slash, so an input
+      --  this short cannot serialize past the bound. Anything longer takes
+      --  the exact path, where the bound is applied to the serialization.
+      --  The product is taken in a wider type because Max_Length may be
+      --  Positive'Last.
+      if Long_Long_Integer (Input'Length) * 3 < Long_Long_Integer (Max_Length)
+        and then Fast_Can_Parse_Web (Input)
+      then
+         return True;
+      end if;
+      return Web_Validate (Input, Max_Length).Kind = No_Error;
+   end Can_Parse;
+
+   function Diagnose
+     (Input      : String;
+      Syntax     : Syntax_Kind := IRI_Syntax;
+      Max_Length : Positive := Default_Max_Length) return Parse_Error is
+     (if Syntax = Web_URL_Syntax
+      then Web_Validate (Input, Max_Length)
+      else Analyze (Input, Syntax, Max_Length).Error);
 
    function Parse
      (Input      : String;
@@ -1029,75 +1075,32 @@ package body Flyology_IRI is
       Parsed : Analysis;
       Need_Slash : Boolean;
    begin
-      if Input'Length <= Max_Length
-        and then Syntax = Web_URL_Syntax
-         and then Fast_Web_Analysis (Input, Fast, Need_Slash)
-      then
-         if Need_Slash then
-            if Input'Length = Max_Length then
-               Value := (others => <>);
-               Error := (Kind => Too_Long, Offset => 0);
-               return;
-            end if;
-            declare
-               Insert_At : constant Natural :=
-                 Input'First + Fast.Path_Part.First - 1;
-               Normalized : constant String :=
-                 Input (Input'First .. Insert_At - 1) & "/"
-                 & Input (Insert_At .. Input'Last);
-            begin
-               Set_Reference (Value, Normalized, Syntax, Fast);
-            end;
-         else
-            Set_Reference (Value, Input, Syntax, Fast);
-         end if;
-         Error := (Kind => No_Error, Offset => 0);
-         return;
-      end if;
       if Syntax = Web_URL_Syntax then
-         declare
-            Success    : Boolean;
-            Normalized : constant String :=
-              Flyology_IRI.Web.Parse (Input, "", False, Success);
-         begin
-            if not Success or else Normalized'Length > Max_Length then
-               Value := (others => <>);
-               Error :=
-                 (Kind => (if Normalized'Length > Max_Length
-                           then Too_Long else Invalid_Character),
-                  Offset => 0);
-               return;
+         if Web_Fast_Path (Input, Max_Length, Fast, Need_Slash, Error) then
+            if Error.Kind /= No_Error then
+               Set_Failure (Value);
+            elsif Need_Slash then
+               declare
+                  Insert_At : constant Natural :=
+                    Input'First + Fast.Path_Part.First - 1;
+                  Normalized : constant String :=
+                    Input (Input'First .. Insert_At - 1) & "/"
+                    & Input (Insert_At .. Input'Last);
+               begin
+                  Set_Reference (Value, Normalized, Syntax, Fast);
+               end;
+            else
+               Set_Reference (Value, Input, Syntax, Fast);
             end if;
-            Parsed := Analyze (Normalized, Web_URL_Syntax, Max_Length);
-            if Parsed.Error.Kind /= No_Error then
-               Value := (others => <>);
-               Error := Parsed.Error;
-               return;
-            end if;
-            Set_Reference (Value, Normalized, Web_URL_Syntax, Parsed);
-            Error := (Kind => No_Error, Offset => 0);
             return;
-         end;
+         end if;
+         Web_Slow_Path (Input, Max_Length, True, Value, Error);
+         return;
       end if;
       Parsed := Analyze (Input, Syntax, Max_Length);
       Error := Parsed.Error;
       if Error.Kind /= No_Error then
-         Value := (others => <>);
-         return;
-      end if;
-      if Syntax = Web_URL_Syntax then
-         declare
-            Normalized : constant String := Normalize_Web (Input, Parsed);
-            Final      : constant Analysis :=
-              Analyze (Normalized, Syntax, Max_Length);
-         begin
-            Error := Final.Error;
-            if Error.Kind = No_Error then
-               Set_Reference (Value, Normalized, Syntax, Final);
-            else
-               Value := (others => <>);
-            end if;
-         end;
+         Set_Failure (Value);
       else
          Set_Reference (Value, Input, Syntax, Parsed);
       end if;
@@ -1125,23 +1128,29 @@ package body Flyology_IRI is
       Error      : out Parse_Error;
       Max_Length : Positive := Default_Max_Length)
    is
-      Success    : Boolean;
+      Web_Error  : Parse_Error;
       Normalized : constant String := Flyology_IRI.Web.Parse
-        (Input, Image (Base), Base.Syntax_Value = Web_URL_Syntax, Success);
+        (Input, Image (Base), Base.Syntax_Value = Web_URL_Syntax, Web_Error);
       Parsed     : Analysis;
    begin
-      if Base.Syntax_Value /= Web_URL_Syntax or else not Success then
-         Value := (others => <>);
-         Error := (Kind => Invalid_Character, Offset => 0);
+      if Base.Syntax_Value /= Web_URL_Syntax then
+         Set_Failure (Value);
+         Error := (Kind => Unsupported_URL, Offset => 0);
          return;
-      elsif Normalized'Length > Max_Length then
-         Value := (others => <>);
+      elsif Web_Error.Kind /= No_Error then
+         Set_Failure (Value);
+         Error := Web_Error;
+         return;
+      elsif Input'Length > Max_Length
+        or else Normalized'Length > Max_Length
+      then
+         Set_Failure (Value);
          Error := (Kind => Too_Long, Offset => 0);
          return;
       end if;
       Parsed := Analyze (Normalized, Web_URL_Syntax, Max_Length);
       if Parsed.Error.Kind /= No_Error then
-         Value := (others => <>);
+         Set_Failure (Value);
          Error := Parsed.Error;
          return;
       end if;
@@ -1408,5 +1417,20 @@ package body Flyology_IRI is
       return Parse
         (Unbounded.To_String (Target), Base.Syntax_Value, Max_Length);
    end Resolve;
+
+   function Web_Validate
+     (Input : String; Max_Length : Positive) return Parse_Error
+   is
+      Fast       : Analysis;
+      Need_Slash : Boolean;
+      Error      : Parse_Error;
+      Ignored    : Reference;
+   begin
+      if Web_Fast_Path (Input, Max_Length, Fast, Need_Slash, Error) then
+         return Error;
+      end if;
+      Web_Slow_Path (Input, Max_Length, False, Ignored, Error);
+      return Error;
+   end Web_Validate;
 
 end Flyology_IRI;

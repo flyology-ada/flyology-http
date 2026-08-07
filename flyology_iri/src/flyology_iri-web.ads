@@ -5,12 +5,13 @@ private package Flyology_IRI.Web is
    --  @param Input URL input bytes
    --  @param Base Serialized absolute base URL
    --  @param Has_Base True when Base is present
-   --  @param Success True when parsing succeeds
+   --  @param Error No_Error on success, otherwise the failure category and
+   --  its one-based byte offset into Input
    --  @return Canonical URL serialization, or an empty string on failure
    function Parse
      (Input    : String;
       Base     : String;
       Has_Base : Boolean;
-      Success  : out Boolean) return String;
+      Error    : out Parse_Error) return String;
 
 end Flyology_IRI.Web;

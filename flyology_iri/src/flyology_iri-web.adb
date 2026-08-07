@@ -20,7 +20,20 @@ package body Flyology_IRI.Web is
       Has_Fragment  : Boolean := False;
       Opaque_Path   : Boolean := False;
       Valid         : Boolean := False;
+      Error         : Parse_Error;
    end record;
+
+   --  Record a failure and its offset into the preprocessed text. Offsets
+   --  are mapped back onto the caller's input by Parse.
+   procedure Fail
+     (Value  : in out URL_Parts;
+      Kind   : Error_Kind;
+      Offset : Natural := 0)
+   is
+   begin
+      Value.Valid := False;
+      Value.Error := (Kind => Kind, Offset => Offset);
+   end Fail;
 
    function Is_Alpha (C : Character) return Boolean is
      (C in 'A' .. 'Z' | 'a' .. 'z');
@@ -56,17 +69,27 @@ package body Flyology_IRI.Web is
       and then (Text'Length = 2
                 or else Text (Text'First + 2) in '/' | '\' | '?' | '#'));
 
-   function Preprocess (Input : String) return String is
-      First  : Natural := Input'First;
-      Last   : Natural := Input'Last;
-      Result : U.Unbounded_String;
+   --  WHATWG strips leading and trailing C0 controls and spaces before
+   --  parsing. Preprocess and Input_Offset share the bounds so that a
+   --  reported offset always names the byte the parser rejected.
+   procedure Trim_Bounds (Input : String; First, Last : out Natural) is
    begin
+      First := Input'First;
+      Last := Input'Last;
       while First <= Last and then Character'Pos (Input (First)) <= 16#20# loop
          First := First + 1;
       end loop;
       while Last >= First and then Character'Pos (Input (Last)) <= 16#20# loop
          Last := Last - 1;
       end loop;
+   end Trim_Bounds;
+
+   function Preprocess (Input : String) return String is
+      First  : Natural;
+      Last   : Natural;
+      Result : U.Unbounded_String;
+   begin
+      Trim_Bounds (Input, First, Last);
       for Index in First .. Last loop
          if Input (Index) not in ASCII.HT | ASCII.LF | ASCII.CR then
             U.Append (Result, Input (Index));
@@ -74,6 +97,37 @@ package body Flyology_IRI.Web is
       end loop;
       return U.To_String (Result);
    end Preprocess;
+
+   --  Map a one-based offset into the preprocessed text back onto the
+   --  caller's input. Preprocessing only removes bytes, so counting the
+   --  bytes it kept recovers the original position.
+   function Input_Offset (Input : String; Offset : Natural) return Natural is
+      First  : Natural;
+      Last   : Natural;
+      Kept   : Natural := 0;
+      Mapped : Natural := 0;
+   begin
+      if Offset = 0 then
+         return 0;
+      end if;
+      Trim_Bounds (Input, First, Last);
+      for Index in First .. Last loop
+         if Input (Index) not in ASCII.HT | ASCII.LF | ASCII.CR then
+            Kept := Kept + 1;
+            Mapped := Index - Input'First + 1;
+            exit when Kept = Offset;
+         end if;
+      end loop;
+      if Kept = Offset then
+         return Mapped;
+      elsif Kept + 1 = Offset then
+         --  One past the last retained byte, as reported for a component
+         --  that ended before the parser expected it to.
+         return Mapped + 1;
+      else
+         return 0;
+      end if;
+   end Input_Offset;
 
    type Encode_Set is (Userinfo_Set, Path_Set, Query_Set, Special_Query_Set,
                        Fragment_Set, Opaque_Set);
@@ -781,7 +835,7 @@ package body Flyology_IRI.Web is
          Host_First := At_Sign + 1;
       end if;
       if Host_First > Text'Last then
-         Value.Valid := False;
+         Fail (Value, Invalid_Authority, Host_First);
          return;
       end if;
       if Text (Host_First) = '[' then
@@ -793,11 +847,11 @@ package body Flyology_IRI.Web is
             end if;
          end loop;
          if Host_Last = 0 then
-            Value.Valid := False;
+            Fail (Value, Invalid_Authority, Host_First);
             return;
          elsif Host_Last < Text'Last then
             if Text (Host_Last + 1) /= ':' then
-               Value.Valid := False;
+               Fail (Value, Invalid_Authority, Host_Last + 1);
                return;
             end if;
             Port_Colon := Host_Last + 1;
@@ -817,24 +871,24 @@ package body Flyology_IRI.Web is
          Canonical : constant String := Canonical_Host (Host_Text, Is_Special, Host_OK);
       begin
          if not Host_OK or else (Is_Special and then Canonical'Length = 0) then
-            Value.Valid := False;
+            Fail (Value, Invalid_Authority, Host_First);
             return;
          end if;
          U.Set_Unbounded_String (Value.Host, Canonical);
       end;
       if Port_Colon /= 0 and then Port_Colon < Text'Last then
          if U.To_String (Value.Scheme) = "file" then
-            Value.Valid := False;
+            Fail (Value, Invalid_Authority, Port_Colon);
             return;
          end if;
          for Index in Port_Colon + 1 .. Text'Last loop
             if not Is_Digit (Text (Index)) then
-               Value.Valid := False;
+               Fail (Value, Invalid_Authority, Index);
                return;
             end if;
             Port_Value := Port_Value * 10 + Character'Pos (Text (Index)) - 48;
             if Port_Value > 65_535 then
-               Value.Valid := False;
+               Fail (Value, Invalid_Authority, Index);
                return;
             end if;
          end loop;
@@ -847,7 +901,7 @@ package body Flyology_IRI.Web is
          end;
       end if;
       if Port_Colon /= 0 and then Host_First > Host_Last then
-         Value.Valid := False;
+         Fail (Value, Invalid_Authority, Host_First);
          return;
       end if;
       if U.To_String (Value.Scheme) = "file"
@@ -914,6 +968,32 @@ package body Flyology_IRI.Web is
       Position := Text'Last + 1;
    end Parse_Tail;
 
+   --  A scheme candidate is the run before a colon that precedes the first
+   --  slash of the hierarchical part. Without such a colon the input is a
+   --  relative reference, which web URL mode does not accept on its own.
+   --  This is the classification the URI and IRI grammars apply, so the
+   --  three syntaxes report a missing scheme the same way.
+   function Scheme_Failure (Text : String; Offset : Natural) return Parse_Error
+   is
+      Hier_Last : Natural := Text'Last;
+   begin
+      for Index in Text'Range loop
+         if Text (Index) in '#' | '?' then
+            Hier_Last := Index - 1;
+            exit;
+         end if;
+      end loop;
+      for Index in Text'First .. Hier_Last loop
+         exit when Text (Index) = '/';
+         if Text (Index) = ':' then
+            return
+              (Kind   => Invalid_Scheme,
+               Offset => (if Offset = 0 then 1 else Offset));
+         end if;
+      end loop;
+      return (Kind => Relative_URL, Offset => 0);
+   end Scheme_Failure;
+
    function Parse_Absolute (Text : String; Success : out Boolean) return URL_Parts;
 
    function Parse_Absolute (Text : String; Success : out Boolean) return URL_Parts is
@@ -926,6 +1006,7 @@ package body Flyology_IRI.Web is
    begin
       Success := False;
       if Text'Length = 0 or else not Is_Alpha (Text (Text'First)) then
+         Value.Error := Scheme_Failure (Text, 0);
          return Value;
       end if;
       for Index in Text'First + 1 .. Text'Last loop
@@ -935,10 +1016,13 @@ package body Flyology_IRI.Web is
          elsif not Is_Alpha (Text (Index)) and then not Is_Digit (Text (Index))
            and then Text (Index) not in '+' | '-' | '.'
          then
+            Value.Error :=
+              Scheme_Failure (Text, Index - Text'First + 1);
             return Value;
          end if;
       end loop;
       if Colon = 0 then
+         Value.Error := Scheme_Failure (Text, 0);
          return Value;
       end if;
       U.Set_Unbounded_String
@@ -1038,7 +1122,7 @@ package body Flyology_IRI.Web is
          if Position > Authority_Last and then Is_Special
            and then U.To_String (Value.Scheme) /= "file"
          then
-            Value.Valid := False;
+            Fail (Value, Invalid_Authority, Position);
             return Value;
          elsif Position > Authority_Last then
             Value.Has_Authority := True;
@@ -1072,6 +1156,7 @@ package body Flyology_IRI.Web is
       U.Set_Unbounded_String (Value.Fragment, "");
       if Text'Length = 0 then
          if Base.Opaque_Path then
+            Fail (Value, Relative_URL);
             return Value;
          end if;
          Value.Valid := True;
@@ -1124,6 +1209,7 @@ package body Flyology_IRI.Web is
       end if;
 
       if Base.Opaque_Path then
+         Fail (Value, Relative_URL);
          return Value;
       end if;
 
@@ -1203,6 +1289,7 @@ package body Flyology_IRI.Web is
                Value.Host := U.Null_Unbounded_String;
                Position := Authority_Last + 1;
             else
+               Fail (Value, Invalid_Authority, Position);
                return Value;
             end if;
          else
@@ -1276,19 +1363,23 @@ package body Flyology_IRI.Web is
      (Input    : String;
       Base     : String;
       Has_Base : Boolean;
-      Success  : out Boolean) return String
+      Error    : out Parse_Error) return String
    is
       Text    : constant String := Preprocess (Input);
       Base_OK : Boolean;
+      Success : Boolean := False;
       Parsed  : URL_Parts;
    begin
-      Success := False;
+      Error := (Kind => No_Error, Offset => 0);
       if Has_Base then
          declare
             Base_Text : constant String := Preprocess (Base);
             Base_URL  : constant URL_Parts := Parse_Absolute (Base_Text, Base_OK);
          begin
             if not Base_OK then
+               --  The base failed to reparse, so its offsets name bytes the
+               --  caller never supplied.
+               Error := (Kind => Base_URL.Error.Kind, Offset => 0);
                return "";
             end if;
             Parsed := Parse_Relative (Text, Base_URL, Success);
@@ -1297,7 +1388,11 @@ package body Flyology_IRI.Web is
          Parsed := Parse_Absolute (Text, Success);
       end if;
       if not Success or else not Parsed.Valid then
-         Success := False;
+         Error :=
+           (if Parsed.Error.Kind = No_Error
+            then (Kind => Invalid_Character, Offset => 0)
+            else (Kind   => Parsed.Error.Kind,
+                  Offset => Input_Offset (Input, Parsed.Error.Offset)));
          return "";
       end if;
       return Serialize (Parsed);

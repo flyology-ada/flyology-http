@@ -1,5 +1,6 @@
 with Ada.Text_IO;
 with Flyology_IRI;
+with Flyology_IRI_Differential;
 
 procedure Flyology_IRI_Tests is
    use Flyology_IRI;
@@ -130,16 +131,21 @@ procedure Flyology_IRI_Tests is
          "web resolve " & Input & " produced " & Image (Actual));
    end Check_Web;
 
-   --  A host the WHATWG host parser must refuse. Diagnose reports
-   --  Unsupported_URL for every non-ASCII special host without running the
-   --  host parser, so the check goes through Can_Parse and Parse.
+   --  A host the WHATWG host parser must refuse. Every entry point runs
+   --  that parser in web URL mode, so all three answer alike and Diagnose
+   --  names the authority.
    procedure Reject_Host (Host_Text : String) is
       Input  : constant String := "http://" & Host_Text & "/";
+      Found  : constant Parse_Error := Diagnose (Input, Web_URL_Syntax);
       Raised : Boolean := False;
    begin
       Assert
         (not Can_Parse (Input, Web_URL_Syntax),
          "Can_Parse accepted host " & Host_Text);
+      Assert
+        (Found.Kind = Invalid_Authority,
+         "Diagnose reported " & Error_Kind'Image (Found.Kind)
+         & " for host " & Host_Text);
       begin
          declare
             Ignored : constant Reference := Parse (Input, Web_URL_Syntax);
@@ -418,6 +424,76 @@ begin
    --  A base path with no '/' at all merges to the relative path alone.
    Check_Resolution_Base
      ("mailto:fred@example.com", "joe", "mailto:joe", "");
+
+   --  Web URL mode used to reach the grammar through an analyzer of its
+   --  own, which skipped WHATWG preprocessing and never ran the host
+   --  parser. It called a space, a CR LF and a backslash inside a host
+   --  valid, and disagreed with Parse on the authority it had accepted.
+   Reject ("http://exa mple.com/", Web_URL_Syntax, Invalid_Authority);
+   Assert
+     (Host (Parse ("http://good.com" & ASCII.CR & ASCII.LF & "evil/",
+                   Web_URL_Syntax)) = "good.comevil",
+      "CR LF stripped from the host before analysis");
+   Assert
+     (Diagnose ("http://good.com" & ASCII.CR & ASCII.LF & "evil/",
+                Web_URL_Syntax).Kind = No_Error,
+      "Diagnose rejects a host WHATWG accepts");
+   Assert
+     (Host (Parse ("http://good.com\evil.com/", Web_URL_Syntax))
+        = "good.com",
+      "backslash starts the path");
+   Assert
+     (Can_Parse ("http:///foo", Web_URL_Syntax)
+      and then Diagnose ("http:///foo", Web_URL_Syntax).Kind = No_Error
+      and then Host (Parse ("http:///foo", Web_URL_Syntax)) = "foo",
+      "extra authority slashes");
+
+   --  Max_Length bounds the serialization, which carries the path slash
+   --  WHATWG inserts, so the input length alone is not the bound.
+   Assert
+     (not Can_Parse ("http://a", Web_URL_Syntax, 8)
+      and then Diagnose ("http://a", Web_URL_Syntax, 8).Kind = Too_Long,
+      "Can_Parse accepted an input whose serialization is one byte longer");
+   Assert
+     (Can_Parse ("http://a", Web_URL_Syntax, 9),
+      "serialized length rejected at its own bound");
+
+   --  A web failure carries the same category and offset Diagnose reports,
+   --  not Invalid_Character at offset zero.
+   declare
+      Input : constant String := "http://example.com:65536/";
+      Found : constant Parse_Error := Diagnose (Input, Web_URL_Syntax);
+      Value : Reference;
+      Error : Parse_Error;
+   begin
+      Try_Parse (Input, Value, Error, Web_URL_Syntax);
+      Assert
+        (Found = (Kind => Invalid_Authority, Offset => 24),
+         "Diagnose reported " & Error_Kind'Image (Found.Kind)
+         & Natural'Image (Found.Offset));
+      Assert (Error = Found, "Try_Parse reported a different failure");
+   end;
+   declare
+      Input : constant String := "http://exa" & ASCII.HT & "mple.com:65536/";
+      Error : constant Parse_Error := Diagnose (Input, Web_URL_Syntax);
+   begin
+      --  Offsets name a byte of the caller's input, not of the text left
+      --  after WHATWG preprocessing removed the tab.
+      Assert
+        (Error = (Kind => Invalid_Authority, Offset => 25),
+         "stripped byte shifted the reported offset");
+   end;
+
+   --  Can_Parse, Diagnose, Parse and Try_Parse reach one grammar through
+   --  several routes, and Web_URL_Syntax splits again into a fast path and
+   --  the WHATWG path. A seeded corpus holds them to one answer.
+   declare
+      Found : constant Natural := Flyology_IRI_Differential.Disagreements;
+   begin
+      Assert
+        (Found = 0,
+         "entry points disagree on" & Natural'Image (Found) & " cases");
+   end;
 
    Ada.Text_IO.Put_Line ("flyology_iri tests passed");
 end Flyology_IRI_Tests;

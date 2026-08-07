@@ -70,7 +70,7 @@ package Flyology_IRI is
    --  may allocate while applying WHATWG normalization and IDNA processing.
    --  @param Input URI, IRI, or URL bytes
    --  @param Syntax Grammar and policy to apply
-   --  @param Max_Length Maximum accepted byte length
+   --  @param Max_Length Maximum accepted input and serialized byte length
    --  @return True exactly when Diagnose reports No_Error
    function Can_Parse
      (Input      : String;
@@ -80,7 +80,7 @@ package Flyology_IRI is
    --  Validate and report the first stable error category and byte offset.
    --  @param Input URI, IRI, or URL bytes
    --  @param Syntax Grammar and policy to apply
-   --  @param Max_Length Maximum accepted byte length
+   --  @param Max_Length Maximum accepted input and serialized byte length
    --  @return No_Error on success, otherwise the first detected failure
    function Diagnose
      (Input      : String;
@@ -91,7 +91,7 @@ package Flyology_IRI is
    --  scheme and ASCII host and inserts `/` for an empty HTTP-style path.
    --  @param Input URI, IRI, or URL bytes
    --  @param Syntax Grammar and policy to apply
-   --  @param Max_Length Maximum accepted serialized byte length
+   --  @param Max_Length Maximum accepted input and serialized byte length
    --  @return Parsed reference
    --  @exception Malformed_Reference Input is invalid
    function Parse
@@ -102,7 +102,7 @@ package Flyology_IRI is
    --  Parse a web URL using an already parsed absolute web base URL.
    --  @param Input Absolute or relative URL input
    --  @param Base Absolute web URL used for relative resolution
-   --  @param Max_Length Maximum accepted serialized byte length
+   --  @param Max_Length Maximum accepted input and serialized byte length
    --  @return Parsed absolute web URL
    --  @exception Malformed_Reference Base or input is not a valid web URL
    function Parse
@@ -115,7 +115,7 @@ package Flyology_IRI is
    --  @param Value Parsed reference on success, otherwise a default value
    --  @param Error No_Error on success, otherwise the parse failure
    --  @param Syntax Grammar and policy to apply
-   --  @param Max_Length Maximum accepted serialized byte length
+   --  @param Max_Length Maximum accepted input and serialized byte length
    procedure Try_Parse
      (Input      : String;
       Value      : out Reference;
@@ -128,7 +128,7 @@ package Flyology_IRI is
    --  @param Base Absolute web URL used for relative resolution
    --  @param Value Parsed absolute URL on success
    --  @param Error No_Error on success, otherwise the parse failure
-   --  @param Max_Length Maximum accepted serialized byte length
+   --  @param Max_Length Maximum accepted input and serialized byte length
    procedure Try_Parse
      (Input      : String;
       Base       : Reference;
@@ -140,7 +140,7 @@ package Flyology_IRI is
    --  section 5.2 merging and dot-segment removal.
    --  @param Base Absolute base reference
    --  @param Relative Reference to resolve
-   --  @param Max_Length Maximum accepted serialized byte length
+   --  @param Max_Length Maximum accepted input and serialized byte length
    --  @return Resolved absolute reference
    --  @exception Malformed_Reference Base is not absolute or result is invalid
    function Resolve
