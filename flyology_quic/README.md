@@ -28,6 +28,8 @@ through a proved 256-packet window, and exchanges datagrams through Flyology's
 portable UDP sockets.
 The native primitive boundary also supplies cryptographic randomness, SHA-256,
 HMAC-SHA256, and X25519 for the Ada TLS 1.3 handshake state.
+The Ada key schedule derives no-PSK TLS 1.3 handshake, Finished, application,
+exporter, and resumption secrets together with QUIC traffic keys and updates.
 
 ## Build and test
 

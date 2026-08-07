@@ -19,6 +19,11 @@ for the next layer.
 - FIPS 180-4, RFC 4231, and RFC 7748 vectors cover SHA-256, HMAC-SHA256,
   X25519 public-key derivation, and shared-secret agreement in both directions.
   Fresh ephemeral pairs must agree, while an all-zero peer key is rejected.
+- The RFC 8448 simple 1-RTT trace covers the Ada TLS 1.3 no-PSK schedule:
+  handshake and master secrets, both handshake traffic and Finished secrets,
+  Finished verification, application traffic, exporter, resumption, and TLS
+  traffic key labels. RFC 9001 independently covers QUIC key, IV, and header
+  protection labels.
 - The complete RFC 9001 server Initial packet covers receive-side envelope
   parsing, header unprotection, packet-number reconstruction, AAD and nonce
   construction, AES-GCM authentication, and exact plaintext recovery.
