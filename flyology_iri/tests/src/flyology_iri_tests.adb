@@ -47,6 +47,29 @@ procedure Flyology_IRI_Tests is
       end;
    end Check_Resolution;
 
+   procedure Check_Resolution_Base
+     (Base_Text     : String;
+      Relative      : String;
+      Expected      : String;
+      Expected_Host : String;
+      Syntax        : Syntax_Kind := URI_Syntax)
+   is
+      Base : constant Reference := Parse (Base_Text, Syntax);
+   begin
+      declare
+         Actual : constant Reference := Resolve (Base, Relative);
+      begin
+         Assert
+           (Image (Actual) = Expected,
+            "resolve " & Relative & " against " & Base_Text
+            & " produced " & Image (Actual));
+         Assert
+           (Host (Actual) = Expected_Host,
+            "resolve " & Relative & " against " & Base_Text
+            & " produced host " & Host (Actual));
+      end;
+   end Check_Resolution_Base;
+
    procedure Check_Web (Input, Expected : String) is
       Actual : constant Reference := Parse (Input, Web_URL_Syntax);
    begin
@@ -186,6 +209,35 @@ begin
    Check_Resolution ("..", "http://a/b/");
    Check_Resolution ("../g", "http://a/b/g");
    Check_Resolution ("../../g", "http://a/g");
+
+   --  RFC 3986 section 5.2.3 merge excludes the characters after the base
+   --  path's right-most '/' while retaining that '/'.  Every case of the
+   --  section 5.4 suite above uses a base whose path has an interior slash,
+   --  so a merge that dropped the retained separator stayed invisible there.
+   --  Site-root and single-segment bases expose it, and the resolved host
+   --  must never move away from the base authority.
+   Check_Resolution_Base
+     ("http://good.com/", "index.html",
+      "http://good.com/index.html", "good.com");
+   Check_Resolution_Base
+     ("http://good.com/x", "evil.com/",
+      "http://good.com/evil.com/", "good.com");
+   Check_Resolution_Base
+     ("http://good.com/x", "../up", "http://good.com/up", "good.com");
+   Check_Resolution_Base
+     ("http://good.com/x", "./same", "http://good.com/same", "good.com");
+   Check_Resolution_Base
+     ("http://good.com/a/b", "c.html",
+      "http://good.com/a/c.html", "good.com");
+   Check_Resolution_Base
+     ("http://good.com", "index.html",
+      "http://good.com/index.html", "good.com");
+   Check_Resolution_Base
+     ("https://例え.テスト/x", "evil.テスト/p",
+      "https://例え.テスト/evil.テスト/p", "例え.テスト", IRI_Syntax);
+   --  A base path with no '/' at all merges to the relative path alone.
+   Check_Resolution_Base
+     ("mailto:fred@example.com", "joe", "mailto:joe", "");
 
    Ada.Text_IO.Put_Line ("flyology_iri tests passed");
 end Flyology_IRI_Tests;

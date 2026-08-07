@@ -1320,11 +1320,22 @@ package body Flyology_IRI is
                   if Has_Authority (Base) and then Path (Base)'Length = 0 then
                      Unbounded.Append (Prefix, '/');
                   else
-                     Unbounded.Set_Unbounded_String (Prefix, Path (Base));
-                     Remove_Last_Segment (Prefix);
-                     if Unbounded.Length (Prefix) > 0 then
-                        Unbounded.Append (Prefix, '/');
-                     end if;
+                     --  RFC 3986 section 5.2.3 merge excludes the characters
+                     --  after the base path's right-most '/' but retains
+                     --  that '/'.  A base path without any '/' merges to the
+                     --  relative path alone, so Prefix stays empty.
+                     declare
+                        Base_Path : constant String := Path (Base);
+                     begin
+                        for Index in reverse Base_Path'Range loop
+                           if Base_Path (Index) = '/' then
+                              Unbounded.Set_Unbounded_String
+                                (Prefix,
+                                 Base_Path (Base_Path'First .. Index));
+                              exit;
+                           end if;
+                        end loop;
+                     end;
                   end if;
                   Unbounded.Append
                     (Target,
