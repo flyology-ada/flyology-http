@@ -36,6 +36,7 @@ alr gnatprove \
   flyology-quic-qpack_integer_policy.adb \
   flyology-quic-qpack_static_table.adb \
   flyology-quic-stream_frame_policy.adb \
+  flyology-quic-stream_reassembly_policy.adb \
   flyology-quic-tls_authentication_policy.adb \
   flyology-quic-tls_extension_policy.adb \
   flyology-quic-tls_handshake_policy.adb \

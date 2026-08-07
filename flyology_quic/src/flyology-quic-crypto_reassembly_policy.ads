@@ -11,6 +11,7 @@ private package Flyology.QUIC.Crypto_Reassembly_Policy
        SPARK_Mode => On
 is
    use type Ada.Streams.Stream_Element_Offset;
+   use type Varint_Policy.Value_Type;
 
    Max_Crypto_Data : constant := 65_536;
    subtype Stream_Offset is
@@ -24,13 +25,15 @@ is
       Conflicting_Overlap,
       Exceeds_Capacity);
 
-   function Contiguous_Length
-     (Item : Reassembly_State) return Stream_Offset
-   with Global => null;
-
    function Highest_Offset
      (Item : Reassembly_State) return Stream_Offset
    with Global => null;
+
+   function Contiguous_Length
+     (Item : Reassembly_State) return Stream_Offset
+   with
+     Global => null,
+     Post => Contiguous_Length'Result <= Highest_Offset (Item);
 
    function Element
      (Item  : Reassembly_State;
@@ -57,7 +60,17 @@ is
      Post =>
        Contiguous_Length (Item) <= Highest_Offset (Item)
        and then
-         (if Status /= Accepted then
+         (if Status = Accepted then
+             Wire_Offset <= Varint_Policy.Value_Type (Max_Crypto_Data)
+             and then Data'Length <=
+               Max_Crypto_Data - Stream_Offset (Wire_Offset)
+             and then Highest_Offset (Item) =
+               Stream_Offset'Max
+                 (Highest_Offset (Item'Old),
+                  Stream_Offset (Wire_Offset) + Stream_Offset (Data'Length))
+             and then Contiguous_Length (Item) >=
+               Contiguous_Length (Item'Old)
+          else
              Contiguous_Length (Item) =
                Contiguous_Length (Item'Old)
              and then Highest_Offset (Item) = Highest_Offset (Item'Old));

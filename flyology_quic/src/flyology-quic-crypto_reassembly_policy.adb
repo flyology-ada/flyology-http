@@ -37,6 +37,7 @@ is
       Ending      : Stream_Offset;
       Relative    : Stream_Offset := 0;
       Added       : Boolean := False;
+      Initial_Contiguous : constant Stream_Offset := Item.Contiguous;
    begin
       Status := Exceeds_Capacity;
       if Wire_Offset > Varint_Policy.Value_Type (Max_Crypto_Data) then
@@ -99,9 +100,11 @@ is
         and then Item.Present (Stream_Index (Item.Contiguous))
       loop
          pragma Loop_Invariant (Item.Contiguous <= Item.Highest);
+         pragma Loop_Invariant (Item.Contiguous >= Initial_Contiguous);
          pragma Loop_Variant (Decreases => Item.Highest - Item.Contiguous);
          Item.Contiguous := Item.Contiguous + 1;
       end loop;
+      pragma Assert (Item.Contiguous >= Initial_Contiguous);
       Status := Accepted;
    end Insert;
 end Flyology.QUIC.Crypto_Reassembly_Policy;
