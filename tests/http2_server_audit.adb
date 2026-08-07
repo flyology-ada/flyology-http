@@ -46,6 +46,11 @@ procedure HTTP2_Server_Audit is
       if X.Request_Target = "/slow" then
          delay 0.30;
          X.Text (200, "slow");
+      elsif X.Request_Target = "/hold" then
+         --  Deliberately never reads the request body, so the stream receive
+         --  window stays depleted when the peer resets the stream.
+         delay 0.30;
+         X.No_Content;
       else
          X.Text (200, "ok");
       end if;
@@ -85,6 +90,17 @@ procedure HTTP2_Server_Audit is
          8 => Stream_Element (Interfaces.Shift_Right (Value, 8) and 16#FF#),
          9 => Stream_Element (Value and 16#FF#));
    end Frame_Header;
+
+   function U32 (Value : Natural) return Stream_Element_Array is
+      Number : constant Interfaces.Unsigned_32 :=
+        Interfaces.Unsigned_32 (Value);
+   begin
+      return
+        (1 => Stream_Element (Interfaces.Shift_Right (Number, 24) and 16#7F#),
+         2 => Stream_Element (Interfaces.Shift_Right (Number, 16) and 16#FF#),
+         3 => Stream_Element (Interfaces.Shift_Right (Number, 8) and 16#FF#),
+         4 => Stream_Element (Number and 16#FF#));
+   end U32;
 
    function Text_Bytes (Value : String) return Stream_Element_Array is
       Result : Stream_Element_Array (1 .. Value'Length);
@@ -165,6 +181,7 @@ procedure HTTP2_Server_Audit is
 
    Data_Frame          : constant Stream_Element := 16#00#;
    Headers_Frame       : constant Stream_Element := 16#01#;
+   Reset_Stream_Frame  : constant Stream_Element := 16#03#;
    Settings_Frame      : constant Stream_Element := 16#04#;
    Ping_Frame          : constant Stream_Element := 16#06#;
    Goaway_Frame        : constant Stream_Element := 16#07#;
@@ -177,7 +194,7 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 1;
+   Sessions : constant := 2;
 
    procedure Connect_Peer (Socket : in out Sockets.Socket_Type) is
    begin
@@ -273,6 +290,77 @@ begin
          Check
            (Credit >= Closed_Stream_Bytes,
             "closed-stream DATA is credited back on the connection window");
+         Sockets.Close_Socket (Socket);
+      end;
+
+      ------------------------------------------------------------------------
+      --  Finding 8: a reused stream slot must start from the advertised
+      --  initial receive window, not the previous stream's residue.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line
+        ("finding 8: reused stream slot receive window");
+      declare
+         Socket  : Sockets.Socket_Type;
+         Info    : Frame_Info;
+         Payload : Stream_Element_Array (1 .. 16_384) := (others => 0);
+         Goaway_Error : Integer := -1;
+         Responded : Boolean := False;
+         Settled : Boolean := False;
+
+         procedure Ping_Round_Trip is
+            Seen : Boolean := False;
+         begin
+            Send_Frame
+              (Socket, Ping_Frame, 0, 0,
+               Stream_Element_Array'(1 .. 8 => 16#17#));
+            while not Seen loop
+               Read_Frame_Header (Socket, Info, Wait => 5.0);
+               Read_Payload (Socket, Info, Payload, Wait => 5.0);
+               Seen := Info.Kind = Ping_Frame
+                 and then (Info.Flags and Ack_Flag) /= 0;
+            end loop;
+         end Ping_Round_Trip;
+      begin
+         Connect_Peer (Socket);
+         Send_Frame
+           (Socket, Headers_Frame, End_Headers_Flag, 1,
+            Request_Block ("POST", "/hold"));
+         Send_Frame
+           (Socket, Data_Frame, 0, 1, Payload (1 .. 16_000));
+         Send_Frame (Socket, Reset_Stream_Frame, 0, 1, U32 (8));
+         --  Let the cancelled handler finish so the slot is reaped and reused.
+         delay 0.80;
+         Ping_Round_Trip;
+         Ping_Round_Trip;
+         Send_Frame
+           (Socket, Headers_Frame, End_Headers_Flag, 3,
+            Request_Block ("POST", "/hold"));
+         --  Legal for a fresh stream: 1 000 bytes against the advertised
+         --  16 384-byte initial stream receive window.
+         Send_Frame
+           (Socket, Data_Frame, End_Stream_Flag, 3, Payload (1 .. 1_000));
+         while not Settled loop
+            Read_Frame_Header (Socket, Info, Wait => 5.0);
+            Read_Payload (Socket, Info, Payload, Wait => 5.0);
+            if Info.Kind = Goaway_Frame then
+               Goaway_Error :=
+                 Integer (Natural (Payload (5)) * 16#100_0000# +
+                   Natural (Payload (6)) * 16#1_0000# +
+                   Natural (Payload (7)) * 16#100# + Natural (Payload (8)));
+               Settled := True;
+            elsif Info.Kind = Headers_Frame and then Info.Stream_ID = 3 then
+               Responded := True;
+               Settled := True;
+            end if;
+         end loop;
+         if Goaway_Error >= 0 then
+            Ada.Text_IO.Put_Line
+              ("  reused slot rejected a legal DATA frame; GOAWAY code " &
+                 Decimal (Natural (Goaway_Error)));
+         end if;
+         Check
+           (Responded,
+            "a slot reused after a mid-upload reset accepts legal DATA");
          Sockets.Close_Socket (Socket);
       end;
 

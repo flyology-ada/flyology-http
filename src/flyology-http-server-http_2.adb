@@ -1284,6 +1284,10 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Streams (Slot).Output_First := 1;
          Streams (Slot).Output_Count := 0;
          Streams (Slot).End_Pending := False;
+         --  A reused slot must start from the advertised initial window; the
+         --  previous stream's residue would reject a legal DATA frame.
+         Streams (Slot).Receive_Window :=
+           Policy.Window_Size (Settings.Advertised_Initial_Window_Size);
          Streams (Slot).Pending_Receive_Credit := 0;
          if Flyology.Wake_Sources.Descriptor (Streams (Slot).Wake) >= 0 then
             Flyology.Wake_Sources.Release (Streams (Slot).Wake);
