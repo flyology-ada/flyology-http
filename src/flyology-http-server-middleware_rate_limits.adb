@@ -8,8 +8,28 @@ package body Flyology.HTTP.Server.Middleware_Rate_Limits is
    Shard_Count      : constant Positive := Positive'Min (16, Capacity);
    Shard_Capacity   : constant Positive := Capacity / Shard_Count;
 
+   type Hash_Value is mod 2 ** 32;
+   Hash_Seed : constant Hash_Value := 2_166_136_261;
+
+   --  FNV-1a over Value, continued from Seed. One pass over the route name
+   --  and then the client key yields both the shard index and, when either
+   --  exceeds the prefix a bucket can store, the digest that keeps the
+   --  bucket's identity total instead of denying the route outright.
+   function Hashed (Seed : Hash_Value; Value : String) return Hash_Value;
+
+   function Hashed (Seed : Hash_Value; Value : String) return Hash_Value is
+      Result : Hash_Value := Seed;
+   begin
+      for Item of Value loop
+         Result :=
+           (Result xor Hash_Value (Character'Pos (Item))) * 16_777_619;
+      end loop;
+      return Result;
+   end Hashed;
+
    type Bucket_Entry is record
       Used         : Boolean := False;
+      Digest       : Hash_Value := 0;
       Route        : String (1 .. Max_Route_Length) := (others => ' ');
       Route_Length : Natural := 0;
       Key          : String (1 .. Max_Key_Length) := (others => ' ');
@@ -23,6 +43,7 @@ package body Flyology.HTTP.Server.Middleware_Rate_Limits is
       procedure Admit
         (Route   : String;
          Key     : String;
+         Digest  : Hash_Value;
          Rate    : Positive;
          Now     : Ada.Real_Time.Time;
          Allowed : out Boolean);
@@ -34,26 +55,31 @@ package body Flyology.HTTP.Server.Middleware_Rate_Limits is
       procedure Admit
         (Route   : String;
          Key     : String;
+         Digest  : Hash_Value;
          Rate    : Positive;
          Now     : Ada.Real_Time.Time;
          Allowed : out Boolean)
       is
+         Route_Head : constant Natural :=
+           Natural'Min (Route'Length, Max_Route_Length);
+         Key_Head   : constant Natural :=
+           Natural'Min (Key'Length, Max_Key_Length);
+         Route_Text : String renames
+           Route (Route'First .. Route'First + Route_Head - 1);
+         Key_Text   : String renames
+           Key (Key'First .. Key'First + Key_Head - 1);
          Slot   : Natural := 0;
          Empty  : Natural := 0;
          Oldest : Positive := Values'First;
       begin
          Allowed := False;
-         if Route'Length = 0 or else Route'Length > Max_Route_Length
-           or else Key'Length = 0 or else Key'Length > Max_Key_Length
-         then
-            return;
-         end if;
          for Index in Values'Range loop
             if Values (Index).Used
               and then Values (Index).Route_Length = Route'Length
               and then Values (Index).Key_Length = Key'Length
-              and then Values (Index).Route (1 .. Route'Length) = Route
-              and then Values (Index).Key (1 .. Key'Length) = Key
+              and then Values (Index).Route (1 .. Route_Head) = Route_Text
+              and then Values (Index).Key (1 .. Key_Head) = Key_Text
+              and then Values (Index).Digest = Digest
             then
                Slot := Index;
                exit;
@@ -68,10 +94,11 @@ package body Flyology.HTTP.Server.Middleware_Rate_Limits is
          if Slot = 0 then
             Slot := (if Empty > 0 then Empty else Oldest);
             Values (Slot).Used := True;
+            Values (Slot).Digest := Digest;
             Values (Slot).Route_Length := Route'Length;
             Values (Slot).Key_Length := Key'Length;
-            Values (Slot).Route (1 .. Route'Length) := Route;
-            Values (Slot).Key (1 .. Key'Length) := Key;
+            Values (Slot).Route (1 .. Route_Head) := Route_Text;
+            Values (Slot).Key (1 .. Key_Head) := Key_Text;
             Values (Slot).Tokens := Duration (Rate);
             Values (Slot).Seen := Now;
          else
@@ -96,21 +123,6 @@ package body Flyology.HTTP.Server.Middleware_Rate_Limits is
      array (Positive range 1 .. Shard_Count) of Limiter_Bucket;
    Limiters : Limiter_Array;
 
-   function Shard (Route, Key : String) return Positive is
-      type Hash_Value is mod 2 ** 32;
-      Value : Hash_Value := 2_166_136_261;
-   begin
-      for Item of Route loop
-         Value :=
-           (Value xor Hash_Value (Character'Pos (Item))) * 16_777_619;
-      end loop;
-      for Item of Key loop
-         Value :=
-           (Value xor Hash_Value (Character'Pos (Item))) * 16_777_619;
-      end loop;
-      return Natural (Value mod Hash_Value (Shard_Count)) + 1;
-   end Shard;
-
    procedure Count_Denial is
    begin
       if Metric_Output /= null then
@@ -133,11 +145,19 @@ package body Flyology.HTTP.Server.Middleware_Rate_Limits is
          return;
       end if;
       declare
-         Route : constant String := X.Route_Name;
-         Key   : constant String := Client_Key (X);
+         Route  : constant String := X.Route_Name;
+         Key    : constant String := Client_Key (X);
+         Full   : constant Hash_Value :=
+           Hashed (Hashed (Hash_Seed, Route), Key);
+         --  A route name and client key that both fit their stored prefix
+         --  are already identified exactly, so they carry no digest.
+         Digest : constant Hash_Value :=
+           (if Route'Length > Max_Route_Length
+              or else Key'Length > Max_Key_Length
+            then Full else 0);
       begin
-         Limiters (Shard (Route, Key)).Admit
-           (Route, Key, Rate, Clock, Allowed);
+         Limiters (Natural (Full mod Hash_Value (Shard_Count)) + 1).Admit
+           (Route, Key, Digest, Rate, Clock, Allowed);
       end;
       if not Allowed then
          Count_Denial;

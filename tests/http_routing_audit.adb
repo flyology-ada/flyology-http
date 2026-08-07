@@ -1,12 +1,16 @@
 --  Regression coverage for the 2026-08-07 audit findings in the server routing
 --  and middleware. Every fix lands its failing reproduction here before the fix
 --  itself.
+with Ada.Real_Time;
 with Ada.Streams;
+with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology.Cancellation;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
+with Flyology.HTTP.Server.Middleware_Bulkheads;
+with Flyology.HTTP.Server.Middleware_Rate_Limits;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO;
 with Flyology.IO.Sockets;
@@ -16,6 +20,7 @@ procedure HTTP_Routing_Audit is
    package Sockets renames Flyology.IO.Sockets;
 
    use Ada.Strings.Unbounded;
+   use type Ada.Real_Time.Time;
    use type Ada.Streams.Stream_Element_Offset;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
@@ -171,8 +176,266 @@ procedure HTTP_Routing_Audit is
       Route_Target ("http://localhost?x=1", "root", "/");
    end Check_Target_Form_Anchoring;
 
+   --  Finding 17. Both limiters copy X.Route_Name into a fixed
+   --  String (1 .. Max_Route_Length); an oversized name left the guard with
+   --  the deny value still set, so every request to a route whose name
+   --  exceeds that bound was refused permanently and without a diagnostic.
+   --  Mounted REST route names exceed it easily.
+   procedure Check_Long_Route_Name_Admission is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is record
+         Calls : Natural := 0;
+      end record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      Clock_Value : Ada.Real_Time.Time := Ada.Real_Time.Clock;
+      function Test_Clock return Ada.Real_Time.Time is (Clock_Value);
+      function Client_Key (X : Applications.Exchange) return String is
+        (X.Request_Header ("X-Client"));
+
+      package Rates is new Flyology.HTTP.Server.Middleware_Rate_Limits
+        (Context, Routing.Components, Client_Key,
+         Capacity => 8, Clock => Test_Clock);
+      package Bulkheads is new Flyology.HTTP.Server.Middleware_Bulkheads
+        (Context, Routing.Components, Route_Capacity => 4);
+
+      procedure Serve_It
+        (State : in out Context;
+         X     : in out Applications.Exchange) is
+      begin
+         State.Calls := State.Calls + 1;
+         X.Text (200, "served");
+      end Serve_It;
+
+      Deep_Pattern : constant String :=
+        "/api/v2/organizations/{org}/workspaces/{ws}/projects/{project}"
+        & "/pipelines/{pipeline}/runs/{run}/artifacts/{artifact}";
+      Deep_Target : constant String :=
+        "/services/orchestration/api/v2/organizations/acme/workspaces/main"
+        & "/projects/p1/pipelines/nightly/runs/r7/artifacts/a3";
+
+      Nested     : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      Rated      : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      Bulkheaded : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      State      : Context;
+
+      function Status
+        (Routes : in out Routing.Router;
+         Target : String) return String
+      is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("POST " & Target & " HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "X-Client: 203.0.113.7" & CRLF
+            & "Content-Length: 0" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         declare
+            Output : constant String := To_String (Wire.Output);
+         begin
+            return
+              (if Output'Length >= 12
+               then Output (Output'First + 9 .. Output'First + 11)
+               else "---");
+         end;
+      end Status;
+   begin
+      Nested.Post
+        (Deep_Pattern, Serve_It'Access,
+         Policy =>
+           (Routing.Default_Route_Policy with delta
+              Body_Handling   => Applications.Buffer_Body,
+              Rate_Per_Second => 8,
+              Concurrency     => 2));
+      Rated.Post
+        ("/short", Serve_It'Access, Name => "short",
+         Policy =>
+           (Routing.Default_Route_Policy with delta
+              Body_Handling   => Applications.Buffer_Body,
+              Rate_Per_Second => 8,
+              Concurrency     => 2));
+      Rated.Mount
+        ("/services/orchestration", Nested, Name_Prefix => "orchestration.");
+      Bulkheaded.Mount
+        ("/services/orchestration", Nested, Name_Prefix => "orchestration.");
+      Rated.Add_Middleware (Rates.Call'Access);
+      Bulkheaded.Add_Middleware (Bulkheads.Call'Access);
+
+      declare
+         Deep : constant Routing.Route_Description :=
+           Rated.Describe_Route (2);
+      begin
+         --  The reproduction is only meaningful above the limiters' bound.
+         if Length (Deep.Name) <= 128 then
+            Failures := Failures + 1;
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "FAIL finding 17 setup: mounted route name is only"
+               & Natural'Image (Length (Deep.Name)) & " characters");
+         end if;
+      end;
+
+      --  Control: a short route name is admitted by the token bucket.
+      Expect
+        ("finding 17 short route", Status (Rated, "/short"), "200");
+
+      --  The long-named route must be admitted on the same budget.
+      Expect
+        ("finding 17 rate-limited deep route",
+         Status (Rated, Deep_Target), "200");
+      Clock_Value := Clock_Value + Ada.Real_Time.Seconds (1);
+      Expect
+        ("finding 17 rate-limited deep route repeat",
+         Status (Rated, Deep_Target), "200");
+
+      --  The bulkhead denies the same name independently of the bucket.
+      Expect
+        ("finding 17 bulkheaded deep route",
+         Status (Bulkheaded, Deep_Target), "200");
+      Expect
+        ("finding 17 bulkheaded deep route repeat",
+         Status (Bulkheaded, Deep_Target), "200");
+
+      Expect ("finding 17 handler calls", State.Calls'Image, " 5");
+   end Check_Long_Route_Name_Admission;
+
+   --  Finding 17 (same root cause). Bulkhead route counters were never
+   --  released, so once Route_Capacity distinct names had been seen every
+   --  further route was denied a bare 503 indistinguishable from a genuine
+   --  concurrency denial. Counters at rest are now taken over, and a table
+   --  whose entries are all in use reports a distinct problem type.
+   procedure Check_Bulkhead_Counter_Reuse is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is record
+         Nested : Unbounded_String;
+      end record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      package Reuse_Bulkheads is new Flyology.HTTP.Server.Middleware_Bulkheads
+        (Context, Routing.Components, Route_Capacity => 2);
+      package Held_Bulkheads is new Flyology.HTTP.Server.Middleware_Bulkheads
+        (Context, Routing.Components, Route_Capacity => 1);
+
+      Reused : Routing.Router
+        (Capacity => 3, Slashes => Routing.Strict_Slashes);
+      Held   : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+
+      procedure Plain
+        (Value : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (Value);
+      begin
+         X.Text (200, "plain");
+      end Plain;
+
+      function Request_Once
+        (Routes : in out Routing.Router;
+         Target : String) return String
+      is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET " & Target & " HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Request_Once;
+
+      function Status_Of (Output : String) return String is
+        (if Output'Length >= 12
+         then Output (Output'First + 9 .. Output'First + 11) else "---");
+
+      --  Runs while its own route counter is still held, so the second route
+      --  cannot be metered at all when only one counter exists.
+      procedure Nesting
+        (Value : in out Context;
+         X     : in out Applications.Exchange) is
+      begin
+         Value.Nested := To_Unbounded_String (Request_Once (Held, "/inner"));
+         X.Text (200, "outer");
+      end Nesting;
+   begin
+      Reused.Get
+        ("/a", Plain'Access, Name => "a",
+         Policy =>
+           (Routing.Default_Route_Policy with delta Concurrency => 1));
+      Reused.Get
+        ("/b", Plain'Access, Name => "b",
+         Policy =>
+           (Routing.Default_Route_Policy with delta Concurrency => 1));
+      Reused.Get
+        ("/c", Plain'Access, Name => "c",
+         Policy =>
+           (Routing.Default_Route_Policy with delta Concurrency => 1));
+      Reused.Add_Middleware (Reuse_Bulkheads.Call'Access);
+
+      Held.Get
+        ("/outer", Nesting'Access, Name => "outer",
+         Policy =>
+           (Routing.Default_Route_Policy with delta Concurrency => 1));
+      Held.Get
+        ("/inner", Plain'Access, Name => "inner",
+         Policy =>
+           (Routing.Default_Route_Policy with delta Concurrency => 1));
+      Held.Add_Middleware (Held_Bulkheads.Call'Access);
+
+      --  Two counters, three route names seen in turn. The third only fits
+      --  once a counter at rest can be taken over.
+      Expect
+        ("finding 17 counter a",
+         Status_Of (Request_Once (Reused, "/a")), "200");
+      Expect
+        ("finding 17 counter b",
+         Status_Of (Request_Once (Reused, "/b")), "200");
+      Expect
+        ("finding 17 counter c",
+         Status_Of (Request_Once (Reused, "/c")), "200");
+
+      --  One counter, held by the outer route while the inner one runs. The
+      --  inner denial must name the exhausted table, not read as a plain
+      --  concurrency rejection.
+      Expect
+        ("finding 17 held outer",
+         Status_Of (Request_Once (Held, "/outer")), "200");
+      Expect
+        ("finding 17 held inner", Status_Of (To_String (State.Nested)),
+         "503");
+      if Ada.Strings.Fixed.Index
+        (To_String (State.Nested), "bulkhead-unmeterable") = 0
+      then
+         Failures := Failures + 1;
+         Ada.Text_IO.Put_Line
+           (Ada.Text_IO.Standard_Error,
+            "FAIL finding 17 held inner problem type: expected"
+            & " bulkhead-unmeterable in [" & To_String (State.Nested) & "]");
+      end if;
+   end Check_Bulkhead_Counter_Reuse;
+
 begin
    Check_Target_Form_Anchoring;
+   Check_Long_Route_Name_Admission;
+   Check_Bulkhead_Counter_Reuse;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
