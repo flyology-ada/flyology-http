@@ -9,6 +9,7 @@ with Ada.Text_IO;
 with Flyology.Cancellation;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
+with Flyology.HTTP.Server.Middleware_Authentication;
 with Flyology.HTTP.Server.Middleware_Bulkheads;
 with Flyology.HTTP.Server.Middleware_Rate_Limits;
 with Flyology.HTTP.Server.Routing;
@@ -637,12 +638,156 @@ procedure HTTP_Routing_Audit is
       Expect ("finding 30 late route", Raised'Image, "TRUE");
    end Check_Mount_Sealing;
 
+   --  Finding 32. Require_Authentication, the router's own fail-closed
+   --  backstop, always advertised Bearer. An application whose authentication
+   --  middleware runs at the Application stage places it after that backstop,
+   --  so every request to a Required_Authentication route was answered with a
+   --  challenge naming a scheme the application does not use, and the 401 was
+   --  indistinguishable from the middleware's own rejection.
+   procedure Check_Authentication_Challenge is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      Basic_Challenge : constant String := "Basic realm=""app""";
+
+      procedure Verify
+        (Scheme        : String;
+         Credential    : String;
+         Authenticated : out Boolean;
+         Principal     : out Unbounded_String) is
+      begin
+         Authenticated := Scheme = "Basic" and then Credential = "ok";
+         Principal :=
+           (if Authenticated then To_Unbounded_String ("user")
+            else Null_Unbounded_String);
+      end Verify;
+
+      package Basic_Auth is new
+        Flyology.HTTP.Server.Middleware_Authentication
+          (Context, Routing.Components, Verify,
+           Challenge => Basic_Challenge);
+
+      procedure Private_Page
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "private");
+      end Private_Page;
+
+      Late  : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      Early : Routing.Router
+        (Capacity => 1, Slashes => Routing.Strict_Slashes);
+      State : Context;
+
+      function Answer
+        (Routes : in out Routing.Router;
+         Target : String) return String
+      is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET " & Target & " HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Answer;
+
+      procedure Expect_In
+        (Label    : String;
+         Output   : String;
+         Fragment : String) is
+      begin
+         if Ada.Strings.Fixed.Index (Output, Fragment) = 0 then
+            Failures := Failures + 1;
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "FAIL " & Label & ": expected [" & Fragment
+               & "] in [" & Output & "]");
+         end if;
+      end Expect_In;
+   begin
+      Late.Get
+        ("/private", Private_Page'Access, Name => "private",
+         Policy =>
+           (Routing.Default_Route_Policy with delta
+              Authentication => Routing.Required_Authentication));
+      Late.Add_Middleware
+        (Basic_Auth.Call'Access, Stage => Routing.Application,
+         Name => "authentication");
+      Late.Set_Authentication_Challenge (Basic_Challenge);
+
+      --  The backstop must advertise the application's configured scheme and
+      --  must say that nothing installed a principal before it, so the
+      --  misordering is visible instead of reading as a credential failure.
+      declare
+         Output : constant String := Answer (Late, "/private");
+      begin
+         Expect_In
+           ("finding 32 backstop status", Output, "HTTP/1.1 401");
+         Expect_In
+           ("finding 32 backstop challenge", Output,
+            "WWW-Authenticate: " & Basic_Challenge);
+         Expect_In
+           ("finding 32 backstop problem", Output,
+            "authentication-not-installed");
+      end;
+
+      --  Authentication at the Request_Head stage runs before the backstop
+      --  and keeps reporting an ordinary credential rejection.
+      Early.Get
+        ("/private", Private_Page'Access, Name => "private",
+         Policy =>
+           (Routing.Default_Route_Policy with delta
+              Authentication => Routing.Required_Authentication));
+      Early.Add_Middleware
+        (Basic_Auth.Call'Access, Name => "authentication");
+      declare
+         Output : constant String := Answer (Early, "/private");
+      begin
+         Expect_In
+           ("finding 32 middleware challenge", Output,
+            "WWW-Authenticate: " & Basic_Challenge);
+         Expect_In
+           ("finding 32 middleware problem", Output,
+            "authentication-required");
+      end;
+
+      --  A challenge that cannot be sent must fail at setup, not per request.
+      declare
+         Raised : Boolean := False;
+      begin
+         begin
+            Early.Set_Authentication_Challenge
+              ("Basic" & Character'Val (13) & "X-Injected: 1");
+         exception
+            when Routing.Route_Error =>
+               Raised := True;
+         end;
+         Expect ("finding 32 challenge validation", Raised'Image, "TRUE");
+         Expect
+           ("finding 32 challenge default",
+            Late.Authentication_Challenge, Basic_Challenge);
+      end;
+   end Check_Authentication_Challenge;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
    Check_Bulkhead_Counter_Reuse;
    Check_Automatic_Response_Admission;
    Check_Mount_Sealing;
+   Check_Authentication_Challenge;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

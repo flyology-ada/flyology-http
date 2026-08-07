@@ -926,6 +926,23 @@ package body Flyology.HTTP.Server.Applications is
                                      Null_Unbounded_String));
    end Configure_Route;
 
+   procedure Set_Authentication_Challenge
+     (Item  : in out Exchange;
+      Value : String)
+   is
+   begin
+      Require_Owner (Item);
+      if Item.Route_Sealed then
+         raise Program_Error with "HTTP route metadata is sealed";
+      end if;
+      Item.Challenge_Value := To_Unbounded_String (Value);
+   end Set_Authentication_Challenge;
+
+   function Authentication_Challenge (Item : Exchange) return String is
+     (if Length (Item.Challenge_Value) = 0
+      then Default_Authentication_Challenge
+      else To_String (Item.Challenge_Value));
+
    procedure Add_Parameter
      (Item  : in out Exchange;
       Name  : String;

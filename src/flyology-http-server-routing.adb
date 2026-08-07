@@ -636,6 +636,29 @@ package body Flyology.HTTP.Server.Routing is
    function Automatic_Rate_Per_Second (Item : Router) return Natural is
      (Item.Automatic_Rate);
 
+   procedure Set_Authentication_Challenge
+     (Item      : in out Router;
+      Challenge : String)
+   is
+   begin
+      if Challenge'Length = 0 then
+         raise Route_Error with "empty HTTP authentication challenge";
+      end if;
+      for Value of Challenge loop
+         if Character'Pos (Value) < 32 or else Character'Pos (Value) = 127
+         then
+            raise Route_Error with
+              "control byte in HTTP authentication challenge";
+         end if;
+      end loop;
+      Item.Challenge := To_Unbounded_String (Challenge);
+   end Set_Authentication_Challenge;
+
+   function Authentication_Challenge (Item : Router) return String is
+     (if Length (Item.Challenge) = 0
+      then App.Default_Authentication_Challenge
+      else To_String (Item.Challenge));
+
    function Join_Pattern (Prefix, Pattern : String) return String is
    begin
       if Prefix = "/" then
@@ -801,9 +824,13 @@ package body Flyology.HTTP.Server.Routing is
       if X.Authentication = App.Required_Authentication
         and then not X.Has_Principal
       then
-         X.Add_Header ("WWW-Authenticate", "Bearer");
+         --  Reaching this backstop means nothing installed a principal
+         --  first, which for a correctly staged application cannot happen.
+         --  A distinct problem type keeps that misordering visible instead
+         --  of reading as an ordinary credential rejection.
+         X.Add_Header ("WWW-Authenticate", X.Authentication_Challenge);
          X.Problem
-           (401, "authentication-required", "Authentication required");
+           (401, "authentication-not-installed", "Authentication required");
       else
          Next.Call (Context, X);
       end if;
@@ -1017,6 +1044,12 @@ package body Flyology.HTTP.Server.Routing is
             Item.Routes (Selected).Policy.Concurrency,
             Item.Routes (Selected).Policy.Rate_Per_Second,
             Item.Routes (Selected).Policy.Upgrade);
+         if Length (Item.Challenge) > 0
+           and then Item.Routes (Selected).Policy.Authentication =
+             App.Required_Authentication
+         then
+            X.Set_Authentication_Challenge (To_String (Item.Challenge));
+         end if;
          if not Match_Path
            (Item.Routes (Selected).Pattern_Segments, Path_Segments,
             Item.Slashes = Ignore_Slashes, Capture => True, X => X'Access)

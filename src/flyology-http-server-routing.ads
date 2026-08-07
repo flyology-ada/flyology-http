@@ -24,7 +24,11 @@ package Flyology.HTTP.Server.Routing is
    --  Around-handler component accepted by router middleware registration.
    subtype Middleware_Access is Components.Middleware_Access;
 
-   --  Middleware execution boundary relative to request-body admission.
+   --  Middleware execution boundary relative to request-body admission. The
+   --  router's own fail-closed authentication backstop runs between the two
+   --  stages, so a component that installs a principal must be registered at
+   --  Request_Head; at Application it runs too late and every request to a
+   --  Required_Authentication route is answered by the backstop instead.
    --  @enum Request_Head Run before body acceptance and 100 Continue
    --  @enum Application Run after the selected body policy is applied
    type Middleware_Stage is (Request_Head, Application);
@@ -341,6 +345,23 @@ package Flyology.HTTP.Server.Routing is
    --  @return Automatic responses per second; zero is unlimited
    function Automatic_Rate_Per_Second (Item : Router) return Natural;
 
+   --  Set the WWW-Authenticate challenge the router's own fail-closed
+   --  backstop advertises when a Required_Authentication route is reached
+   --  with no principal installed. The router cannot see the authentication
+   --  middleware's own challenge, so an application that does not use Bearer
+   --  must state its scheme here. The default is "Bearer".
+   --  @param Item Router registry
+   --  @param Challenge Complete WWW-Authenticate field value
+   --  @exception Route_Error Challenge is empty or carries control bytes
+   procedure Set_Authentication_Challenge
+     (Item      : in out Router;
+      Challenge : String);
+
+   --  Return the configured fail-closed authentication challenge.
+   --  @param Item Router registry
+   --  @return WWW-Authenticate field value the backstop advertises
+   function Authentication_Challenge (Item : Router) return String;
+
    --  Copy routes from Source under Prefix. Capacity is checked before any
    --  route is copied. Prefix must be a static path without parameters.
    --  Mounting snapshots Source, so Source is sealed against further route
@@ -487,6 +508,9 @@ private
       Automatic_Concurrency : Natural := 0;
       Automatic_Rate        : Natural := 0;
       Mounted               : Boolean := False;
+      --  Empty selects the Default_Challenge, so an unconfigured router
+      --  needs no per-object allocation.
+      Challenge             : Unbounded_String;
    end record;
 
 end Flyology.HTTP.Server.Routing;

@@ -513,6 +513,24 @@ package Flyology.HTTP.Server.Applications is
       Rate_Per_Second : Natural;
       Upgrade         : Upgrade_Mode);
 
+   --  WWW-Authenticate challenge advertised when a router configures none.
+   Default_Authentication_Challenge : constant String := "Bearer";
+
+   --  Record the WWW-Authenticate challenge a router advertises from its own
+   --  fail-closed authentication backstop. The router cannot see the
+   --  authentication middleware's challenge, so it supplies its own here.
+   --  This integration operation is intended for Flyology router packages.
+   --  @param Item Request exchange
+   --  @param Value Complete WWW-Authenticate field value
+   procedure Set_Authentication_Challenge
+     (Item  : in out Exchange;
+      Value : String);
+
+   --  Return the router-recorded fail-closed authentication challenge.
+   --  @param Item Request exchange
+   --  @return Recorded challenge, or Default_Authentication_Challenge
+   function Authentication_Challenge (Item : Exchange) return String;
+
    --  Append one decoded route parameter. Duplicate names or capacity excess
    --  raise Program_Error. Intended for Flyology router packages.
    --  @param Item Request exchange
@@ -554,6 +572,9 @@ private
       Request_ID_Value  : Unbounded_String;
       Principal_Value   : Unbounded_String;
       Principal_Present : Boolean := False;
+      --  Empty selects Default_Authentication_Challenge, so a router that
+      --  configures none costs no per-request storage.
+      Challenge_Value   : Unbounded_String;
       Body_Mode         : Request_Body_Policy := Reject_Body;
       Authentication_Value : Authentication_Mode := No_Authentication;
       CORS_Policy_Value : Natural := 0;
