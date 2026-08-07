@@ -12,6 +12,7 @@ alr gnatprove \
   -j0 \
   --output=oneline \
   --output-header \
+  --checks-as-errors=on \
   --report=all \
   -f \
   -u \

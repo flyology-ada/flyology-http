@@ -15,6 +15,7 @@ cd "$http_root/proof"
   -j0 \
   --output=oneline \
   --output-header \
+  --checks-as-errors=on \
   --report=all \
   -f \
   -u \
