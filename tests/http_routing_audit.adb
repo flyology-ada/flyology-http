@@ -14,6 +14,7 @@ with Flyology.HTTP.Server.Middleware_Authentication;
 with Flyology.HTTP.Server.Middleware_Bulkheads;
 with Flyology.HTTP.Server.Middleware_CORS;
 with Flyology.HTTP.Server.Middleware_Rate_Limits;
+with Flyology.HTTP.Server.Middleware_Security_Headers;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO;
 with Flyology.IO.Sockets;
@@ -59,6 +60,24 @@ procedure HTTP_Routing_Audit is
             & "] in [" & Output & "]");
       end if;
    end Expect_In;
+
+   function Occurrences (Text, Fragment : String) return Natural is
+      Total : Natural := 0;
+      First : Positive := Text'First;
+      Found : Natural;
+   begin
+      if Fragment'Length = 0 or else Text'Length < Fragment'Length then
+         return 0;
+      end if;
+      while First <= Text'Last loop
+         Found :=
+           Ada.Strings.Fixed.Index (Text (First .. Text'Last), Fragment);
+         exit when Found = 0;
+         Total := Total + 1;
+         First := Found + Fragment'Length;
+      end loop;
+      return Total;
+   end Occurrences;
 
    --  Return the first value of a response field, or an empty string.
    function Field_Value (Output, Name : String) return String is
@@ -1006,6 +1025,104 @@ procedure HTTP_Routing_Audit is
       end;
    end Check_CORS_List_Member_Validation;
 
+   --  Finding 28. Add_Header is append-only and there is no set, replace, or
+   --  remove operation, so a handler that needs a different value than the
+   --  security-headers component configured emits two conflicting fields.
+   procedure Check_Response_Header_Replacement is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      package Headers is new
+        Flyology.HTTP.Server.Middleware_Security_Headers
+          (Context, Routing.Components,
+           Referrer_Policy => "no-referrer",
+           Frame_Options   => "SAMEORIGIN");
+
+      procedure Widget
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         --  The replacement lands once even though the component already
+         --  emitted the field, and removal matches the name
+         --  case-insensitively.
+         X.Set_Header ("X-Frame-Options", "ALLOWALL");
+         X.Remove_Header ("referrer-policy");
+         X.Text (200, "widget");
+      end Widget;
+
+      procedure Layered
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         --  Add_Header stays append-only: repeated names are legitimate for
+         --  Set-Cookie and Vary.
+         X.Add_Header ("Vary", "Accept-Encoding");
+         X.Set_Header ("X-Content-Type-Options", "nosniff");
+         X.Remove_Header ("X-Absent-Header");
+         X.Text (200, "layered");
+      end Layered;
+
+      Embedded : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      State    : Context;
+
+      function Answer (Target : String) return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET " & Target & " HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Embedded.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Answer;
+   begin
+      Embedded.Get ("/widget", Widget'Access, Name => "widget");
+      Embedded.Get ("/layered", Layered'Access, Name => "layered");
+      Embedded.Add_Middleware (Headers.Call'Access, Name => "headers");
+
+      declare
+         Output : constant String := Answer ("/widget");
+      begin
+         Expect
+           ("finding 28 framing field count",
+            Occurrences (Output, "X-Frame-Options:")'Image, " 1");
+         Expect
+           ("finding 28 framing value",
+            Field_Value (Output, "X-Frame-Options"), "ALLOWALL");
+         Expect
+           ("finding 28 referrer field count",
+            Occurrences (Output, "Referrer-Policy:")'Image, " 0");
+         Expect
+           ("finding 28 untouched field",
+            Field_Value (Output, "X-Content-Type-Options"), "nosniff");
+      end;
+
+      declare
+         Output : constant String := Answer ("/layered");
+      begin
+         Expect
+           ("finding 28 appended duplicates",
+            Occurrences (Output, "Vary:")'Image, " 1");
+         Expect
+           ("finding 28 replaced single field",
+            Occurrences (Output, "X-Content-Type-Options:")'Image, " 1");
+         Expect
+           ("finding 28 retained referrer",
+            Field_Value (Output, "Referrer-Policy"), "no-referrer");
+      end;
+   end Check_Response_Header_Replacement;
 
 
 begin
@@ -1017,6 +1134,7 @@ begin
    Check_Authentication_Challenge;
    Check_Authentication_Backstop;
    Check_CORS_List_Member_Validation;
+   Check_Response_Header_Replacement;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

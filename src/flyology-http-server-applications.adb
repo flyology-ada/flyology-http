@@ -296,6 +296,74 @@ package body Flyology.HTTP.Server.Applications is
       Append (Item.Extra_Headers, Name & ": " & Value & CRLF);
    end Add_Header;
 
+   function ASCII_Lower (Item : Character) return Character is
+     (if Item in 'A' .. 'Z'
+      then Character'Val
+        (Character'Pos (Item) - Character'Pos ('A') + Character'Pos ('a'))
+      else Item);
+
+   --  Report whether one pending "Name: Value" field carries this name.
+   function Field_Named (Field, Name : String) return Boolean is
+   begin
+      if Field'Length <= Name'Length
+        or else Field (Field'First + Name'Length) /= ':'
+      then
+         return False;
+      end if;
+      for Offset in 0 .. Name'Length - 1 loop
+         if ASCII_Lower (Field (Field'First + Offset))
+           /= ASCII_Lower (Name (Name'First + Offset))
+         then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Field_Named;
+
+   procedure Remove_Header
+     (Item : in out Exchange;
+      Name : String)
+   is
+      Source : constant String := To_String (Item.Extra_Headers);
+      Kept   : Unbounded_String;
+      First  : Positive := Source'First;
+      Stop   : Natural;
+   begin
+      Require_Owner (Item);
+      if Item.Response_Value /= Not_Started then
+         raise Program_Error with "HTTP response already started";
+      end if;
+      Validate_Header_Name (Name);
+      while First <= Source'Last loop
+         Stop := Ada.Strings.Fixed.Index
+           (Source (First .. Source'Last), CRLF);
+         exit when Stop = 0;
+         if not Field_Named (Source (First .. Stop - 1), Name) then
+            Append (Kept, Source (First .. Stop + 1));
+         end if;
+         First := Stop + 2;
+      end loop;
+      Item.Extra_Headers := Kept;
+   end Remove_Header;
+
+   procedure Set_Header
+     (Item  : in out Exchange;
+      Name  : String;
+      Value : String)
+   is
+   begin
+      --  Validate before mutating so a rejected value cannot leave the
+      --  replaced field removed.
+      Require_Owner (Item);
+      if Item.Response_Value /= Not_Started then
+         raise Program_Error with "HTTP response already started";
+      end if;
+      Validate_Header_Name (Name);
+      Validate_Header_Value (Value);
+      Remove_Header (Item, Name);
+      Add_Header (Item, Name, Value);
+   end Set_Header;
+
    procedure Respond
      (Item         : in out Exchange;
       Status       : Positive;

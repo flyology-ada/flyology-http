@@ -254,7 +254,9 @@ package Flyology.HTTP.Server.Applications is
    function Content (Item : Exchange) return String;
 
    --  Add one response header for the next high-level fixed response. Header
-   --  names and values are validated immediately against injection.
+   --  names and values are validated immediately against injection. Repeated
+   --  names are kept, so a handler overriding a value a middleware component
+   --  already set must use Set_Header instead.
    --  @param Item Request exchange
    --  @param Name Header field name
    --  @param Value Header field value
@@ -262,6 +264,26 @@ package Flyology.HTTP.Server.Applications is
      (Item  : in out Exchange;
       Name  : String;
       Value : String);
+
+   --  Replace every pending response header named Name with a single field
+   --  carrying Value, appending it when the name is not present. Names are
+   --  matched case-insensitively; names and values are validated immediately
+   --  against injection.
+   --  @param Item Request exchange
+   --  @param Name Header field name
+   --  @param Value Header field value
+   procedure Set_Header
+     (Item  : in out Exchange;
+      Name  : String;
+      Value : String);
+
+   --  Drop every pending response header named Name. Names are matched
+   --  case-insensitively; removing an absent name does nothing.
+   --  @param Item Request exchange
+   --  @param Name Header field name
+   procedure Remove_Header
+     (Item : in out Exchange;
+      Name : String);
 
    --  Send one complete response through the borrowed connection.
    --  @param Item Request exchange
