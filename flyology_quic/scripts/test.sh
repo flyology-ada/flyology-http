@@ -29,6 +29,7 @@ for test in \
   flyology-quic-one_rtt_sender-smoke \
   flyology-quic-packet_number_policy-smoke \
   flyology-quic-protection_policy-smoke \
+  flyology-quic-qpack_field_section_policy-smoke \
   flyology-quic-qpack_integer_policy-smoke \
   flyology-quic-qpack_static_table-smoke \
   flyology-quic-stream_frame_policy-smoke \

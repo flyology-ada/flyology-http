@@ -5,11 +5,16 @@ private package Flyology.QUIC.QPACK_Static_Table
 is
    subtype Static_Index is Natural range 0 .. 98;
 
+   Max_Name_Length  : constant := 32;
+   Max_Value_Length : constant := 64;
+
    function Name (Index : Static_Index) return String
-   with Global => null;
+   with Global => null,
+        Post => Name'Result'Length in 1 .. Max_Name_Length;
 
    function Value (Index : Static_Index) return String
-   with Global => null;
+   with Global => null,
+        Post => Value'Result'Length <= Max_Value_Length;
 
    type Lookup_Result is record
       Found : Boolean := False;

@@ -28,6 +28,7 @@ project Flyology_QUIC_Tests is
       "flyology-quic-one_rtt_sender-smoke.adb",
       "flyology-quic-packet_number_policy-smoke.adb",
       "flyology-quic-protection_policy-smoke.adb",
+      "flyology-quic-qpack_field_section_policy-smoke.adb",
       "flyology-quic-qpack_integer_policy-smoke.adb",
       "flyology-quic-qpack_static_table-smoke.adb",
       "flyology-quic-stream_frame_policy-smoke.adb",
