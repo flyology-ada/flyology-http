@@ -197,11 +197,17 @@ package body Flyology_IRI_Differential is
             "diagnose=" & Image (Found) & " raised="
             & Boolean'Image (Raised), Count);
       end if;
-      if Error.Kind = No_Error and then Syntax (Value) /= Syn then
+      if Syntax (Value) /= Syn then
          Report
            ("syntax", Input, Syn, Max,
             "try_parse_syntax=" & Syntax_Kind'Image (Syntax (Value)),
             Count);
+      end if;
+      if Is_Valid (Value) /= (Error.Kind = No_Error) then
+         Report
+           ("is_valid", Input, Syn, Max,
+            "try_parse=" & Image (Error) & " is_valid="
+            & Boolean'Image (Is_Valid (Value)), Count);
       end if;
    end Check;
 

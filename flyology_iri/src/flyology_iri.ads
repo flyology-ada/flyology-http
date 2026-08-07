@@ -148,7 +148,16 @@ package Flyology_IRI is
       Relative   : String;
       Max_Length : Positive := Default_Max_Length) return Reference;
 
-   --  Return the selected parsing policy.
+   --  Report whether the reference came from a successful parse. A default
+   --  reference and the value Try_Parse returns on failure are both
+   --  invalid, which distinguishes a rejected input from a parsed empty
+   --  reference without inspecting the reported error.
+   --  @param Value Reference to examine
+   --  @return True when Parse, Try_Parse or Resolve produced this value
+   function Is_Valid (Value : Reference) return Boolean;
+
+   --  Return the selected parsing policy. On failure Try_Parse reports the
+   --  syntax it was asked for.
    --  @param Value Parsed reference
    --  @return Syntax used by Parse
    function Syntax (Value : Reference) return Syntax_Kind;
@@ -266,6 +275,7 @@ private
       Authority_Present : Boolean := False;
       Query_Present     : Boolean := False;
       Fragment_Present  : Boolean := False;
+      Valid_Value       : Boolean := False;
    end record;
 
 end Flyology_IRI;

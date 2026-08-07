@@ -484,6 +484,33 @@ begin
          "stripped byte shifted the reported offset");
    end;
 
+   --  A rejected parse and a successful parse of "" are component-wise
+   --  identical, so a caller that ignores Error needs another way to tell
+   --  them apart, and the rejected one reported IRI_Syntax whatever syntax
+   --  it was asked for.
+   declare
+      Fresh    : Reference;
+      Rejected : Reference;
+      Empty    : Reference;
+      Error    : Parse_Error;
+   begin
+      Assert (not Is_Valid (Fresh), "default reference reports valid");
+      Try_Parse ("http://exa mple.com/", Rejected, Error, Web_URL_Syntax);
+      Assert (Error.Kind /= No_Error, "malformed web URL accepted");
+      Assert (not Is_Valid (Rejected), "rejected reference reports valid");
+      Assert
+        (Syntax (Rejected) = Web_URL_Syntax,
+         "rejected reference reports "
+         & Syntax_Kind'Image (Syntax (Rejected)));
+      Try_Parse ("", Empty, Error, IRI_Syntax);
+      Assert (Error.Kind = No_Error, "empty reference rejected");
+      Assert (Is_Valid (Empty), "empty reference reports invalid");
+      Assert
+        (Image (Empty) = Image (Rejected)
+         and then Kind (Empty) = Kind (Rejected),
+         "empty and rejected references stopped being alike");
+   end;
+
    --  Can_Parse, Diagnose, Parse and Try_Parse reach one grammar through
    --  several routes, and Web_URL_Syntax splits again into a fast path and
    --  the WHATWG path. A seeded corpus holds them to one answer.

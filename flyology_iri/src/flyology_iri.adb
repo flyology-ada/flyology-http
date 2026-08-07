@@ -930,13 +930,17 @@ package body Flyology_IRI is
       Value.Authority_Present := Parsed.Authority_Present;
       Value.Query_Present := Parsed.Query_Present;
       Value.Fragment_Present := Parsed.Fragment_Present;
+      Value.Valid_Value := True;
    end Set_Reference;
 
    --  A failed parse leaves the caller a default reference whose component
-   --  getters return an empty string.
-   procedure Set_Failure (Value : out Reference) is
+   --  getters return an empty string. It still reports the syntax the
+   --  caller asked for, and Is_Valid tells it apart from a parsed empty
+   --  reference.
+   procedure Set_Failure (Value : out Reference; Syntax : Syntax_Kind) is
    begin
       Value := (others => <>);
+      Value.Syntax_Value := Syntax;
    end Set_Failure;
 
    --  Settle a web URL without allocating whenever the input is already its
@@ -998,7 +1002,7 @@ package body Flyology_IRI is
       if Error.Kind = No_Error and then Build then
          Set_Reference (Value, Normalized, Web_URL_Syntax, Parsed);
       else
-         Set_Failure (Value);
+         Set_Failure (Value, Web_URL_Syntax);
       end if;
    end Web_Slow_Path;
 
@@ -1078,7 +1082,7 @@ package body Flyology_IRI is
       if Syntax = Web_URL_Syntax then
          if Web_Fast_Path (Input, Max_Length, Fast, Need_Slash, Error) then
             if Error.Kind /= No_Error then
-               Set_Failure (Value);
+               Set_Failure (Value, Syntax);
             elsif Need_Slash then
                declare
                   Insert_At : constant Natural :=
@@ -1100,7 +1104,7 @@ package body Flyology_IRI is
       Parsed := Analyze (Input, Syntax, Max_Length);
       Error := Parsed.Error;
       if Error.Kind /= No_Error then
-         Set_Failure (Value);
+         Set_Failure (Value, Syntax);
       else
          Set_Reference (Value, Input, Syntax, Parsed);
       end if;
@@ -1134,23 +1138,23 @@ package body Flyology_IRI is
       Parsed     : Analysis;
    begin
       if Base.Syntax_Value /= Web_URL_Syntax then
-         Set_Failure (Value);
+         Set_Failure (Value, Web_URL_Syntax);
          Error := (Kind => Unsupported_URL, Offset => 0);
          return;
       elsif Web_Error.Kind /= No_Error then
-         Set_Failure (Value);
+         Set_Failure (Value, Web_URL_Syntax);
          Error := Web_Error;
          return;
       elsif Input'Length > Max_Length
         or else Normalized'Length > Max_Length
       then
-         Set_Failure (Value);
+         Set_Failure (Value, Web_URL_Syntax);
          Error := (Kind => Too_Long, Offset => 0);
          return;
       end if;
       Parsed := Analyze (Normalized, Web_URL_Syntax, Max_Length);
       if Parsed.Error.Kind /= No_Error then
-         Set_Failure (Value);
+         Set_Failure (Value, Web_URL_Syntax);
          Error := Parsed.Error;
          return;
       end if;
@@ -1166,6 +1170,9 @@ package body Flyology_IRI is
       end if;
       return Text (Part.First .. Part.Last);
    end Slice;
+
+   function Is_Valid (Value : Reference) return Boolean is
+     (Value.Valid_Value);
 
    function Syntax (Value : Reference) return Syntax_Kind is
      (Value.Syntax_Value);
