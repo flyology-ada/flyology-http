@@ -20,6 +20,7 @@ for test in \
   flyology-quic-handshake_connection-smoke \
   flyology-quic-handshake_packet_policy-smoke \
   flyology-quic-handshake_sender-smoke \
+  flyology-quic-handshake_space-smoke \
   flyology-quic-initial_frame_policy-smoke \
   flyology-quic-initial_connection-smoke \
   flyology-quic-initial_receiver-smoke \
