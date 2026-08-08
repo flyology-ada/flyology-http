@@ -79,6 +79,24 @@ private package Flyology.QUIC.Initial_Connection is
        (if Result.Status /= Built then Packet = (Packet'Range => 0)
         else Result.Packet_Length <= Packet'Length);
 
+   procedure Build_Initial_At_Least
+     (Item                  : in out Connection;
+      Token                 : Ada.Streams.Stream_Element_Array;
+      Plaintext             : Ada.Streams.Stream_Element_Array;
+      Minimum_Packet_Length : Natural;
+      Packet                : out Ada.Streams.Stream_Element_Array;
+      Result                : out Build_Result)
+   with
+     Pre =>
+       Is_Initialized (Item)
+       and then Token'Length <= Initial_Sender.Max_Packet_Length
+       and then Plaintext'Length <= Initial_Sender.Max_Packet_Length
+       and then Minimum_Packet_Length <= Packet'Length
+       and then Minimum_Packet_Length <= Initial_Sender.Max_Packet_Length,
+     Post =>
+       (if Result.Status /= Built then Packet = (Packet'Range => 0)
+        else Result.Packet_Length in Minimum_Packet_Length .. Packet'Length);
+
    procedure Process_Initial
      (Item      : in out Connection;
       Packet    : Ada.Streams.Stream_Element_Array;

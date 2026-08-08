@@ -52,6 +52,25 @@ begin
    Initialize
      (Server_Connection, Server, Original_ID, Client_ID, Server_ID);
 
+   declare
+      Padding_Connection : Connection;
+      Tiny_Plaintext     : constant Ada.Streams.Stream_Element_Array :=
+        (1 => 16#01#);
+      Padded_Packet      : Ada.Streams.Stream_Element_Array (1 .. 1_200);
+      Padded_Build       : Build_Result;
+   begin
+      Initialize
+        (Padding_Connection, Client, Original_ID, Original_Destination,
+         Client_ID);
+      Build_Initial_At_Least
+        (Padding_Connection, (1 .. 0 => 0), Tiny_Plaintext, 1_200,
+         Padded_Packet, Padded_Build);
+      pragma Assert
+        (Padded_Build.Status = Built
+         and then Padded_Build.Number = 0
+         and then Padded_Build.Packet_Length = 1_200);
+   end;
+
    Sockets.Create_Socket
      (Client_Socket, Sockets.IPv4, Sockets.Socket_Datagram);
    Sockets.Bind_Socket

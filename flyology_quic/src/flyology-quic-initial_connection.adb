@@ -1,6 +1,7 @@
 with Flyology.QUIC.Packet_Number_Policy;
 
 package body Flyology.QUIC.Initial_Connection is
+   use type Ada.Streams.Stream_Element_Offset;
    use type Connection_State_Policy.Receive_Disposition;
    use type Initial_Receiver.Receive_Status;
    use type Initial_Sender.Send_Status;
@@ -33,9 +34,40 @@ package body Flyology.QUIC.Initial_Connection is
       Packet    : out Ada.Streams.Stream_Element_Array;
       Result    : out Build_Result)
    is
+   begin
+      Build_Initial_At_Least
+        (Item, Token, Plaintext, 0, Packet, Result);
+   end Build_Initial;
+
+   procedure Build_Initial_At_Least
+     (Item                  : in out Connection;
+      Token                 : Ada.Streams.Stream_Element_Array;
+      Plaintext             : Ada.Streams.Stream_Element_Array;
+      Minimum_Packet_Length : Natural;
+      Packet                : out Ada.Streams.Stream_Element_Array;
+      Result                : out Build_Result)
+   is
       Number : Connection_State_Policy.Packet_Number;
       Number_Length : Long_Header_Policy.Packet_Number_Length;
       Sent : Initial_Sender.Send_Result;
+
+      procedure Send_Once
+        (Data : Ada.Streams.Stream_Element_Array;
+         Output : out Ada.Streams.Stream_Element_Array;
+         Send_Result : out Initial_Sender.Send_Result) is
+      begin
+         if Item.Role = Client then
+            Initial_Sender.Send
+              (Item.Backend, Item.Keys.Client_Key, Item.Keys.Client_IV,
+               Item.Keys.Client_HP, Item.Destination, Item.Source, Token,
+               Number, Number_Length, Data, Output, Send_Result);
+         else
+            Initial_Sender.Send
+              (Item.Backend, Item.Keys.Server_Key, Item.Keys.Server_IV,
+               Item.Keys.Server_HP, Item.Destination, Item.Source, Token,
+               Number, Number_Length, Data, Output, Send_Result);
+         end if;
+      end Send_Once;
    begin
       Packet := (others => 0);
       Result := (others => <>);
@@ -55,16 +87,72 @@ package body Flyology.QUIC.Initial_Connection is
           (Packet_Number_Policy.Select_Length (Number, False, 0));
       Result.Number_Length := Number_Length;
 
-      if Item.Role = Client then
-         Initial_Sender.Send
-           (Item.Backend, Item.Keys.Client_Key, Item.Keys.Client_IV,
-            Item.Keys.Client_HP, Item.Destination, Item.Source, Token, Number,
-            Number_Length, Plaintext, Packet, Sent);
-      else
-         Initial_Sender.Send
-           (Item.Backend, Item.Keys.Server_Key, Item.Keys.Server_IV,
-            Item.Keys.Server_HP, Item.Destination, Item.Source, Token, Number,
-            Number_Length, Plaintext, Packet, Sent);
+      Send_Once (Plaintext, Packet, Sent);
+      if Minimum_Packet_Length > 0
+        and then
+          (Sent.Status = Initial_Sender.Insufficient_Protected_Payload
+           or else
+             (Sent.Status = Initial_Sender.Sent
+              and then Sent.Packet_Length < Minimum_Packet_Length))
+      then
+         declare
+            Candidate : Ada.Streams.Stream_Element_Array
+              (1 .. Initial_Sender.Max_Packet_Length) := (others => 0);
+            Probe : Ada.Streams.Stream_Element_Array
+              (1 .. Initial_Sender.Max_Packet_Length);
+            Candidate_Length : Natural := Natural (Plaintext'Length);
+            Attempts : Natural := 0;
+         begin
+            if Plaintext'Length > 0 then
+               Candidate
+                 (1 .. Ada.Streams.Stream_Element_Offset (Plaintext'Length)) :=
+                   Plaintext;
+            end if;
+            if Sent.Status = Initial_Sender.Insufficient_Protected_Payload then
+               Candidate_Length := Natural'Max (Candidate_Length, 4);
+               Send_Once
+                 (Candidate
+                    (1 .. Ada.Streams.Stream_Element_Offset
+                            (Candidate_Length)),
+                  Probe, Sent);
+            end if;
+            while Attempts < 4 loop
+               Candidate_Length := Candidate_Length
+                 + Minimum_Packet_Length - Sent.Packet_Length;
+               Send_Once
+                 (Candidate
+                    (1 .. Ada.Streams.Stream_Element_Offset
+                            (Candidate_Length)),
+                  Probe, Sent);
+               exit when Sent.Status /= Initial_Sender.Sent
+                 or else Sent.Packet_Length = Minimum_Packet_Length;
+               if Sent.Packet_Length > Minimum_Packet_Length then
+                  Candidate_Length := Candidate_Length
+                    - (Sent.Packet_Length - Minimum_Packet_Length);
+                  Send_Once
+                    (Candidate
+                       (1 .. Ada.Streams.Stream_Element_Offset
+                               (Candidate_Length)),
+                     Probe, Sent);
+                  exit;
+               end if;
+               Attempts := Attempts + 1;
+            end loop;
+            Packet := (others => 0);
+            if Sent.Status = Initial_Sender.Sent
+              and then Sent.Packet_Length <= Natural (Packet'Length)
+            then
+               Packet
+                 (Packet'First
+                    .. Packet'First
+                         + Ada.Streams.Stream_Element_Offset
+                             (Sent.Packet_Length - 1)) :=
+                 Probe (1 .. Ada.Streams.Stream_Element_Offset
+                               (Sent.Packet_Length));
+            else
+               Sent.Status := Initial_Sender.Output_Too_Small;
+            end if;
+         end;
       end if;
 
       Result.Packet_Length := Sent.Packet_Length;
@@ -79,7 +167,7 @@ package body Flyology.QUIC.Initial_Connection is
       if Sent.Status = Initial_Sender.Sent then
          Connection_State_Policy.Commit_Sent (Item.Send_State);
       end if;
-   end Build_Initial;
+   end Build_Initial_At_Least;
 
    procedure Process_Initial
      (Item      : in out Connection;
