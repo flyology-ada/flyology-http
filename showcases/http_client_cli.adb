@@ -196,14 +196,19 @@ procedure HTTP_Client_CLI is
              "HTTP/2 over ALPN with HTTP/1.1 fallback",
            when Client.Require_HTTP_2 => "HTTP/2 over ALPN (required)",
            when Client.HTTP_2_Prior_Knowledge =>
-             "HTTP/2 cleartext prior knowledge");
+             "HTTP/2 cleartext prior knowledge",
+           when Client.Negotiate_HTTP_3 =>
+             "HTTP/3 through Alt-Svc with TCP fallback",
+           when Client.Require_HTTP_3 => "HTTP/3 over QUIC (required)");
 
       function Request_Protocol return String is
         (case Protocol_Mode is
            when Client.HTTP_1_Only => "HTTP/1.1",
            when Client.Negotiate_HTTP_2 => "HTTP/2-or-HTTP/1.1",
            when Client.Require_HTTP_2 | Client.HTTP_2_Prior_Knowledge =>
-             "HTTP/2");
+             "HTTP/2",
+           when Client.Negotiate_HTTP_3 => "HTTP/3-or-HTTP/2-or-HTTP/1.1",
+           when Client.Require_HTTP_3 => "HTTP/3");
    begin
       while Index <= CLI.Argument_Count loop
          declare

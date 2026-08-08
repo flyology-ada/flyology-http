@@ -178,6 +178,10 @@ package body Exchange_Internals is
                           (Socket,
                            Sockets.Network_Endpoint
                              (Address, Sockets.Port (Target_Port)));
+                        Connection := new Pooled_Connection;
+                        Sockets.Move (Socket, Connection.UDP);
+                        Start_Connection
+                          (State, Connection, Started, Timeout, Token);
                      else
                         Sockets.Connect
                           (Socket,
@@ -185,26 +189,33 @@ package body Exchange_Internals is
                              (Address, Sockets.Port (Target_Port)),
                            Remaining (Started, Timeout),
                            Sources (1 .. Count));
-                     end if;
-                     Connected := True;
-                     if not Use_HTTP_3 then
                         State.Successful_Address.Remember (Address.Family);
                      end if;
+                     Connected := True;
                   exception
                      when Sockets.Operation_Interrupted =>
+                        if Connection /= null then
+                           Dispose_Connection (Connection);
+                        end if;
                         if Sockets.Is_Open (Socket) then
                            Sockets.Close_Socket (Socket);
                         end if;
                         Translate_Interruption (State, Token);
                      when Flyology.IO.Timeout_Error =>
+                        if Connection /= null then
+                           Dispose_Connection (Connection);
+                        end if;
                         if Sockets.Is_Open (Socket) then
                            Sockets.Close_Socket (Socket);
                         end if;
                         raise;
                      when Error : Sockets.Socket_Error |
-                          Flyology.IO.Device_Error =>
+                          Flyology.IO.Device_Error | Protocol_Error =>
                         Last_Error := To_Unbounded_String
                           (Ada.Exceptions.Exception_Message (Error));
+                        if Connection /= null then
+                           Dispose_Connection (Connection);
+                        end if;
                         if Sockets.Is_Open (Socket) then
                            begin
                               Sockets.Close_Socket (Socket);
@@ -234,16 +245,14 @@ package body Exchange_Internals is
               else ": " & To_String (Last_Error));
       end if;
 
-      Connection := new Pooled_Connection;
       if Use_HTTP_3 then
-         Sockets.Move (Socket, Connection.UDP);
-      else
-         Connections.Take (State.Manager, Socket, Connection.Channel);
+         State.Pool.Publish_Connecting (Slot_Index, Connection);
+         return;
       end if;
+      Connection := new Pooled_Connection;
+      Connections.Take (State.Manager, Socket, Connection.Channel);
       State.Pool.Publish_Connecting (Slot_Index, Connection);
-      if Use_HTTP_3 then
-         Start_Connection (State, Connection, Started, Timeout, Token);
-      elsif Scheme (State.Origin_Value) = Secure_HTTPS then
+      if Scheme (State.Origin_Value) = Secure_HTTPS then
          if State.Protocol_Policy = HTTP_1_Only then
             Flyology.IO.Connections.TLS.Upgrade
               (Connection.Channel, State.Backend.all,

@@ -222,7 +222,7 @@ begin
          Client.Configure
            (HTTP,
             Flyology.HTTP.Parse_Origin
-              ("https://127.0.0.1:" & Decimal (Natural (Address.Port))),
+              ("https://localhost:" & Decimal (Natural (Address.Port))),
             Client.Require_HTTP_3,
             HTTP_3_Certificate_DER => Fixtures.Server_Certificate);
          Client.Set_Method (Request, Flyology.HTTP.To_Method ("POST"));
