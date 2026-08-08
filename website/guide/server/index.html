@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Use Flyology's origin-bound HTTP client and build optional routed HTTP applications without giving up bounded streaming or explicit ownership.">
+    <meta name="description" content="Build routed Flyology HTTP applications that serve HTTP/1.1, HTTP/2, and HTTP/3 through one application API with bounded resources and explicit ownership.">
     <meta name="theme-color" content="#17213d">
     <title>Server guide · Flyology HTTP</title>
     <link rel="canonical" href="https://http.flyology.org/guide/server/">
@@ -43,7 +43,7 @@
     <main id="main" class="page-shell">
       <header class="doc-hero">
         <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Server</li></ol><h1>Build an HTTP application server.</h1></div>
-        <p class="doc-hero-copy">Own the accepted connection, add a borrowed exchange and router where useful, and keep body policy, admission, deadlines, and response framing explicit.</p>
+        <p class="doc-hero-copy">Serve HTTP/1.1, HTTP/2, and HTTP/3 through one router where useful, while keeping connection ownership, body policy, admission, deadlines, and response framing explicit.</p>
       </header>
 
       <div class="docs-layout">
@@ -55,7 +55,7 @@
             <li><a href="#exchange">Exchange</a></li>
             <li><a href="#routing">Routing</a></li>
             <li><a href="#http2">HTTP/2 routing</a></li>
-            <li><a href="#http3">HTTP/3 routing</a></li>
+            <li><a href="#http3">Unified H1/H2/H3</a></li>
             <li><a href="#body-policy">Bodies and budgets</a></li>
             <li><a href="#middleware">Middleware</a></li>
             <li><a href="#errors">Errors</a></li>
@@ -74,7 +74,7 @@
         </nav>
 
         <article class="prose">
-          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology HTTP is experimental. This guide describes implemented behavior and maintained examples; it is not a production-qualification claim. Server excerpts come from <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http_application_server.adb"><code>showcases/http_application_server.adb</code></a>, which the showcase build compile-checks. The client body adapters are exercised in both task lanes by the HTTP conformance suite.</p></aside>
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology HTTP is experimental. This guide describes implemented behavior and maintained examples; it is not a production-qualification claim. Server excerpts come from the compile-checked <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http_application_server.adb"><code>http_application_server</code></a> and <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http3_application_server.adb"><code>http3_application_server</code></a> showcases. The client body adapters are exercised in both task lanes by the HTTP conformance suite.</p></aside>
 
           <section id="start"><span class="step-label">HTTP 01</span><h2>Start the HTTP server.</h2>
             <p>The maintained server owns a listening socket through <code>Flyology.IO.Structured_Servers</code>. Each admitted handler wraps its owned connection in the HTTP transport, installs a shared ingress budget, and serves persistent requests under one cancellation token. The kitchen-sink page is a real same-origin application: its HTML, CSS, JavaScript, brand mark, and variable font are read through <code>Flyology.IO.Files.Read_At</code>, while its UI drives SSE, WebSocket chat, streamed upload, middleware, structured request work, and live application introspection.</p>
@@ -155,16 +155,43 @@ State.Routes.Serve
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The low-level HTTP/1.x connection API is protocol-specific.</strong> Direct HTTP/2 handlers receive <code>Applications.Exchange</code>; they do not receive a shared mutable <code>Server.Connection</code>. WebSocket upgrade remains HTTP/1.1-only.</p></aside>
           </section>
 
-          <section id="http3"><span class="step-label">HTTP/3</span><h2>Run the same routes over Ada-native QUIC.</h2>
-            <p>Bind a datagram socket and pass an Ed25519 certificate plus its raw 32-byte private key to <code>Serve_HTTP_3</code>. The router generates a secure QUIC connection identifier and drives the handshake, recovery timers, HTTP/3 session, and application exchange. Existing route handlers and middleware can inspect <code>X.Request_Protocol</code> when protocol-specific behavior is necessary.</p>
-            <figure class="code-panel"><figcaption>one routed HTTP/3 peer on UDP</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Routes.Get ("/hello/{name}", Hello'Access, Name =&gt; "hello");
-Sockets.Create_Socket (Socket, Sockets.IPv4, Sockets.Socket_Datagram);
-Sockets.Bind_Socket
-  (Socket, Sockets.Network_Endpoint (Sockets.Any_IPv4, 4_433));
+          <section id="http3"><span class="step-label">HTTP/3</span><h2>Serve HTTP/1.1, HTTP/2, and HTTP/3 through one router.</h2>
+            <p>The unified <code>Routing.Serve</code> overload binds TLS/TCP and QUIC/UDP to the same concrete endpoint. TLS ALPN selects <code>h2</code> or <code>http/1.1</code> on TCP; UDP carries HTTP/3 over the Ada-native <code>flyology_quic</code> transport. All three protocols dispatch through the same registered routes, middleware, body policies, and application context. A handler can inspect <code>X.Request_Protocol</code> only when its behavior genuinely differs by protocol.</p>
+            <figure class="code-panel"><figcaption>one application server on TCP and UDP port 443</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Routes : aliased Routing.Router
+  (Capacity =&gt; 8, Slashes =&gt; Routing.Strict_Slashes);
+Application : aliased Application_Context;
+Backend     : aliased OpenSSL.OpenSSL_Provider;
+Stop        : aliased Flyology.Cancellation.Token;
 
-Routes.Serve_HTTP_3
-  (Application, Socket, Certificate_DER, Private_Key);</code></pre></figure>
-            <p>The maintained <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http3_application_server.adb"><code>http3_application_server</code></a> loads the identity from files and runs this shape. The current experimental adapter exclusively owns the socket, serves one peer per invocation, dispatches request streams synchronously, buffers a complete request before routing it, and serves at most five requests in the bounded connection profile. It is an application API, not yet a listener-level multi-client HTTP/3 server.</p>
+Routes.Get ("/hello/{name}", Hello'Access, Name =&gt; "hello");
+
+OpenSSL.Initialize_Server
+  (Backend, "server-cert.pem", "server-key.pem",
+   Protocols =&gt; ALPN."&amp;" (ALPN.Offer ("h2"), "http/1.1"));
+
+Routes.Serve
+  (Application,
+   Sockets.Network_Endpoint (Sockets.Any_IPv4, 443),
+   Backend,
+   Certificate_DER =&gt; Certificate_DER,
+   Private_Key     =&gt; Private_Key,
+   Token           =&gt; Stop'Access);</code></pre></figure>
+            <p><code>Serve</code> owns both listeners until <code>Stop.Request</code> is called. Register every route and middleware component before entering it. TCP connection handling and the fixed-capacity HTTP/3 worker set run concurrently, so mutable fields in the shared application context must provide their own synchronization.</p>
+
+            <h3>Let HTTP/1.1 and HTTP/2 clients discover HTTP/3.</h3>
+            <p>Every routed HTTP/1.1 and HTTP/2 response from the unified server automatically advertises the active UDP endpoint. On the standard HTTPS port the field is exactly:</p>
+            <figure class="code-panel"><figcaption>HTTP response field</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>Alt-Svc: h3=":443"; ma=86400</code></pre></figure>
+            <p>The authority port follows the endpoint supplied to <code>Serve</code>, so a server on port 4_433 advertises <code>h3=":4433"</code>. <code>Alt_Svc_Max_Age</code> changes the lifetime; passing zero asks clients to remove the cached alternative. HTTP/3 responses omit this discovery field because the request already used the advertised service. Applications that use the lower-level serving overloads can supply an explicit <code>Alt_Svc</code> value instead.</p>
+
+            <h3>Supply one identity in the forms required by TLS and QUIC.</h3>
+            <p>The ALPN-capable TLS provider reads the certificate and private key used for HTTP/1.1 and HTTP/2. The current QUIC profile accepts the Ed25519 certificate as DER plus the matching raw 32-byte private key. A deployment should represent the same server identity in both forms; clients must be able to validate it for the requested hostname. The unified call does not convert or generate identity files.</p>
+
+            <h3>Use the bounded listener or single-peer adapter when you own UDP.</h3>
+            <p><code>Serve_HTTP_3_Listener</code> runs the fixed-capacity connection registry and worker set on an application-owned, unconnected UDP socket. <code>Serve_HTTP_3</code> remains the smaller single-connection adapter. These lower-level calls are useful when another component owns binding or lifecycle, but they do not start the TLS/TCP listener or automatically derive the same-port discovery value.</p>
+            <p>The maintained <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http3_application_server.adb"><code>http3_application_server</code></a> loads the PEM, DER, and raw-key representations and runs the unified shape. Its command line is:</p>
+            <figure class="code-panel"><figcaption>unified showcase</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>./showcases/bin/http3_application_server \
+  TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw 4433</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The HTTP/3 profile is deliberately bounded.</strong> It currently buffers each complete request before routing it, serves at most five requests per QUIC connection, uses a static-table QPACK profile, and does not provide HTTP/3 server push or WebSockets. The higher-level HTTP client pool does not yet select HTTP/3.</p></aside>
           </section>
 
           <section id="body-policy"><span class="step-label">HTTP 05</span><h2>Select body behavior per route.</h2>
