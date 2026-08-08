@@ -22,6 +22,9 @@ is
    function Kind (Item : Stream_State) return Stream_Kind is
      (Item.Stream_Type);
 
+   function Request_Is_Head (Item : Stream_State) return Boolean is
+     (Item.Request_State.Is_Head);
+
    function Has_Peer_Settings (Item : Connection_State) return Boolean is
      (HTTP_3_Control_Policy.Has_Peer_Settings (Item.Control));
 
@@ -40,7 +43,8 @@ is
      (Item       : out Stream_State;
       Stream_ID  : Varint_Policy.Value_Type;
       Local_Role : HTTP_3_Stream_Policy.Endpoint_Role;
-      Status     : out Receive_Status)
+      Status     : out Receive_Status;
+      Request_Is_Head : Boolean := False)
    is
    begin
       Item := (ID => Stream_ID, Local_Role => Local_Role, others => <>);
@@ -60,6 +64,7 @@ is
           (Stream_ID, Local_Role)
       then
          Item.Stream_Type := Response_Stream;
+         Item.Response_State.Request_Is_Head := Request_Is_Head;
       else
          Status := Stream_Creation_Error;
       end if;
@@ -325,7 +330,8 @@ is
            (Stream.Request_State, Frame.Frame_Type, Header,
             Validation.Has_Content_Length,
             Validation.Content_Length,
-            Data_Length => Varint_Policy.Value_Type (Frame.Payload_Length));
+            Data_Length => Varint_Policy.Value_Type (Frame.Payload_Length),
+            Is_Head => Validation.Is_Head);
          if Request.Status = HTTP_3_Message_Policy.Accepted then
             Stream.Request_State := Request.State;
          end if;
@@ -336,7 +342,11 @@ is
                when HTTP_3_Message_Policy.Message_Error => Message_Error);
       else
          Response := HTTP_3_Message_Policy.On_Response_Frame
-           (Stream.Response_State, Frame.Frame_Type, Header);
+           (Stream.Response_State, Frame.Frame_Type, Header,
+            Response_Code => Validation.Response_Code,
+            Has_Content_Length => Validation.Has_Content_Length,
+            Content_Length => Validation.Content_Length,
+            Data_Length => Varint_Policy.Value_Type (Frame.Payload_Length));
          if Response.Status = HTTP_3_Message_Policy.Accepted then
             Stream.Response_State := Response.State;
          end if;

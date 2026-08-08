@@ -12,7 +12,15 @@ begin
    Fields.Fields (4) := Make_Field (":authority", "example.com");
    Fields.Fields (5) := Make_Field ("te", "trailers");
    Result := Validate_Request (Fields);
-   pragma Assert (Result.Status = Valid and then not Result.Is_Connect);
+   pragma Assert
+     (Result.Status = Valid
+      and then not Result.Is_Connect
+      and then not Result.Is_Head);
+
+   Fields.Fields (1) := Make_Field (":method", "HEAD");
+   Result := Validate_Request (Fields);
+   pragma Assert (Result.Status = Valid and then Result.Is_Head);
+   Fields.Fields (1) := Make_Field (":method", "GET");
 
    Fields.Count := 5;
    Fields.Fields (5) := Make_Field ("content-length", "42");
@@ -108,6 +116,13 @@ begin
      (Result.Status = Valid
       and then Result.Has_Content_Length
       and then Result.Content_Length = 5);
+
+   Fields.Fields (1) := Make_Field (":status", "204");
+   pragma Assert
+     (Validate_Response (Fields).Status = Invalid_Content_Length);
+
+   Fields.Fields (1) := Make_Field (":status", "304");
+   pragma Assert (Validate_Response (Fields).Status = Valid);
 
    Fields.Count := 1;
    Fields.Fields (1) := Make_Field (":status", "101");

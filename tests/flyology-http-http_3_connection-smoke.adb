@@ -159,10 +159,57 @@ begin
          and then Client_Event.Kind = Stream_Ended
          and then Client_Event.Stream = Request_Stream);
 
+      Request_Headers.Fields (1) :=
+        QPACK_Field_Section_Policy.Make_Field (":method", "HEAD");
+      Request_Headers.Fields (3) :=
+        QPACK_Field_Section_Policy.Make_Field (":path", "/metadata");
+      Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      Build_Headers
+        (Client, Client_Transport, Request_Stream, Request_Headers,
+         Fin => True, Now => 4_500, Packet => Request_Packet,
+         Status => Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded and then Request_Stream = 4);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = Succeeded
+         and then Server_Event.Kind = Headers_Received
+         and then Server_Event.Stream = Request_Stream);
+      Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = Succeeded
+         and then Server_Event.Kind = Stream_Ended
+         and then Server_Event.Stream = Request_Stream);
+
+      Response_Headers.Count := 2;
+      Response_Headers.Fields (2) :=
+        QPACK_Field_Section_Policy.Make_Field ("content-length", "5");
+      Build_Headers
+        (Server, Server_Transport, Request_Stream, Response_Headers,
+         Fin => True, Now => 4_600, Packet => Response_Packet,
+         Status => Server_Status);
+      pragma Assert (Server_Status = Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Response_Packet, Client_Transport);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded
+         and then Client_Event.Kind = Headers_Received
+         and then Client_Event.Stream = Request_Stream
+         and then Client_Event.Headers.Count = 2);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded
+         and then Client_Event.Kind = Stream_Ended
+         and then Client_Event.Stream = Request_Stream);
+
       Open_Request
         (Client, Client_Transport, Request_Stream, Client_Status);
       pragma Assert
-        (Client_Status = Succeeded and then Request_Stream = 4);
+        (Client_Status = Succeeded and then Request_Stream = 8);
       QUIC.Build_Stream_Datagram
         (Client_Transport, Request_Stream, 0, Fin => True,
          Data => Ada.Streams.Stream_Element_Array'(1, 2, 0),

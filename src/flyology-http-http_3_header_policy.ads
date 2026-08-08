@@ -37,6 +37,7 @@ is
    type Validation_Result is record
       Status        : Validation_Status := Valid;
       Is_Connect    : Boolean := False;
+      Is_Head       : Boolean := False;
       Response_Code : Natural range 0 .. 599 := 0;
       Is_Interim    : Boolean := False;
       Has_Content_Length : Boolean := False;

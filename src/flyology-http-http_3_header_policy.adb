@@ -246,7 +246,9 @@ is
          if not Valid_Method (Method) then
             Result.Status := Invalid_Method;
             return Result;
-         elsif Method = "CONNECT" then
+         end if;
+         Result.Is_Head := Method = "HEAD";
+         if Method = "CONNECT" then
             Result.Is_Connect := True;
             if Scheme_Index /= 0 or else Path_Index /= 0
               or else Authority_Index = 0
@@ -406,6 +408,11 @@ is
          end if;
          Result.Response_Code := Code;
          Result.Is_Interim := Code < 200;
+         if Result.Has_Content_Length
+           and then (Result.Is_Interim or else Code = 204)
+         then
+            Result.Status := Invalid_Content_Length;
+         end if;
          return Result;
       end;
    end Validate_Response;

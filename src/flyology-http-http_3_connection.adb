@@ -107,7 +107,8 @@ package body Flyology.HTTP.HTTP_3_Connection is
       Index  : out Optional_Slot;
       Status : out Operation_Status)
    is
-      Opened : HTTP_3_Stream_Receive_Policy.Receive_Status;
+      Opened          : HTTP_3_Stream_Receive_Policy.Receive_Status;
+      Request_Is_Head : Boolean := False;
    begin
       Index := Find (Item, ID);
       if Index /= 0 then
@@ -120,9 +121,17 @@ package body Flyology.HTTP.HTTP_3_Connection is
 
       for Candidate in Slot_Index loop
          if not Item.Streams (Candidate).Occupied then
+            for Sending in Slot_Index loop
+               if Item.Sending (Sending).Occupied
+                 and then Item.Sending (Sending).ID = ID
+               then
+                  Request_Is_Head := Item.Sending (Sending).Request.Is_Head;
+               end if;
+            end loop;
             HTTP_3_Stream_Receive_Policy.Open
               (Item.Streams (Candidate).State, ID,
-               Receive_Role (Item.Local_Role), Opened);
+               Receive_Role (Item.Local_Role), Opened,
+               Request_Is_Head => Request_Is_Head);
             if Opened /= HTTP_3_Stream_Receive_Policy.Consumed then
                Status := Stream_Creation_Error;
                return;
@@ -334,7 +343,9 @@ package body Flyology.HTTP.HTTP_3_Connection is
       ID     : QUIC.Stream_ID;
       Kind   : Send_Stream_Kind;
       Index  : out Optional_Slot;
-      Status : out Operation_Status) is
+      Status : out Operation_Status;
+      Request_Is_Head : Boolean := False)
+   is
    begin
       Index := Find_Send (Item, ID);
       if Index /= 0 then
@@ -347,7 +358,10 @@ package body Flyology.HTTP.HTTP_3_Connection is
       for Candidate in Slot_Index loop
          if not Item.Sending (Candidate).Occupied then
             Item.Sending (Candidate) :=
-              (Occupied => True, ID => ID, Kind => Kind, others => <>);
+              (Occupied => True, ID => ID, Kind => Kind,
+               Response =>
+                 (Request_Is_Head => Request_Is_Head, others => <>),
+               others => <>);
             Item.Send_Count := Item.Send_Count + 1;
             Index := Candidate;
             Status := Succeeded;
@@ -442,6 +456,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
       Stream    : QUIC.Stream_ID;
       Index     : out Optional_Slot;
       Status    : out Operation_Status) is
+      Receive_Slot : Optional_Slot;
    begin
       Index := Find_Send (Item, Stream);
       if Index /= 0 then
@@ -450,7 +465,13 @@ package body Flyology.HTTP.HTTP_3_Connection is
         and then QUIC.Has_Stream (Transport, Stream)
         and then HTTP_3_Stream_Policy.Is_Request_Stream (Stream)
       then
-         Add_Send (Item, Stream, Response_Message, Index, Status);
+         Receive_Slot := Find (Item, Stream);
+         Add_Send
+           (Item, Stream, Response_Message, Index, Status,
+            Request_Is_Head =>
+              (Receive_Slot /= 0
+               and then HTTP_3_Stream_Receive_Policy.Request_Is_Head
+                 (Item.Streams (Receive_Slot).State)));
       else
          Status := Stream_Creation_Error;
       end if;
@@ -515,7 +536,8 @@ package body Flyology.HTTP.HTTP_3_Connection is
            (Item.Sending (Slot).Request,
             HTTP_3_Frame_Policy.Headers_Frame, Header,
             Validation.Has_Content_Length,
-            Validation.Content_Length);
+            Validation.Content_Length,
+            Is_Head => Validation.Is_Head);
          if Validation.Status /= HTTP_3_Header_Policy.Valid then
             Status := Header_Error;
             return;
@@ -543,7 +565,10 @@ package body Flyology.HTTP.HTTP_3_Connection is
          end if;
          Response := HTTP_3_Message_Policy.On_Response_Frame
            (Item.Sending (Slot).Response,
-            HTTP_3_Frame_Policy.Headers_Frame, Header);
+            HTTP_3_Frame_Policy.Headers_Frame, Header,
+            Response_Code => Validation.Response_Code,
+            Has_Content_Length => Validation.Has_Content_Length,
+            Content_Length => Validation.Content_Length);
          if Validation.Status /= HTTP_3_Header_Policy.Valid then
             Status := Header_Error;
             return;
@@ -633,7 +658,8 @@ package body Flyology.HTTP.HTTP_3_Connection is
          end if;
       else
          Response := HTTP_3_Message_Policy.On_Response_Frame
-           (Item.Sending (Slot).Response, HTTP_3_Frame_Policy.Data_Frame);
+           (Item.Sending (Slot).Response, HTTP_3_Frame_Policy.Data_Frame,
+            Data_Length => QUIC.Stream_Offset (Data'Length));
          if Response.Status /= HTTP_3_Message_Policy.Accepted
            or else
              (Fin and then HTTP_3_Message_Policy.Finish_Response

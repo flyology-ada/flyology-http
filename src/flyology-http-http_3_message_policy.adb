@@ -21,7 +21,8 @@ is
       Headers    : Header_Kind := Not_Headers;
       Has_Content_Length : Boolean := False;
       Content_Length     : Varint_Policy.Value_Type := 0;
-      Data_Length        : Varint_Policy.Value_Type := 0)
+      Data_Length        : Varint_Policy.Value_Type := 0;
+      Is_Head            : Boolean := False)
       return Request_Update
    is
       Result : Request_Update := (Status => Accepted, State => State);
@@ -33,6 +34,7 @@ is
                   Result.State.Phase := Request_Open;
                   Result.State.Has_Content_Length := Has_Content_Length;
                   Result.State.Content_Length := Content_Length;
+                  Result.State.Is_Head := Is_Head;
                else
                   Result.Status := Message_Error;
                end if;
@@ -71,7 +73,12 @@ is
    function On_Response_Frame
      (State      : Response_State;
       Frame_Type : Varint_Policy.Value_Type;
-      Headers    : Header_Kind := Not_Headers) return Response_Update
+      Headers    : Header_Kind := Not_Headers;
+      Response_Code      : Natural := 0;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : Varint_Policy.Value_Type := 0;
+      Data_Length        : Varint_Policy.Value_Type := 0)
+      return Response_Update
    is
       Result : Response_Update := (Status => Accepted, State => State);
    begin
@@ -82,6 +89,11 @@ is
                   Result.State.Phase := Awaiting_Final;
                elsif Headers = Final_Response_Headers then
                   Result.State.Phase := Final_Response_Open;
+                  Result.State.Body_Allowed :=
+                    not State.Request_Is_Head
+                    and then Response_Code not in 204 | 304;
+                  Result.State.Has_Content_Length := Has_Content_Length;
+                  Result.State.Content_Length := Content_Length;
                else
                   Result.Status := Message_Error;
                end if;
@@ -99,6 +111,19 @@ is
       elsif Frame_Type = HTTP_3_Frame_Policy.Data_Frame then
          if State.Phase /= Final_Response_Open then
             Result.Status := Frame_Unexpected;
+         elsif not State.Body_Allowed then
+            Result.Status := Message_Error;
+         elsif Data_Length >
+           Varint_Policy.Value_Type'Last - State.Content_Received
+         then
+            Result.Status := Message_Error;
+         elsif State.Has_Content_Length
+           and then State.Content_Received + Data_Length > State.Content_Length
+         then
+            Result.Status := Message_Error;
+         else
+            Result.State.Content_Received :=
+              State.Content_Received + Data_Length;
          end if;
       elsif Frame_Type = HTTP_3_Frame_Policy.Push_Promise_Frame then
          null;
@@ -118,6 +143,9 @@ is
 
    function Finish_Response (State : Response_State) return Finish_Status is
      (if State.Phase in Final_Response_Open | Response_Trailers
-      then Message_Complete
-      else Message_Incomplete);
+        and then
+          (not State.Body_Allowed
+           or else not State.Has_Content_Length
+           or else State.Content_Received = State.Content_Length)
+      then Message_Complete else Message_Incomplete);
 end Flyology.HTTP.HTTP_3_Message_Policy;

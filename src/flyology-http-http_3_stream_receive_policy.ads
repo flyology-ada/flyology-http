@@ -68,6 +68,10 @@ is
    function Kind (Item : Stream_State) return Stream_Kind
    with Global => null;
 
+   function Request_Is_Head (Item : Stream_State) return Boolean
+   with Global => null,
+        Pre => Kind (Item) = Request_Stream;
+
    function Has_Peer_Settings (Item : Connection_State) return Boolean
    with Global => null;
 
@@ -88,7 +92,8 @@ is
      (Item       : out Stream_State;
       Stream_ID  : Varint_Policy.Value_Type;
       Local_Role : HTTP_3_Stream_Policy.Endpoint_Role;
-      Status     : out Receive_Status)
+      Status     : out Receive_Status;
+      Request_Is_Head : Boolean := False)
    with Global => null;
 
    procedure Process

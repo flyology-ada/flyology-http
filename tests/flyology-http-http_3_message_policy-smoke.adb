@@ -122,4 +122,77 @@ begin
         (Response,
          HTTP_3_Frame_Policy.Headers_Frame,
          Final_Response_Headers).Status = Frame_Unexpected);
+
+   declare
+      Sized : Response_State;
+   begin
+      S_Update := On_Response_Frame
+        (Sized, HTTP_3_Frame_Policy.Headers_Frame, Final_Response_Headers,
+         Response_Code => 200,
+         Has_Content_Length => True, Content_Length => 3);
+      pragma Assert (S_Update.Status = Accepted);
+      Sized := S_Update.State;
+      S_Update := On_Response_Frame
+        (Sized, HTTP_3_Frame_Policy.Data_Frame, Data_Length => 2);
+      pragma Assert (S_Update.Status = Accepted);
+      Sized := S_Update.State;
+      pragma Assert (Finish_Response (Sized) = Message_Incomplete);
+      pragma Assert
+        (On_Response_Frame
+           (Sized, HTTP_3_Frame_Policy.Data_Frame, Data_Length => 2).Status =
+             Message_Error);
+      S_Update := On_Response_Frame
+        (Sized, HTTP_3_Frame_Policy.Data_Frame, Data_Length => 1);
+      pragma Assert
+        (S_Update.Status = Accepted
+         and then Finish_Response (S_Update.State) = Message_Complete);
+   end;
+
+   declare
+      Head : constant Response_State :=
+        (Request_Is_Head => True, others => <>);
+   begin
+      S_Update := On_Response_Frame
+        (Head, HTTP_3_Frame_Policy.Headers_Frame, Final_Response_Headers,
+         Response_Code => 200,
+         Has_Content_Length => True, Content_Length => 42);
+      pragma Assert
+        (S_Update.Status = Accepted
+         and then not S_Update.State.Body_Allowed
+         and then Finish_Response (S_Update.State) = Message_Complete);
+      pragma Assert
+        (On_Response_Frame
+           (S_Update.State, HTTP_3_Frame_Policy.Data_Frame,
+            Data_Length => 1).Status = Message_Error);
+   end;
+
+   declare
+      No_Content : Response_State;
+   begin
+      S_Update := On_Response_Frame
+        (No_Content, HTTP_3_Frame_Policy.Headers_Frame,
+         Final_Response_Headers, Response_Code => 204);
+      pragma Assert
+        (S_Update.Status = Accepted
+         and then not S_Update.State.Body_Allowed
+         and then Finish_Response (S_Update.State) = Message_Complete);
+      pragma Assert
+        (On_Response_Frame
+           (S_Update.State, HTTP_3_Frame_Policy.Data_Frame,
+            Data_Length => 1).Status = Message_Error);
+
+      No_Content := (others => <>);
+      S_Update := On_Response_Frame
+        (No_Content, HTTP_3_Frame_Policy.Headers_Frame,
+         Final_Response_Headers, Response_Code => 304,
+         Has_Content_Length => True, Content_Length => 42);
+      pragma Assert
+        (S_Update.Status = Accepted
+         and then not S_Update.State.Body_Allowed
+         and then Finish_Response (S_Update.State) = Message_Complete);
+      pragma Assert
+        (On_Response_Frame
+           (S_Update.State, HTTP_3_Frame_Policy.Data_Frame,
+            Data_Length => 1).Status = Message_Error);
+   end;
 end Flyology.HTTP.HTTP_3_Message_Policy.Smoke;

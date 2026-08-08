@@ -27,6 +27,7 @@ is
       Has_Content_Length : Boolean := False;
       Content_Length     : Varint_Policy.Value_Type := 0;
       Content_Received   : Varint_Policy.Value_Type := 0;
+      Is_Head            : Boolean := False;
    end record;
 
    type Request_Update is record
@@ -40,15 +41,24 @@ is
       Headers    : Header_Kind := Not_Headers;
       Has_Content_Length : Boolean := False;
       Content_Length     : Varint_Policy.Value_Type := 0;
-      Data_Length        : Varint_Policy.Value_Type := 0)
+      Data_Length        : Varint_Policy.Value_Type := 0;
+      Is_Head            : Boolean := False)
       return Request_Update
    with Global => null;
 
    type Response_Phase is
-     (Expecting_Response, Awaiting_Final, Final_Response_Open, Response_Trailers);
+     (Expecting_Response,
+      Awaiting_Final,
+      Final_Response_Open,
+      Response_Trailers);
 
    type Response_State is record
-      Phase : Response_Phase := Expecting_Response;
+      Phase              : Response_Phase := Expecting_Response;
+      Request_Is_Head    : Boolean := False;
+      Body_Allowed       : Boolean := True;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : Varint_Policy.Value_Type := 0;
+      Content_Received   : Varint_Policy.Value_Type := 0;
    end record;
 
    type Response_Update is record
@@ -59,7 +69,12 @@ is
    function On_Response_Frame
      (State      : Response_State;
       Frame_Type : Varint_Policy.Value_Type;
-      Headers    : Header_Kind := Not_Headers) return Response_Update
+      Headers    : Header_Kind := Not_Headers;
+      Response_Code      : Natural := 0;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : Varint_Policy.Value_Type := 0;
+      Data_Length        : Varint_Policy.Value_Type := 0)
+      return Response_Update
    with Global => null;
 
    type Finish_Status is (Message_Complete, Message_Incomplete);
