@@ -45,7 +45,7 @@ begin
      (State, Socket,
       Fixtures.Server_Certificate,
       Fixtures.Server_Private_Key,
-      Capacity => 8,
+      Capacity => 32,
       Timeout => 5.0,
       Handshake_Timeout => 5.0,
       Max_Connection_Age => 15.0,

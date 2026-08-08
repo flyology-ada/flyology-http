@@ -30,8 +30,8 @@ The aioquic client sends concurrent GET and POST request streams; the POST
 checks request headers, content length, buffered body delivery, response
 headers, status, and body. The quic-go client sends GET and POST exchanges on
 one retained connection, checking connection reuse and the same application
-semantics. All peers use the current 1,200-byte datagram and AES-128-GCM
-profile.
+semantics. The Ada driver accepts UDP payloads through 1,350 bytes while the
+current peers use 1,200-byte client Initial padding and AES-128-GCM.
 
 ## Published vectors
 
@@ -60,19 +60,34 @@ artifact's SHA-256 digest, and runs it against a dedicated routed Ada server.
 `FLYOLOGY_H3SPEC` can name an already verified executable. Logs are retained
 under `build/oracle/`.
 
-h3spec is currently diagnostic, not a green qualification gate. Its published
-suite exposes missing transport CONNECTION_CLOSE responses for flow-control,
-stream-limit, and invalid client transport-parameter errors. Scheduled and
-manual CI run this diagnostic with `continue-on-error` so the gap remains
-visible without misrepresenting it as qualified behavior. The independent
-happy-path matrix above remains mandatory.
+h3spec is a required qualification gate. Its 49 published examples complete
+with zero failures, covering transport, TLS, HTTP/3, and QPACK error closes.
+The tool reports its 0-RTT branch as skipped because this profile does not issue
+resumption state; that output is not evidence of 0-RTT support.
+
+## Bounded resilience campaign
+
+Run the reproducible adverse-input and concurrency check:
+
+```sh
+./scripts/test-http3-stress.sh
+```
+
+It sends 10,000 deterministic random UDP datagrams through the full 1,350-byte
+boundary, mutates 64 HTTP/3 streams over authenticated aioquic connections,
+checks a valid request after each hostile phase, and drives 1,202 valid
+requests through connection churn at up to eight concurrent connections. It
+then drives 800 concurrent requests from the Ada client against aioquic. Any
+valid request failure fails the command. The seed and counts are fixed so the
+campaign is reproducible; this is mutation/load testing, not coverage-guided
+fuzzing or a portable performance benchmark.
 
 ## Evidence boundary
 
 The current external matrix does not qualify QUIC Retry, version negotiation,
 stateless reset, resumption, 0-RTT, key update, connection migration, ECN,
-PMTU discovery, ChaCha20, dynamic QPACK, HTTP/3 push, or sustained adverse
-network behavior. IPv6 is covered by internal application integration but not
+PMTU discovery, ChaCha20, dynamic QPACK, HTTP/3 push, coverage-guided fuzzing,
+or adverse packet loss/reordering. IPv6 is covered by internal application integration but not
 yet by the two external peers. These are unsupported or unqualified until a
 corresponding published-vector or independent-peer gate lands.
 

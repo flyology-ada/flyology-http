@@ -33,8 +33,9 @@ alr build
 ./scripts/http2-test.sh all
 # Required aioquic and quic-go black-box HTTP/3 interoperability:
 ./scripts/test-http3-interop.sh all
-# Published h3spec error-suite diagnostic (currently exposes known gaps):
+# Required published error suite and bounded HTTP/3 resilience campaign:
 ./scripts/test-http3-h3spec.sh
+./scripts/test-http3-stress.sh
 # Optional Docker-based server protocol qualification:
 ./scripts/http2-test.sh h2spec
 ```
@@ -49,9 +50,10 @@ adapter; it requires Docker and is also part of `qualification` and `nightly`.
 The HTTP/3 interoperability command creates an isolated Python test environment
 for pinned aioquic and builds a separately pinned quic-go test executable. Both
 peers exercise Ada client and server roles and are CI gates; neither is a crate
-or runtime dependency. The separately pinned h3spec command reports published
-QUIC error-case coverage. Its current failures remain documented rather than
-being counted as qualification. See
+or runtime dependency. The separately pinned h3spec command gates published
+QUIC and HTTP/3 error-case coverage. The stress command checks hostile UDP
+input, mutated authenticated streams, bounded server churn, and concurrent Ada
+client use against aioquic. See
 [`tests/http3-conformance.md`](tests/http3-conformance.md) for the exact matrix.
 
 ## Use with Alire
