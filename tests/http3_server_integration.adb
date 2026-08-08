@@ -1,21 +1,30 @@
+with Ada.Environment_Variables;
 with Ada.Streams;
 with Ada.Strings.Unbounded;
+with Flyology.Bytes;
+with Flyology.Cancellation;
 with Flyology.HTTP;
+with Flyology.HTTP.Client;
 with Flyology.HTTP.HTTP_3;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Sockets;
+with Flyology.IO.TLS.ALPN;
+with Flyology.IO.TLS.OpenSSL;
 with Flyology.QUIC.Connections;
 with Flyology.QUIC.Connections.IO;
 with Flyology.QUIC.Test_Connections;
 
 procedure HTTP3_Server_Integration is
    package App renames Flyology.HTTP.Server.Applications;
+   package Client renames Flyology.HTTP.Client;
    package H3 renames Flyology.HTTP.HTTP_3;
    package QUIC renames Flyology.QUIC.Connections;
    package QUIC_IO renames Flyology.QUIC.Connections.IO;
    package Sockets renames Flyology.IO.Sockets;
+   package ALPN renames Flyology.IO.TLS.ALPN;
+   package OpenSSL renames Flyology.IO.TLS.OpenSSL;
    package Fixtures renames Flyology.QUIC.Test_Connections;
 
    use Ada.Strings.Unbounded;
@@ -24,13 +33,27 @@ procedure HTTP3_Server_Integration is
    use type QUIC.Operation_Status;
    use type Flyology.HTTP.Protocol;
 
+   Certificate : constant String := "tests/fixtures/tls/server-cert.pem";
+   Private_Key : constant String := "tests/fixtures/tls/server-key.pem";
+   Library_Directory : constant String :=
+     (if Ada.Environment_Variables.Exists ("FLYOLOGY_TEST_OPENSSL_DIR")
+      then Ada.Environment_Variables.Value ("FLYOLOGY_TEST_OPENSSL_DIR")
+      else "");
+
+   function Decimal (Value : Natural) return String is
+      Image : constant String := Natural'Image (Value);
+   begin
+      return Image (Image'First + 1 .. Image'Last);
+   end Decimal;
+
    type Context is limited null record;
    package Routing is new Flyology.HTTP.Server.Routing (Context);
 
-   Routes : Routing.Router
-     (Capacity => 1, Slashes => Routing.Strict_Slashes);
-   State : Context;
-   Listener : aliased Sockets.Socket_Type;
+   Routes : aliased Routing.Router
+     (Capacity => 2, Slashes => Routing.Strict_Slashes);
+   State : aliased Context;
+   Server_Backend : aliased OpenSSL.OpenSSL_Provider;
+   Probe : Sockets.Socket_Type;
    Address : Sockets.Endpoint;
 
    protected Outcome is
@@ -71,6 +94,14 @@ procedure HTTP3_Server_Integration is
       X.Write_Chunk (X.Parameter ("name"));
       X.End_Stream;
    end Hello;
+
+   procedure Discover
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      pragma Assert (X.Request_Protocol = Flyology.HTTP.HTTP_1_1_Protocol);
+      X.Text (200, "same routes");
+   end Discover;
 begin
    Routes.Add_Middleware (Observe'Access);
    Routes.Post
@@ -79,14 +110,24 @@ begin
         (Routing.Default_Route_Policy with delta
            Body_Handling => App.Buffer_Body,
            Max_Body      => 64));
+   Routes.Get ("/discover", Discover'Access, Name => "discover");
 
-   Sockets.Create_Socket (Listener, Sockets.IPv4, Sockets.Socket_Datagram);
+   OpenSSL.Initialize_Server
+     (Server_Backend, Certificate, Private_Key,
+      Protocols => ALPN."&" (ALPN.Offer ("h2"), "http/1.1"),
+      Library_Directory => Library_Directory);
+
+   --  Reserve a currently free loopback port. The unified server binds both
+   --  TCP and UDP to this same concrete endpoint after Probe is closed.
+   Sockets.Create_Socket (Probe);
    Sockets.Bind_Socket
-     (Listener,
+     (Probe,
       Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Sockets.Any_Port));
-   Address := Sockets.Get_Socket_Name (Listener);
+   Address := Sockets.Get_Socket_Name (Probe);
+   Sockets.Close_Socket (Probe);
 
    declare
+      Stop : aliased Flyology.Cancellation.Token;
       task type Server_Task_Type;
       for Server_Task_Type'Storage_Size use 16 * 1_024 * 1_024;
       Server_Task : Server_Task_Type;
@@ -94,26 +135,65 @@ begin
       task body Server_Task_Type is
       begin
          begin
-            Routes.Serve_HTTP_3
-              (State, Listener,
-               Fixtures.Server_Certificate,
-               Fixtures.Server_Private_Key,
+            Routes.Serve
+              (State, Address, Server_Backend,
+               Certificate_DER => Fixtures.Server_Certificate,
+               Private_Key => Fixtures.Server_Private_Key,
+               TCP_Capacity => 2,
+               HTTP_3_Capacity => 2,
                Timeout => 10.0,
                Handshake_Timeout => 10.0,
                Max_Connection_Age => 20.0,
-               Max_Requests => 1);
+               TCP_Max_Requests => 1,
+               HTTP_3_Max_Requests => 1,
+               Drain_Timeout => 10.0,
+               Token => Stop'Access);
          exception
-            when others => Outcome.Fail;
+            when others =>
+               Outcome.Fail;
+               Stop.Request;
          end;
       end Server_Task_Type;
 
-      Socket : Sockets.Socket_Type;
-      Transport : QUIC.Connection;
-      Session : H3.Session;
-      Flight : QUIC.Datagram_Batch;
-      QUIC_Status : QUIC.Operation_Status;
-      H3_Status : H3.Operation_Status;
-   begin
+      procedure Run_Client is
+         Socket : Sockets.Socket_Type;
+         Transport : QUIC.Connection;
+         Session : H3.Session;
+         Flight : QUIC.Datagram_Batch;
+         QUIC_Status : QUIC.Operation_Status;
+         H3_Status : H3.Operation_Status;
+      begin
+      delay 0.1;
+      declare
+         HTTP : aliased Client.Client (Capacity => 1);
+         Client_Backend : aliased OpenSSL.OpenSSL_Provider;
+         Request : Client.Request;
+      begin
+         OpenSSL.Initialize_Client
+           (Client_Backend, CA_File => Certificate,
+            Library_Directory => Library_Directory);
+         Client.Configure
+           (HTTP,
+            Flyology.HTTP.Parse_Origin
+              ("https://localhost:" & Decimal (Natural (Address.Port))),
+            Client_Backend'Access);
+         Client.Set_Target (Request, "/discover");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert (Client.Status (Reply) = 200);
+            pragma Assert
+              (Client.Header (Reply, "Alt-Svc") =
+                 "h3="":" & Decimal (Natural (Address.Port)) &
+                 """; ma=86400");
+            pragma Assert
+              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                 "same routes");
+         end;
+         Client.Shutdown (HTTP, Timeout => 5.0);
+      end;
+
       Fixtures.Initialize_Client (Transport);
       Sockets.Create_Socket (Socket, Sockets.IPv4, Sockets.Socket_Datagram);
       Sockets.Connect_Socket (Socket, Address);
@@ -178,6 +258,7 @@ begin
          Event : H3.Event;
          Status_Seen : Boolean := False;
          Middleware_Seen : Boolean := False;
+         Alt_Svc_Seen : Boolean := False;
          Ended : Boolean := False;
          Payload : Unbounded_String;
       begin
@@ -205,6 +286,8 @@ begin
                           and then H3.Field_Value (Field) = "visited"
                         then
                            Middleware_Seen := True;
+                        elsif H3.Field_Name (Field) = "alt-svc" then
+                           Alt_Svc_Seen := True;
                         end if;
                      end;
                   end loop;
@@ -224,14 +307,46 @@ begin
          end loop;
          pragma Assert (Status_Seen);
          pragma Assert (Middleware_Seen);
+         pragma Assert (not Alt_Svc_Seen);
          pragma Assert (To_String (Payload) = "hello Ada");
          pragma Assert (Ended);
       end;
       Sockets.Close_Socket (Socket);
+      exception
+         when others =>
+            if Sockets.Is_Open (Socket) then
+               Sockets.Close_Socket (Socket);
+            end if;
+            raise;
+      end Run_Client;
+   begin
+      declare
+         task First_Client;
+         task Second_Client;
+
+         task body First_Client is
+         begin
+            Run_Client;
+         exception
+            when others => Outcome.Fail;
+         end First_Client;
+
+         task body Second_Client is
+         begin
+            Run_Client;
+         exception
+            when others => Outcome.Fail;
+         end Second_Client;
+      begin
+         null;
+      end;
+
+      Stop.Request;
+   exception
+      when others =>
+         Stop.Request;
+         raise;
    end;
 
    pragma Assert (Outcome.Passed);
-   if Sockets.Is_Open (Listener) then
-      Sockets.Close_Socket (Listener);
-   end if;
 end HTTP3_Server_Integration;

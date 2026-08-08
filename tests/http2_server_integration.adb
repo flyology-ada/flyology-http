@@ -109,7 +109,8 @@ begin
            (State, Channel, Peer,
             Mode => Flyology.HTTP.Server.HTTP_2_Only,
             Timeout => 10.0,
-            Max_Connection_Age => 30.0);
+            Max_Connection_Age => 30.0,
+            Alt_Svc => "h3="":443""; ma=86400");
          Connections.Close (Channel);
          Connections.Accept_Connection
            (Manager, Listener, Channel, Peer, Timeout => 10.0);
@@ -118,7 +119,8 @@ begin
             Mode => Flyology.HTTP.Server.HTTP_1_Only,
             Timeout => 10.0,
             Max_Connection_Age => 30.0,
-            Max_Requests => 1);
+            Max_Requests => 1,
+            Alt_Svc => "h3="":443""; ma=86400");
          Connections.Close (Channel);
       end Server_Task;
 
@@ -138,6 +140,9 @@ begin
                  Flyology.HTTP.HTTP_2_Protocol);
             pragma Assert
               (Client.Header (Reply, "X-Middleware") = "visited");
+            pragma Assert
+              (Client.Header (Reply, "Alt-Svc") =
+                 "h3="":443""; ma=86400");
             pragma Assert
               (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
                  Expected);
@@ -270,6 +275,9 @@ begin
                  Flyology.HTTP.HTTP_1_1_Protocol);
             pragma Assert
               (Client.Header (Reply, "X-Middleware") = "visited");
+            pragma Assert
+              (Client.Header (Reply, "Alt-Svc") =
+                 "h3="":443""; ma=86400");
             pragma Assert
               (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
                  "/http1");
