@@ -76,6 +76,11 @@ begin
          and then Server_Event.Kind = Headers_Received
          and then Server_Event.Stream = Request_Stream
          and then Server_Event.Headers.Count = 4);
+      Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = Succeeded
+         and then Server_Event.Kind = Stream_Ended
+         and then Server_Event.Stream = Request_Stream);
 
       Response_Headers.Count := 1;
       Response_Headers.Fields (1) :=
@@ -110,5 +115,10 @@ begin
          and then Client_Event.Data_Length = 5
          and then Client_Event.Data (1) = 16#68#
          and then Client_Event.Data (5) = 16#6F#);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded
+         and then Client_Event.Kind = Stream_Ended
+         and then Client_Event.Stream = Request_Stream);
    end;
 end Flyology.HTTP.HTTP_3_Connection.Smoke;

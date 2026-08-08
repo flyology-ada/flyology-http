@@ -59,7 +59,8 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Headers_Received,
       Data_Received,
       Push_Promise_Received,
-      QPACK_Data_Received);
+      QPACK_Data_Received,
+      Stream_Ended);
 
    subtype Event_Data_Length is Natural range 0 .. Max_Event_Data;
 

@@ -10,6 +10,7 @@ procedure HTTP3_Public_Smoke is
    use type Ada.Streams.Stream_Element;
    use type H3.Event_Kind;
    use type H3.Operation_Status;
+   use type QUIC.Stream_ID;
 
    Client_Transport, Server_Transport : QUIC.Connection;
    Client, Server : H3.Session;
@@ -71,6 +72,11 @@ begin
         (Server_Status = H3.Succeeded
          and then Server_Event.Kind = H3.Headers_Received
          and then H3.Header_Count (Server_Event.Headers) = 4);
+      H3.Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = H3.Succeeded
+         and then Server_Event.Kind = H3.Stream_Ended
+         and then Server_Event.Stream = Request_Stream);
 
       H3.Append (Response_Headers, H3.Make_Field (":status", "200"));
       H3.Send_Headers
@@ -103,5 +109,10 @@ begin
          and then Client_Event.Data_Length = 5
          and then Client_Event.Data (1) = 16#68#
          and then Client_Event.Data (5) = 16#6F#);
+      H3.Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = H3.Succeeded
+         and then Client_Event.Kind = H3.Stream_Ended
+         and then Client_Event.Stream = Request_Stream);
    end;
 end HTTP3_Public_Smoke;

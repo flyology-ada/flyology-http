@@ -159,13 +159,15 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Data_Received A DATA frame payload was decoded
    --  @enum Push_Promise_Received A PUSH_PROMISE was decoded
    --  @enum QPACK_Data_Received Peer QPACK stream data is available
+   --  @enum Stream_Ended A complete request or response reached stream FIN
    type Event_Kind is
      (No_Event,
       Settings_Received,
       Headers_Received,
       Data_Received,
       Push_Promise_Received,
-      QPACK_Data_Received);
+      QPACK_Data_Received,
+      Stream_Ended);
 
    --  Length of the DATA payload retained by an event.
    subtype Event_Data_Length is Natural range 0 .. Max_Event_Data;

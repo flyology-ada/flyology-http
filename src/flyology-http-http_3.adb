@@ -182,7 +182,8 @@ package body Flyology.HTTP.HTTP_3 is
          when Internal.Headers_Received => Headers_Received,
          when Internal.Data_Received => Data_Received,
          when Internal.Push_Promise_Received => Push_Promise_Received,
-         when Internal.QPACK_Data_Received => QPACK_Data_Received);
+         when Internal.QPACK_Data_Received => QPACK_Data_Received,
+         when Internal.Stream_Ended => Stream_Ended);
 
    procedure Poll
      (Item      : in out Session;

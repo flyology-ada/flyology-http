@@ -266,6 +266,9 @@ package body Flyology.HTTP.HTTP_3_Connection is
             if Status /= Succeeded then
                return;
             end if;
+            Output.Kind := Stream_Ended;
+            Output.Stream := ID;
+            return;
          end if;
       end loop;
       Status := No_Event;
