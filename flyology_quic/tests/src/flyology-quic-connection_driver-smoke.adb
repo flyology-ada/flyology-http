@@ -1,3 +1,5 @@
+with Flyology.IO.Sockets;
+with Flyology.QUIC.Connection_IO;
 with Flyology.QUIC.Transport_Parameter_Policy;
 
 procedure Flyology.QUIC.Connection_Driver.Smoke is
@@ -88,6 +90,8 @@ procedure Flyology.QUIC.Connection_Driver.Smoke is
    Client, Server : Connection;
    Client_Output, Server_Output, Reply : Datagram_Batch;
    Client_Result, Server_Result : Operation_Result;
+   Client_Socket, Server_Socket : Flyology.IO.Sockets.Socket_Type;
+   Client_Endpoint, Server_Endpoint : Flyology.IO.Sockets.Endpoint;
 begin
    Client_Parameters.Initial_Source_Connection_ID :=
      Parameter (Client_ID);
@@ -138,28 +142,44 @@ begin
         (1 .. Ada.Streams.Stream_Element_Offset (Server_Encoded.Length)),
       Certificate, Private_Key, Original_ID, Client_ID, Server_ID);
 
+   Flyology.IO.Sockets.Create_Socket
+     (Client_Socket, Flyology.IO.Sockets.IPv4,
+      Flyology.IO.Sockets.Socket_Datagram);
+   Flyology.IO.Sockets.Create_Socket
+     (Server_Socket, Flyology.IO.Sockets.IPv4,
+      Flyology.IO.Sockets.Socket_Datagram);
+   Flyology.IO.Sockets.Bind_Socket
+     (Client_Socket,
+      Flyology.IO.Sockets.Network_Endpoint
+        (Flyology.IO.Sockets.Loopback_IPv4,
+         Flyology.IO.Sockets.Any_Port));
+   Flyology.IO.Sockets.Bind_Socket
+     (Server_Socket,
+      Flyology.IO.Sockets.Network_Endpoint
+        (Flyology.IO.Sockets.Loopback_IPv4,
+         Flyology.IO.Sockets.Any_Port));
+   Client_Endpoint := Flyology.IO.Sockets.Get_Socket_Name (Client_Socket);
+   Server_Endpoint := Flyology.IO.Sockets.Get_Socket_Name (Server_Socket);
+   Flyology.IO.Sockets.Connect_Socket (Client_Socket, Server_Endpoint);
+   Flyology.IO.Sockets.Connect_Socket (Server_Socket, Client_Endpoint);
+
    Start_Client (Client, Client_Output, Client_Result);
    pragma Assert
      (Client_Result.Status = Succeeded and then Client_Output.Count = 1
       and then Client_Output.Items (1).Length = Max_Datagram_Length);
-   Process_Datagram
-     (Server,
-      Client_Output.Items (1).Data
-        (1 .. Ada.Streams.Stream_Element_Offset
-                (Client_Output.Items (1).Length)),
-      Server_Output, Server_Result);
+   Connection_IO.Send (Client_Socket, Client_Output, Timeout => 1.0);
+   Connection_IO.Receive
+     (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);
    pragma Assert
      (Server_Result.Status = Succeeded and then Server_Output.Count >= 2
       and then State (Server) = Server_Handshake);
 
    Reply := (others => <>);
+   Connection_IO.Send (Server_Socket, Server_Output, Timeout => 1.0);
    for Index in 1 .. Server_Output.Count loop
-      Process_Datagram
-        (Client,
-         Server_Output.Items (Index).Data
-           (1 .. Ada.Streams.Stream_Element_Offset
-                   (Server_Output.Items (Index).Length)),
-         Client_Output, Client_Result);
+      Connection_IO.Receive
+        (Client_Socket, Client, Client_Output, Client_Result,
+         Timeout => 1.0);
       if Client_Output.Count > 0 then
          Reply := Client_Output;
       end if;
@@ -168,11 +188,9 @@ begin
      (Is_Connected (Client) and then Reply.Count = 1
       and then Client_Result.Status = Succeeded);
 
-   Process_Datagram
-     (Server,
-      Reply.Items (1).Data
-        (1 .. Ada.Streams.Stream_Element_Offset (Reply.Items (1).Length)),
-      Server_Output, Server_Result);
+   Connection_IO.Send (Client_Socket, Reply, Timeout => 1.0);
+   Connection_IO.Receive
+     (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);
    pragma Assert
      (Server_Result.Status = Succeeded and then Is_Connected (Server)
       and then Server_Output.Count = 0);
@@ -192,11 +210,10 @@ begin
          Data => (16#68#, 16#33#), Now => 100,
          Packet => Stream_Packet, Status => Sent);
       pragma Assert (Sent = Application_Space.Sent);
-      Process_Datagram
-        (Server,
-         Stream_Packet.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Stream_Packet.Length)),
-         Server_Output, Server_Result, Now => 150);
+      Connection_IO.Send (Client_Socket, Stream_Packet, Timeout => 1.0);
+      Connection_IO.Receive
+        (Server_Socket, Server, Server_Output, Server_Result,
+         Now => 150, Timeout => 1.0);
       pragma Assert
         (Server_Result.Status = Succeeded
          and then Has_Stream (Server, Stream_ID)
@@ -207,11 +224,13 @@ begin
         (Server, ACK_Delay => 0, Now => 160,
          Packet => ACK_Packet, Status => Sent);
       pragma Assert (Sent = Application_Space.Sent);
-      Process_Datagram
-        (Client,
-         ACK_Packet.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (ACK_Packet.Length)),
-         Client_Output, Client_Result, Now => 200);
+      Connection_IO.Send (Server_Socket, ACK_Packet, Timeout => 1.0);
+      Connection_IO.Receive
+        (Client_Socket, Client, Client_Output, Client_Result,
+         Now => 200, Timeout => 1.0);
       pragma Assert (Client_Result.Status = Succeeded);
    end;
+
+   Flyology.IO.Sockets.Close_Socket (Client_Socket);
+   Flyology.IO.Sockets.Close_Socket (Server_Socket);
 end Flyology.QUIC.Connection_Driver.Smoke;
