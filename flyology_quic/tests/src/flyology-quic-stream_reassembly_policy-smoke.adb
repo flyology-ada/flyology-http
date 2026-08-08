@@ -55,4 +55,13 @@ begin
    Insert
      (Item, 0, False, (Character'Pos ('a'), Character'Pos ('b')), Status);
    pragma Assert (Status = Accepted and then Is_Complete (Item));
+
+   Reset (Item);
+   Insert
+     (Item, Varint_Policy.Value_Type (Max_Stream_Data), False,
+      (1 => Character'Pos ('x')), Status);
+   pragma Assert
+     (Status = Exceeds_Capacity
+      and then Contiguous_Length (Item) = 0
+      and then Highest_Offset (Item) = 0);
 end Flyology.QUIC.Stream_Reassembly_Policy.Smoke;

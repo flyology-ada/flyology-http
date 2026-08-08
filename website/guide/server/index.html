@@ -188,7 +188,7 @@ Routes.Serve
    Certificate_DER =&gt; Certificate_DER,
    Private_Key     =&gt; Private_Key,
    TCP_Capacity    =&gt; 64,
-   HTTP_3_Capacity =&gt; 8,
+   HTTP_3_Capacity =&gt; 128,
    Token           =&gt; Stop'Access);</code></pre></figure>
 
             <h3>Let HTTP/1.1 and HTTP/2 clients discover HTTP/3.</h3>
@@ -204,7 +204,7 @@ Routes.Serve
             <p>The maintained <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http3_application_server.adb"><code>http3_application_server</code></a> loads the PEM, DER, and raw-key representations and runs the unified shape. Its command line is:</p>
             <figure class="code-panel"><figcaption>unified showcase</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>./showcases/bin/http3_application_server \
   TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw 4433</code></pre></figure>
-            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The HTTP/3 profile is deliberately bounded.</strong> It currently buffers each complete request before routing it, serves at most five requests per QUIC connection, uses a static-table QPACK profile, and does not provide HTTP/3 server push or WebSockets. The standard client supports direct and Alt-Svc-discovered HTTP/3 and rotates each pooled QUIC connection after five sequential exchanges.</p></aside>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The HTTP/3 profile is deliberately bounded.</strong> It currently buffers each complete request before routing it, retains 32 streams and serves at most 29 requests per QUIC connection, uses a static-table QPACK profile, and does not provide HTTP/3 server push or WebSockets. The unified server defaults to 128 concurrent H3 connections and accepts an explicit capacity up to 256. The standard client supports direct and Alt-Svc-discovered HTTP/3 and rotates each pooled QUIC connection after 29 sequential exchanges.</p></aside>
 
             <h3>Verify the implemented profile against independent peers.</h3>
             <figure class="code-panel"><figcaption>QUIC and HTTP/3 qualification</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>./scripts/test.sh

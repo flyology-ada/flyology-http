@@ -14,7 +14,7 @@ private package Flyology.QUIC.Stream_Table_Policy
 is
    use type Ada.Streams.Stream_Element_Offset;
 
-   Max_Streams : constant := 8;
+   Max_Streams : constant := 32;
    subtype Stream_Count_Type is Natural range 0 .. Max_Streams;
    subtype Stream_Offset is Stream_Reassembly_Policy.Stream_Offset;
    subtype Stream_Index is Stream_Reassembly_Policy.Stream_Index;

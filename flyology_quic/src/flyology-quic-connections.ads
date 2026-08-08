@@ -19,6 +19,8 @@ package Flyology.QUIC.Connections is
    Max_Output_Datagrams : constant := 20;
    --  Largest stream payload carried by one generated datagram.
    Max_Stream_Payload : constant := 1_100;
+   --  Application streams retained by one bounded QUIC connection.
+   Max_Tracked_Streams : constant Positive := 32;
    --  Largest QUIC connection identifier accepted by version 1.
    Max_Connection_ID_Length : constant := 20;
 
@@ -92,12 +94,12 @@ package Flyology.QUIC.Connections is
    --  @field Max_Streams_Uni Maximum peer-created unidirectional streams
    type Transport_Settings is record
       Max_UDP_Payload_Size        : Stream_Offset := Max_Datagram_Length;
-      Max_Data                    : Stream_Offset := 65_536;
+      Max_Data                    : Stream_Offset := 524_288;
       Max_Stream_Data_Bidi_Local  : Stream_Offset := 16_384;
       Max_Stream_Data_Bidi_Remote : Stream_Offset := 16_384;
       Max_Stream_Data_Uni         : Stream_Offset := 16_384;
-      Max_Streams_Bidi            : Stream_Offset := 8;
-      Max_Streams_Uni             : Stream_Offset := 8;
+      Max_Streams_Bidi            : Stream_Offset := 29;
+      Max_Streams_Uni             : Stream_Offset := 3;
    end record;
 
    --  One UDP payload and the used prefix of its storage.

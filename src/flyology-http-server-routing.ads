@@ -509,14 +509,14 @@ package Flyology.HTTP.Server.Routing is
       Certificate_DER      : Ada.Streams.Stream_Element_Array;
       Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
       TCP_Capacity         : Positive := 64;
-      HTTP_3_Capacity      : Positive := 8;
+      HTTP_3_Capacity      : Positive := 128;
       Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
         (others => <>);
       Timeout              : Duration := 30.0;
       Handshake_Timeout    : Duration := 10.0;
       Max_Connection_Age   : Duration := 300.0;
       TCP_Max_Requests     : Natural := 1_000;
-      HTTP_3_Max_Requests  : Positive := 5;
+      HTTP_3_Max_Requests  : Positive := 29;
       Header_Timeout       : Duration := -1.0;
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
@@ -524,8 +524,8 @@ package Flyology.HTTP.Server.Routing is
       Token                : not null access Flyology.Cancellation.Token)
    with Pre => Endpoint.Port /= Flyology.IO.Sockets.Any_Port
      and then Certificate_DER'Length in 1 .. 4_096
-     and then HTTP_3_Capacity <= 32
-     and then HTTP_3_Max_Requests <= 5
+     and then HTTP_3_Capacity <= 256
+     and then HTTP_3_Max_Requests <= 29
      and then Handshake_Timeout > 0.0
      and then
        (Drain_Timeout = Flyology.IO.Infinite or else Drain_Timeout >= 0.0);
@@ -568,14 +568,14 @@ package Flyology.HTTP.Server.Routing is
       Certificate_DER      : Ada.Streams.Stream_Element_Array;
       Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
       TCP_Capacity         : Positive := 64;
-      HTTP_3_Capacity      : Positive := 8;
+      HTTP_3_Capacity      : Positive := 128;
       Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
         (others => <>);
       Timeout              : Duration := 30.0;
       Handshake_Timeout    : Duration := 10.0;
       Max_Connection_Age   : Duration := 300.0;
       TCP_Max_Requests     : Natural := 1_000;
-      HTTP_3_Max_Requests  : Positive := 5;
+      HTTP_3_Max_Requests  : Positive := 29;
       Header_Timeout       : Duration := -1.0;
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
@@ -587,8 +587,8 @@ package Flyology.HTTP.Server.Routing is
      and then IPv4_Endpoint.Port = IPv6_Endpoint.Port
      and then Certificate_DER'Length in 1 .. 4_096
      and then TCP_Capacity >= 2
-     and then HTTP_3_Capacity in 2 .. 32
-     and then HTTP_3_Max_Requests <= 5
+     and then HTTP_3_Capacity in 2 .. 256
+     and then HTTP_3_Max_Requests <= 29
      and then Handshake_Timeout > 0.0
      and then
        (Drain_Timeout = Flyology.IO.Infinite or else Drain_Timeout >= 0.0);
@@ -620,12 +620,12 @@ package Flyology.HTTP.Server.Routing is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 5;
+      Max_Requests       : Positive := 29;
       Token              : access Flyology.Cancellation.Token := null)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
      and then Handshake_Timeout > 0.0
-     and then Max_Requests <= 5;
+     and then Max_Requests <= 29;
 
    --  Receive and serve one HTTP/3 connection with an application-supplied
    --  server connection identifier. This overload is intended for connection
@@ -654,12 +654,12 @@ package Flyology.HTTP.Server.Routing is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 5;
+      Max_Requests       : Positive := 29;
       Token              : access Flyology.Cancellation.Token := null)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
      and then Handshake_Timeout > 0.0
-     and then Max_Requests <= 5
+     and then Max_Requests <= 29
      and then Source.Length in 1 ..
        Flyology.QUIC.Connections.Max_Connection_ID_Length;
 
@@ -683,19 +683,19 @@ package Flyology.HTTP.Server.Routing is
       Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
       Certificate_DER    : Ada.Streams.Stream_Element_Array;
       Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
-      Capacity           : Positive := 8;
+      Capacity           : Positive := 128;
       Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
         (others => <>);
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 5;
+      Max_Requests       : Positive := 29;
       Token              : not null access Flyology.Cancellation.Token)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
-     and then Capacity <= 32
+     and then Capacity <= 256
      and then Handshake_Timeout > 0.0
-     and then Max_Requests <= 5;
+     and then Max_Requests <= 29;
 
 private
    use Ada.Strings.Unbounded;

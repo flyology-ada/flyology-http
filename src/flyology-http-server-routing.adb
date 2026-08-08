@@ -1392,14 +1392,14 @@ package body Flyology.HTTP.Server.Routing is
       Certificate_DER      : Ada.Streams.Stream_Element_Array;
       Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
       TCP_Capacity         : Positive := 64;
-      HTTP_3_Capacity      : Positive := 8;
+      HTTP_3_Capacity      : Positive := 128;
       Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
         (others => <>);
       Timeout              : Duration := 30.0;
       Handshake_Timeout    : Duration := 10.0;
       Max_Connection_Age   : Duration := 300.0;
       TCP_Max_Requests     : Natural := 1_000;
-      HTTP_3_Max_Requests  : Positive := 5;
+      HTTP_3_Max_Requests  : Positive := 29;
       Header_Timeout       : Duration := -1.0;
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
@@ -1512,7 +1512,7 @@ package body Flyology.HTTP.Server.Routing is
          end if;
       end Close_If_Open;
    begin
-      if HTTP_3_Capacity > 32 then
+      if HTTP_3_Capacity > 256 then
          raise Constraint_Error with
            "HTTP/3 listener capacity exceeds the bounded worker profile";
       elsif HTTP_3_Max_Requests >
@@ -1623,14 +1623,14 @@ package body Flyology.HTTP.Server.Routing is
       Certificate_DER      : Ada.Streams.Stream_Element_Array;
       Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
       TCP_Capacity         : Positive := 64;
-      HTTP_3_Capacity      : Positive := 8;
+      HTTP_3_Capacity      : Positive := 128;
       Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
         (others => <>);
       Timeout              : Duration := 30.0;
       Handshake_Timeout    : Duration := 10.0;
       Max_Connection_Age   : Duration := 300.0;
       TCP_Max_Requests     : Natural := 1_000;
-      HTTP_3_Max_Requests  : Positive := 5;
+      HTTP_3_Max_Requests  : Positive := 29;
       Header_Timeout       : Duration := -1.0;
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
@@ -1779,7 +1779,7 @@ package body Flyology.HTTP.Server.Routing is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 5;
+      Max_Requests       : Positive := 29;
       Token              : access Flyology.Cancellation.Token := null)
    is
    begin
@@ -1802,7 +1802,7 @@ package body Flyology.HTTP.Server.Routing is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 5;
+      Max_Requests       : Positive := 29;
       Token              : access Flyology.Cancellation.Token := null)
    is
       procedure Dispatch_HTTP_3
@@ -1827,13 +1827,13 @@ package body Flyology.HTTP.Server.Routing is
       Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
       Certificate_DER    : Ada.Streams.Stream_Element_Array;
       Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
-      Capacity           : Positive := 8;
+      Capacity           : Positive := 128;
       Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
         (others => <>);
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 5;
+      Max_Requests       : Positive := 29;
       Token              : not null access Flyology.Cancellation.Token)
    is
       procedure Dispatch_HTTP_3

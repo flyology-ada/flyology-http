@@ -19,6 +19,10 @@ is
    is
    begin
       for Index in Stream_Index loop
+         pragma Loop_Invariant
+           (for all Prior in Stream_Index'First .. Index - 1 =>
+              not Item.Streams (Prior).Occupied
+              or else Item.Streams (Prior).ID /= ID);
          if Item.Streams (Index).Occupied
            and then Item.Streams (Index).ID = ID
          then
@@ -37,6 +41,9 @@ is
    is
    begin
       for Index in Stream_Index loop
+         pragma Loop_Invariant
+           (for all Prior in Stream_Index'First .. Index - 1 =>
+              Item.Streams (Prior).Occupied);
          if not Item.Streams (Index).Occupied then
             return Index;
          end if;

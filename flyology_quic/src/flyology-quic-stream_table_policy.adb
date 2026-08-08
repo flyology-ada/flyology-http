@@ -21,6 +21,10 @@ is
    is
    begin
       for Index in Slot_Index loop
+         pragma Loop_Invariant
+           (for all Prior in Slot_Index'First .. Index - 1 =>
+              not Item.Slots (Prior).Occupied
+              or else Item.Slots (Prior).ID /= Stream_ID);
          if Item.Slots (Index).Occupied
            and then Item.Slots (Index).ID = Stream_ID
          then
@@ -39,6 +43,9 @@ is
    is
    begin
       for Index in Slot_Index loop
+         pragma Loop_Invariant
+           (for all Prior in Slot_Index'First .. Index - 1 =>
+              Item.Slots (Prior).Occupied);
          if not Item.Slots (Index).Occupied then
             return Index;
          end if;
@@ -56,6 +63,7 @@ is
       Seen : Stream_Count_Type := 0;
    begin
       for Slot in Slot_Index loop
+         pragma Loop_Invariant (Seen <= Slot - 1);
          if Item.Slots (Slot).Occupied then
             Seen := Seen + 1;
             if Seen = Index then
@@ -298,6 +306,11 @@ is
                  (Item, Frame.Stream_ID, Frame.Stream_Frame.Stream_Offset,
                   Frame.Stream_Frame.Fin,
                   Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+            elsif Frame.Stream_Frame.Data_Length >
+              Stream_Reassembly_Policy.Max_Stream_Data
+            then
+               Result.Status := Stream_Data_Too_Large;
+               return;
             else
                pragma Assert
                  (Frame.Stream_Data_Offset + Frame.Stream_Frame.Data_Length <=

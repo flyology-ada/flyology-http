@@ -13,7 +13,7 @@ with Flyology.QUIC.Connections;
 private package Flyology.HTTP.HTTP_3_Connection is
    package QUIC renames Flyology.QUIC.Connections;
 
-   Max_Streams : constant := 8;
+   Max_Streams : constant := 32;
    Max_Event_Data : constant := 65_535;
 
    type Endpoint_Role is (Client, Server);

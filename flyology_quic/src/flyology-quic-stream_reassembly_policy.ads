@@ -1,19 +1,20 @@
 with Ada.Streams;
-with Flyology.QUIC.Crypto_Reassembly_Policy;
 with Flyology.QUIC.Varint_Policy;
 
 --  Internal, proved bounded reassembly for one QUIC application stream.
 --
---  The byte overlap rules are shared with CRYPTO reassembly. This layer adds
---  STREAM final-size consistency and a consumption cursor so an HTTP/3 parser
---  can advance without discarding out-of-order bytes that follow a gap.
+--  The byte overlap rules match CRYPTO reassembly. This layer uses a smaller
+--  application-stream buffer and adds STREAM final-size consistency plus a
+--  consumption cursor so an HTTP/3 parser can advance across received data.
 private package Flyology.QUIC.Stream_Reassembly_Policy
   with Preelaborate,
        SPARK_Mode => On
 is
    use type Ada.Streams.Stream_Element_Offset;
 
-   Max_Stream_Data : constant := Crypto_Reassembly_Policy.Max_Crypto_Data;
+   --  Match the default per-stream transport credit without making every
+   --  tracked application stream carry the larger TLS CRYPTO buffer.
+   Max_Stream_Data : constant := 16_384;
 
    subtype Stream_Offset is
      Ada.Streams.Stream_Element_Offset range 0 .. Max_Stream_Data;
@@ -89,17 +90,22 @@ is
        and then Contiguous_Length (Item) = Contiguous_Length (Item'Old)
        and then Highest_Offset (Item) = Highest_Offset (Item'Old);
 private
+   type Byte_Buffer is array (Stream_Index) of Ada.Streams.Stream_Element;
+   type Presence_Map is array (Stream_Index) of Boolean;
+
    type Reassembly_State is record
-      Core        : Crypto_Reassembly_Policy.Reassembly_State;
+      Bytes       : Byte_Buffer := (others => 0);
+      Present     : Presence_Map := (others => False);
+      Contiguous  : Stream_Offset := 0;
+      Highest     : Stream_Offset := 0;
       Delivered   : Stream_Offset := 0;
       Final_Known : Boolean := False;
       Final       : Stream_Offset := 0;
    end record
    with Type_Invariant =>
-     Reassembly_State.Delivered <=
-       Crypto_Reassembly_Policy.Contiguous_Length (Reassembly_State.Core)
+     Reassembly_State.Delivered <= Reassembly_State.Contiguous
+     and then Reassembly_State.Contiguous <= Reassembly_State.Highest
      and then
        (if Reassembly_State.Final_Known then
-           Crypto_Reassembly_Policy.Highest_Offset (Reassembly_State.Core) <=
-             Reassembly_State.Final);
+           Reassembly_State.Highest <= Reassembly_State.Final);
 end Flyology.QUIC.Stream_Reassembly_Policy;

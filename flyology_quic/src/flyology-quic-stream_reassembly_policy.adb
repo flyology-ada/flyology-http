@@ -1,15 +1,15 @@
 package body Flyology.QUIC.Stream_Reassembly_Policy
   with SPARK_Mode => On
 is
+   use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
-   use type Crypto_Reassembly_Policy.Insert_Status;
    use type Varint_Policy.Value_Type;
 
    function Contiguous_Length (Item : Reassembly_State) return Stream_Offset is
-     (Crypto_Reassembly_Policy.Contiguous_Length (Item.Core));
+     (Item.Contiguous);
 
    function Highest_Offset (Item : Reassembly_State) return Stream_Offset is
-     (Crypto_Reassembly_Policy.Highest_Offset (Item.Core));
+     (Item.Highest);
 
    function Available_Length (Item : Reassembly_State) return Stream_Offset is
      (Contiguous_Length (Item) - Item.Delivered);
@@ -27,16 +27,18 @@ is
      (Item   : Reassembly_State;
       Offset : Stream_Index) return Ada.Streams.Stream_Element
    is
-     (Crypto_Reassembly_Policy.Element
-        (Item.Core, Crypto_Reassembly_Policy.Stream_Index
-           (Item.Delivered + Offset)));
+     (Item.Bytes (Stream_Index (Item.Delivered + Offset)));
 
    procedure Reset (Item : out Reassembly_State) is
    begin
-      Crypto_Reassembly_Policy.Reset (Item.Core);
-      Item.Delivered := 0;
-      Item.Final_Known := False;
-      Item.Final := 0;
+      Item :=
+        (Bytes       => (others => 0),
+         Present     => (others => False),
+         Contiguous  => 0,
+         Highest     => 0,
+         Delivered   => 0,
+         Final_Known => False,
+         Final       => 0);
    end Reset;
 
    procedure Insert
@@ -49,8 +51,10 @@ is
       Start       : Stream_Offset;
       Ending      : Stream_Offset;
       Data_Length : constant Stream_Offset := Stream_Offset (Data'Length);
-      Core_Status : Crypto_Reassembly_Policy.Insert_Status;
       New_Final   : Boolean := False;
+      Relative    : Stream_Offset := 0;
+      Added       : Boolean := False;
+      Initial_Contiguous : constant Stream_Offset := Item.Contiguous;
    begin
       Status := Exceeds_Capacity;
       if Wire_Offset > Varint_Policy.Value_Type (Max_Stream_Data) then
@@ -75,24 +79,62 @@ is
          New_Final := True;
       end if;
 
-      Crypto_Reassembly_Policy.Insert
-        (Item.Core, Wire_Offset, Data, Core_Status);
-      case Core_Status is
-         when Crypto_Reassembly_Policy.Conflicting_Overlap =>
-            Status := Conflicting_Overlap;
-            return;
-         when Crypto_Reassembly_Policy.Exceeds_Capacity =>
-            Status := Exceeds_Capacity;
-            return;
-         when Crypto_Reassembly_Policy.Accepted | Crypto_Reassembly_Policy.Duplicate =>
-            null;
-      end case;
+      --  Validate every overlap before mutation so conflicting retransmission
+      --  cannot leave a partially inserted stream frame behind.
+      while Relative < Data_Length loop
+         pragma Loop_Invariant (Relative <= Data_Length);
+         pragma Loop_Variant (Decreases => Data_Length - Relative);
+         declare
+            Target : constant Stream_Index := Stream_Index (Start + Relative);
+            Source : constant Ada.Streams.Stream_Element_Offset :=
+              Data'First + Relative;
+         begin
+            if Item.Present (Target)
+              and then Item.Bytes (Target) /= Data (Source)
+            then
+               Status := Conflicting_Overlap;
+               return;
+            end if;
+         end;
+         Relative := Relative + 1;
+      end loop;
+
+      Relative := 0;
+      while Relative < Data_Length loop
+         pragma Loop_Invariant (Relative <= Data_Length);
+         pragma Loop_Variant (Decreases => Data_Length - Relative);
+         declare
+            Target : constant Stream_Index := Stream_Index (Start + Relative);
+            Source : constant Ada.Streams.Stream_Element_Offset :=
+              Data'First + Relative;
+         begin
+            if not Item.Present (Target) then
+               Item.Bytes (Target) := Data (Source);
+               Item.Present (Target) := True;
+               Added := True;
+            end if;
+         end;
+         Relative := Relative + 1;
+      end loop;
+
+      if Ending > Item.Highest then
+         Item.Highest := Ending;
+      end if;
+      while Item.Contiguous < Item.Highest
+        and then Item.Present (Stream_Index (Item.Contiguous))
+      loop
+         pragma Loop_Invariant (Item.Contiguous <= Item.Highest);
+         pragma Loop_Invariant (Item.Contiguous >= Initial_Contiguous);
+         pragma Loop_Variant (Decreases => Item.Highest - Item.Contiguous);
+         Item.Contiguous := Item.Contiguous + 1;
+      end loop;
+      pragma Assert (Item.Contiguous >= Initial_Contiguous);
 
       if New_Final then
          Item.Final := Ending;
          Item.Final_Known := True;
       end if;
-      if Core_Status = Crypto_Reassembly_Policy.Accepted or else New_Final then
+      if Added or else New_Final then
          Status := Accepted;
       else
          Status := Duplicate;

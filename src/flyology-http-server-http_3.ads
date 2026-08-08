@@ -17,9 +17,14 @@ generic
       X       : in out Flyology.HTTP.Server.Applications.Exchange);
 package Flyology.HTTP.Server.HTTP_3 is
 
+   --  Default listener capacity for the task-per-connection profile.
+   Default_Connection_Capacity : constant Positive := 128;
+   --  Largest accepted listener capacity for the task-per-connection profile.
+   Maximum_Connection_Capacity : constant Positive := 256;
+
    --  Conservative request count available after the peer's mandatory HTTP/3
-   --  unidirectional streams occupy the current bounded QUIC stream table.
-   Maximum_Requests_Per_Connection : constant Positive := 5;
+   --  unidirectional streams occupy the bounded 32-stream QUIC table.
+   Maximum_Requests_Per_Connection : constant Positive := 29;
 
    --  Run a bounded multi-connection HTTP/3 listener on an unconnected bound
    --  UDP socket. One receiver dispatches datagrams by connection identifier
@@ -42,7 +47,7 @@ package Flyology.HTTP.Server.HTTP_3 is
       Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
       Certificate_DER    : Ada.Streams.Stream_Element_Array;
       Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
-      Capacity           : Positive := 8;
+      Capacity           : Positive := Default_Connection_Capacity;
       Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
         (others => <>);
       Timeout            : Duration := 30.0;
@@ -52,7 +57,7 @@ package Flyology.HTTP.Server.HTTP_3 is
       Token              : not null access Flyology.Cancellation.Token)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
-     and then Capacity <= 32
+     and then Capacity <= Maximum_Connection_Capacity
      and then Handshake_Timeout > 0.0
      and then Max_Requests <= Maximum_Requests_Per_Connection;
 

@@ -1477,7 +1477,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Socket             : aliased in out Sockets.Socket_Type;
       Certificate_DER    : Stream_Element_Array;
       Private_Key        : QUIC.Ed25519_Private_Key;
-      Capacity           : Positive := 8;
+      Capacity           : Positive := Default_Connection_Capacity;
       Transport_Settings : QUIC.Transport_Settings := (others => <>);
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
@@ -1495,7 +1495,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       task type Worker is
          entry Start (Index : Slot_Index);
       end Worker;
-      for Worker'Storage_Size use 16 * 1_024 * 1_024;
+      for Worker'Storage_Size use 4 * 1_024 * 1_024;
 
       task body Worker is
          Slot    : Slot_Index := Slot_Index'First;
@@ -1537,7 +1537,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
          end loop;
       end Close_Inboxes;
    begin
-      if Capacity > 32 then
+      if Capacity > Maximum_Connection_Capacity then
          raise Constraint_Error with
            "HTTP/3 listener capacity exceeds the bounded worker profile";
       elsif Max_Requests > Maximum_Requests_Per_Connection then
