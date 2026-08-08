@@ -59,7 +59,8 @@ package Flyology.HTTP.Client is
    --  Pool reuse and retention policy. Capacity remains the Client
    --  discriminant and bounds open plus connecting slots.
    --  @field Max_Idle Maximum reusable connections retained, capped by client
-   --     capacity; zero disables reuse without disabling concurrent requests
+   --     capacity; zero disables reuse without disabling concurrent requests.
+   --     Use at least two to keep both TCP and QUIC warm in Negotiate_HTTP_3
    --  @field Idle_Timeout Seconds an unused connection may remain reusable;
    --     negative disables the age check
    --  @field Max_Connection_Age Total reusable lifetime in seconds; negative
@@ -85,7 +86,8 @@ package Flyology.HTTP.Client is
    --  @enum Require_HTTP_2 Require h2 negotiation over TLS
    --  @enum HTTP_2_Prior_Knowledge Start HTTP/2 directly on cleartext HTTP
    --  @enum Negotiate_HTTP_3 Start with TLS HTTP/2 or HTTP/1.1, learn a
-   --     same-origin h3 UDP port from Alt-Svc, and prefer HTTP/3 afterward
+   --     same-origin h3 UDP port from Alt-Svc, and prefer HTTP/3 while
+   --     retaining TCP for concurrent work and fallback
    --  @enum Require_HTTP_3 Use HTTP/3 directly on the HTTPS origin's UDP port
    type Protocol_Mode is
      (HTTP_1_Only,
@@ -101,11 +103,14 @@ package Flyology.HTTP.Client is
    --  refuse loopback, link-local, or private destinations that a name
    --  resolves to. Returning False skips that address and the client tries the
    --  next one; refusing every resolved address raises Connection_Error and
-   --  opens no socket. The default is no filter, which retains the existing
-   --  behavior of connecting to the first address that accepts. The filter
-   --  runs on the requesting task inside the exchange deadline and must not
-   --  block. Only the initial connect is filtered; this client is bound to one
-   --  origin and never follows a redirect that leaves it.
+   --  opens no socket. Permitted IPv4 and IPv6 addresses are established in
+   --  two bounded concurrent lanes; the first complete TCP connect or QUIC
+   --  handshake wins and interrupts the other lane. Each lane tries further
+   --  addresses of its family after an immediate failure. The filter runs
+   --  serially on the requesting task before either lane starts, inside the
+   --  exchange deadline, and must not block. Only the initial connect is
+   --  filtered; this client is bound to one origin and never follows a
+   --  redirect that leaves it.
    --  @param Host Configured origin host
    --  @param Address Canonical numeric text of one resolved address
    --  @param Port Origin port the client would connect to
@@ -389,10 +394,12 @@ package Flyology.HTTP.Client is
 
    --  Bind an HTTPS client with HTTP/3 authentication and TCP fallback.
    --  Negotiate_HTTP_3 begins with ALPN h2/http/1.1 and accepts only a
-   --  same-origin Alt-Svc h3=":port" alternative. A failed H3 establishment
-   --  is forgotten and retried once through TCP inside the original exchange
-   --  deadline. Require_HTTP_3 is also accepted and does not use the retained
-   --  TCP provider.
+   --  same-origin Alt-Svc h3=":port" alternative. The pool retains healthy
+   --  TCP and QUIC transports together: H3 is preferred when available, while
+   --  a concurrent exchange can use TCP when the H3 lane is busy or still
+   --  connecting. A failed H3 establishment is forgotten and retried once
+   --  through TCP inside the original exchange deadline. Require_HTTP_3 is
+   --  also accepted and does not use the retained TCP provider.
    --  @param Item Unconfigured client
    --  @param Origin_Value Normalized HTTPS origin
    --  @param Backend Initialized ALPN-capable TLS provider retained by Item

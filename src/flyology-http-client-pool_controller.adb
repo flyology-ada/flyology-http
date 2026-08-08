@@ -34,43 +34,69 @@ protected body Pool_Controller is
 
       procedure Try_Checkout
         (Now        : Ada.Real_Time.Time;
+         Prefer_HTTP_3 : Boolean;
+         Allow_TCP_Fallback : Boolean;
          Result     : out Checkout_Result;
          Slot_Index : out Natural;
          Connection : out Pooled_Connection_Access;
          Verify     : out Boolean)
       is
          Available_After : Boolean := False;
-      begin
-         Slot_Index := 0;
-         Connection := null;
-         Verify := False;
-         if Stopping then
-            Result := Checkout_Closed;
-            return;
-         end if;
 
-         for Index in Slots'Range loop
-            if Slots (Index).Phase = Shared
-              and then Has_Capacity (Slots (Index))
-            then
-               declare
-                  Idle_Age : constant Duration := Ada.Real_Time.To_Duration
-                    (Now - Slots (Index).Last_Used);
-                  Total_Age : constant Duration := Ada.Real_Time.To_Duration
-                    (Now - Slots (Index).Born);
-                  Expired : constant Boolean :=
-                    (Slots (Index).Active_Streams = 0
-                       and then Policy.Idle_Timeout >= 0.0
-                       and then Idle_Age >= Policy.Idle_Timeout)
-                    or else
-                    (Policy.Max_Connection_Age >= 0.0
-                       and then Total_Age >= Policy.Max_Connection_Age)
-                    or else
-                    (Policy.Max_Requests_Per_Connection > 0
-                       and then Slots (Index).Request_Count >=
-                         Policy.Max_Requests_Per_Connection);
-               begin
-                  if Expired then
+         function Is_HTTP_3 (Item : Slot) return Boolean is
+           (Item.Connection /= null
+              and then Item.Connection.Protocol = HTTP_3_Transport);
+
+         function Matches
+           (Item : Slot; Want_HTTP_3 : Boolean) return Boolean is
+           (Item.Connection /= null
+              and then Is_HTTP_3 (Item) = Want_HTTP_3);
+
+         function Expired (Item : Slot) return Boolean is
+            Idle_Age : constant Duration := Ada.Real_Time.To_Duration
+              (Now - Item.Last_Used);
+            Total_Age : constant Duration := Ada.Real_Time.To_Duration
+              (Now - Item.Born);
+         begin
+            return
+              (Item.Active_Streams = 0
+                 and then Policy.Idle_Timeout >= 0.0
+                 and then Idle_Age >= Policy.Idle_Timeout)
+              or else
+              (Policy.Max_Connection_Age >= 0.0
+                 and then Total_Age >= Policy.Max_Connection_Age)
+              or else
+              (Policy.Max_Requests_Per_Connection > 0
+                 and then Item.Request_Count >=
+                   Policy.Max_Requests_Per_Connection);
+         end Expired;
+
+         function Desired_Exists return Boolean is
+         begin
+            for Item of Slots loop
+               if (Item.Phase = Connecting
+                     and then Item.Connecting_HTTP_3 = Prefer_HTTP_3)
+                 or else
+                   (Item.Phase in Leased | Idle | Shared
+                      and then Matches (Item, Prefer_HTTP_3))
+               then
+                  return True;
+               end if;
+            end loop;
+            return False;
+         end Desired_Exists;
+
+         procedure Select_Shared_TCP (Permit : Boolean) is
+         begin
+            if not Permit then
+               return;
+            end if;
+            for Index in Slots'Range loop
+               if Slots (Index).Phase = Shared
+                 and then Matches (Slots (Index), Want_HTTP_3 => False)
+                 and then Has_Capacity (Slots (Index))
+               then
+                  if Expired (Slots (Index)) then
                      Shared_Count := Shared_Count - 1;
                      if Slots (Index).Active_Streams = 0 then
                         Idle_Count := Idle_Count - 1;
@@ -79,7 +105,7 @@ protected body Pool_Controller is
                         Slot_Index := Index;
                         Connection := Slots (Index).Connection;
                         Result := Checkout_Discard;
-                        exit;
+                        return;
                      else
                         Slots (Index).Phase := Draining;
                      end if;
@@ -96,35 +122,26 @@ protected body Pool_Controller is
                      Slot_Index := Index;
                      Connection := Slots (Index).Connection;
                      Result := Checkout_Idle;
-                     exit;
+                     return;
                   end if;
-               end;
-            end if;
-         end loop;
+               end if;
+            end loop;
+         end Select_Shared_TCP;
 
-         for Index in Slots'Range loop
-            exit when Slot_Index /= 0;
-            if Slots (Index).Phase = Idle then
-               declare
-                  Idle_Age : constant Duration := Ada.Real_Time.To_Duration
-                    (Now - Slots (Index).Last_Used);
-                  Total_Age : constant Duration := Ada.Real_Time.To_Duration
-                    (Now - Slots (Index).Born);
-                  Expired : constant Boolean :=
-                    (Policy.Idle_Timeout >= 0.0
-                       and then Idle_Age >= Policy.Idle_Timeout)
-                    or else
-                    (Policy.Max_Connection_Age >= 0.0
-                       and then Total_Age >= Policy.Max_Connection_Age)
-                    or else
-                    (Policy.Max_Requests_Per_Connection > 0
-                       and then Slots (Index).Request_Count >=
-                         Policy.Max_Requests_Per_Connection);
-               begin
+         procedure Select_Idle
+           (Want_HTTP_3 : Boolean; Permit : Boolean) is
+         begin
+            if not Permit then
+               return;
+            end if;
+            for Index in Slots'Range loop
+               if Slots (Index).Phase = Idle
+                 and then Matches (Slots (Index), Want_HTTP_3)
+               then
                   Slot_Index := Index;
                   Connection := Slots (Index).Connection;
                   Idle_Count := Idle_Count - 1;
-                  if Expired then
+                  if Expired (Slots (Index)) then
                      Slots (Index).Phase := Closing;
                      Closing_Count := Closing_Count + 1;
                      Result := Checkout_Discard;
@@ -138,21 +155,82 @@ protected body Pool_Controller is
                      Slots (Index).Verify_On_Reuse := False;
                      Result := Checkout_Idle;
                   end if;
-                  exit;
-               end;
+                  return;
+               end if;
+            end loop;
+         end Select_Idle;
+
+         procedure Discard_Incompatible_Idle is
+         begin
+            for Index in Slots'Range loop
+               if Slots (Index).Connection /= null
+                 and then not Matches (Slots (Index), Prefer_HTTP_3)
+                 and then
+                   (Slots (Index).Phase = Idle
+                      or else
+                    (Slots (Index).Phase = Shared
+                       and then Slots (Index).Active_Streams = 0))
+               then
+                  if Slots (Index).Phase = Shared then
+                     Shared_Count := Shared_Count - 1;
+                  end if;
+                  Idle_Count := Idle_Count - 1;
+                  Slots (Index).Phase := Closing;
+                  Closing_Count := Closing_Count + 1;
+                  Slot_Index := Index;
+                  Connection := Slots (Index).Connection;
+                  Result := Checkout_Discard;
+                  return;
+               end if;
+            end loop;
+         end Discard_Incompatible_Idle;
+      begin
+         Slot_Index := 0;
+         Connection := null;
+         Verify := False;
+         if Stopping then
+            Result := Checkout_Closed;
+            return;
+         end if;
+
+         Select_Shared_TCP (Permit => not Prefer_HTTP_3);
+         if Slot_Index = 0 then
+            Select_Idle (Prefer_HTTP_3, Permit => True);
+         end if;
+
+         --  Once the preferred H3 lane exists but is busy or connecting, a
+         --  negotiated client can immediately use retained TCP capacity.
+         --  This keeps H1/H2 and H3 available at the same time without
+         --  duplicating one application request across transports.
+         if Slot_Index = 0
+           and then Prefer_HTTP_3
+           and then Allow_TCP_Fallback
+           and then Desired_Exists
+         then
+            Select_Shared_TCP (Permit => True);
+            if Slot_Index = 0 then
+               Select_Idle (Want_HTTP_3 => False, Permit => True);
             end if;
-         end loop;
+         end if;
 
          if Slot_Index = 0 then
             for Index in Slots'Range loop
                if Slots (Index).Phase = Empty then
                   Slots (Index).Phase := Connecting;
+                  Slots (Index).Connecting_HTTP_3 := Prefer_HTTP_3;
                   Connecting_Count := Connecting_Count + 1;
                   Slot_Index := Index;
                   Result := Checkout_Create;
                   exit;
                end if;
             end loop;
+         end if;
+
+         --  A capacity-one pool cannot retain both stacks. Replace only an
+         --  idle incompatible transport so the explicitly preferred stack
+         --  can still make progress; active exchanges are never displaced.
+         if Slot_Index = 0 then
+            Discard_Incompatible_Idle;
          end if;
 
          if Slot_Index = 0 then
@@ -203,7 +281,8 @@ protected body Pool_Controller is
             Interrupting  => False,
             Interrupt_Sent => False,
             Owner_Done    => False,
-            Verify_On_Reuse => False);
+            Verify_On_Reuse => False,
+            Connecting_HTTP_3 => False);
          Connecting_Count := Connecting_Count - 1;
          Leased_Count := Leased_Count + 1;
          if Connection.Protocol = HTTP_2_Transport then

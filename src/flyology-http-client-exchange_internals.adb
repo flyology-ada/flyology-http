@@ -85,16 +85,12 @@ package body Exchange_Internals is
       Timeout    : Duration;
       Token      : access Flyology.Cancellation.Token)
    is
-      Socket    : Sockets.Socket_Type;
-      Connected : Boolean := False;
-      --  Whether the connect policy refused an address, and whether any
-      --  address survived it far enough to open a socket.
-      Refused   : Boolean := False;
-      Attempted : Boolean := False;
-      Last_Error : Unbounded_String;
+      Socket       : Sockets.Socket_Type;
+      Connected    : Boolean := False;
+      Refused      : Boolean := False;
+      Attempted    : Boolean := False;
+      Last_Error   : Unbounded_String;
       Last_Address : Unbounded_String;
-      Family_Known : Boolean := False;
-      Preferred_Family : Sockets.Address_Family := Sockets.IPv4;
 
       procedure Cleanup is
       begin
@@ -124,10 +120,6 @@ package body Exchange_Internals is
          end if;
       end Cleanup;
    begin
-      if Use_HTTP_3 then
-         State.Successful_Address.Current
-           (Family_Known, Preferred_Family);
-      end if;
       declare
          Sources : Flyology.IO.Interrupt_Set (1 .. 2);
          Count   : Natural;
@@ -143,92 +135,279 @@ package body Exchange_Internals is
                 (Host (State.Origin_Value),
                  Timeout => Remaining (Started, Timeout),
                  Interrupts => Sources (1 .. Count));
+            type Allowed_Array is array (Addresses'Range) of Boolean;
+            Allowed : Allowed_Array := (others => False);
          begin
-            for Address of Addresses loop
-               --  The application sees every resolved address before a
-               --  socket exists for it, which is the only point at which a
-               --  name that resolves to a private destination can be
-               --  refused.
-               if Use_HTTP_3 and then Family_Known
-                 and then Address.Family /= Preferred_Family
-               then
-                  null;
-               elsif State.Connect_Policy = null
+            --  The application filter remains serialized on the requesting
+            --  task even though the permitted endpoints are connected by two
+            --  concurrent address-family lanes below.
+            for Index in Addresses'Range loop
+               if State.Connect_Policy = null
                  or else State.Connect_Policy.all
                    (Host (State.Origin_Value),
-                    Sockets.Image (Address),
+                    Sockets.Image (Addresses (Index)),
                     Target_Port)
                then
-                  begin
-                     Attempted := True;
-                     Last_Address := To_Unbounded_String
-                       (Sockets.Image (Address));
-                     Sockets.Create_Socket
-                       (Socket, Address.Family,
-                        (if Use_HTTP_3 then Sockets.Socket_Datagram
-                         else Sockets.Socket_Stream));
-#if FLYOLOGY_CONNECTION_TEST_HOOKS then
-                     Test_Barrier (16);
-#end if;
-                     Interrupt_Sources (State, Token, Sources, Count);
-                     Check_Deadline (Started, Timeout);
-                     if Use_HTTP_3 then
-                        Sockets.Prepare (Socket);
-                        Sockets.Connect_Socket
-                          (Socket,
-                           Sockets.Network_Endpoint
-                             (Address, Sockets.Port (Target_Port)));
-                        Connection := new Pooled_Connection;
-                        Sockets.Move (Socket, Connection.UDP);
-                        Start_Connection
-                          (State, Connection, Started, Timeout, Token);
-                     else
-                        Sockets.Connect
-                          (Socket,
-                           Sockets.Network_Endpoint
-                             (Address, Sockets.Port (Target_Port)),
-                           Remaining (Started, Timeout),
-                           Sources (1 .. Count));
-                        State.Successful_Address.Remember (Address.Family);
-                     end if;
-                     Connected := True;
-                  exception
-                     when Sockets.Operation_Interrupted =>
-                        if Connection /= null then
-                           Dispose_Connection (Connection);
+                  Allowed (Index) := True;
+                  Attempted := True;
+               else
+                  Refused := True;
+               end if;
+            end loop;
+
+            if Attempted then
+               declare
+                  type Socket_Array is array (Sockets.Address_Family) of
+                    Sockets.Socket_Type;
+                  type Connection_Array is array (Sockets.Address_Family) of
+                    Pooled_Connection_Access;
+
+                  Family_Sockets : Socket_Array;
+                  Family_Connections : Connection_Array := (others => null);
+                  Race_Stop : aliased Flyology.Cancellation.Token;
+                  Winning_Family : Sockets.Address_Family := Sockets.IPv4;
+                  Race_Succeeded : Boolean := False;
+
+                  protected Race is
+                     procedure Choose
+                       (Family : Sockets.Address_Family;
+                        Selected : out Boolean);
+                     procedure Finish
+                       (Address : Unbounded_String;
+                        Error   : Unbounded_String);
+                     entry Wait
+                       (Family : out Sockets.Address_Family;
+                        Succeeded : out Boolean);
+                     procedure Failure
+                       (Address : out Unbounded_String;
+                        Error   : out Unbounded_String);
+                  private
+                     Winner       : Natural := 0;
+                     Finished     : Natural := 0;
+                     Failed_At    : Unbounded_String;
+                     Failed_With  : Unbounded_String;
+                  end Race;
+
+                  protected body Race is
+                     procedure Choose
+                       (Family : Sockets.Address_Family;
+                        Selected : out Boolean) is
+                     begin
+                        Selected := Winner = 0;
+                        if Selected then
+                           Winner :=
+                             Sockets.Address_Family'Pos (Family) + 1;
                         end if;
-                        if Sockets.Is_Open (Socket) then
-                           Sockets.Close_Socket (Socket);
+                     end Choose;
+
+                     procedure Finish
+                       (Address : Unbounded_String;
+                        Error   : Unbounded_String) is
+                     begin
+                        Finished := Finished + 1;
+                        if Length (Error) > 0 then
+                           Failed_At := Address;
+                           Failed_With := Error;
                         end if;
-                        Translate_Interruption (State, Token);
-                     when Flyology.IO.Timeout_Error =>
-                        if Connection /= null then
-                           Dispose_Connection (Connection);
+                     end Finish;
+
+                     entry Wait
+                       (Family : out Sockets.Address_Family;
+                        Succeeded : out Boolean)
+                       when Winner /= 0 or else Finished = 2
+                     is
+                     begin
+                        Succeeded := Winner /= 0;
+                        if Succeeded then
+                           Family := Sockets.Address_Family'Val (Winner - 1);
+                        else
+                           Family := Sockets.IPv4;
                         end if;
-                        if Sockets.Is_Open (Socket) then
-                           Sockets.Close_Socket (Socket);
+                     end Wait;
+
+                     procedure Failure
+                       (Address : out Unbounded_String;
+                        Error   : out Unbounded_String) is
+                     begin
+                        Address := Failed_At;
+                        Error := Failed_With;
+                     end Failure;
+                  end Race;
+
+                  task type Connector
+                    (Family : Sockets.Address_Family);
+
+                  task body Connector is
+                     Candidate     : Pooled_Connection_Access := null;
+                     Candidate_Socket : Sockets.Socket_Type;
+                     Selected      : Boolean := False;
+                     Lane_Address  : Unbounded_String;
+                     Lane_Error    : Unbounded_String;
+
+                     procedure Close_Candidate is
+                     begin
+                        if Candidate /= null then
+                           Dispose_Connection (Candidate);
                         end if;
-                        raise;
-                     when Error : Sockets.Socket_Error |
-                          Flyology.IO.Device_Error | Protocol_Error =>
-                        Last_Error := To_Unbounded_String
-                          (Ada.Exceptions.Exception_Message (Error));
-                        if Connection /= null then
-                           Dispose_Connection (Connection);
-                        end if;
-                        if Sockets.Is_Open (Socket) then
+                        if Sockets.Is_Open (Candidate_Socket) then
                            begin
-                              Sockets.Close_Socket (Socket);
+                              Sockets.Close_Socket (Candidate_Socket);
                            exception
                               when others => null;
                            end;
                         end if;
-                  end;
-               else
-                  Refused := True;
-               end if;
-               exit when Connected;
-            end loop;
+                     end Close_Candidate;
+                  begin
+                     for Index in Addresses'Range loop
+                        if Allowed (Index)
+                          and then Addresses (Index).Family = Family
+                        then
+                           Lane_Address := To_Unbounded_String
+                             (Sockets.Image (Addresses (Index)));
+                           begin
+                              Check_Deadline (Started, Timeout);
+                              Sockets.Create_Socket
+                                (Candidate_Socket, Family,
+                                 (if Use_HTTP_3
+                                  then Sockets.Socket_Datagram
+                                  else Sockets.Socket_Stream));
+#if FLYOLOGY_CONNECTION_TEST_HOOKS then
+                              Test_Barrier (16);
+#end if;
+                              --  A test hook, scheduler handoff, or slow
+                              --  socket creation can consume the budget.
+                              --  Do not start a connect after that point.
+                              Check_Deadline (Started, Timeout);
+                              if Race_Stop.Requested then
+                                 raise Connection_Race_Lost;
+                              end if;
+                              if Use_HTTP_3 then
+                                 Sockets.Prepare (Candidate_Socket);
+                                 Sockets.Connect_Socket
+                                   (Candidate_Socket,
+                                    Sockets.Network_Endpoint
+                                      (Addresses (Index),
+                                       Sockets.Port (Target_Port)));
+                                 Candidate := new Pooled_Connection;
+                                 Sockets.Move
+                                   (Candidate_Socket, Candidate.UDP);
+                                 Start_Connection
+                                   (State, Candidate, Started, Timeout, Token,
+                                    Race_Stop'Access);
+                              else
+                                 declare
+                                    Connect_Sources :
+                                      Flyology.IO.Interrupt_Set (1 .. 3);
+                                    Connect_Count : Natural;
+                                    FD : Flyology.IO.Descriptor;
+                                    Requested : Boolean;
+                                 begin
+                                    Interrupt_Sources
+                                      (State, Token, Connect_Sources,
+                                       Connect_Count);
+                                    Race_Stop.Wait_Source (FD, Requested);
+                                    if Requested then
+                                       raise Connection_Race_Lost;
+                                    end if;
+                                    Connect_Count := Connect_Count + 1;
+                                    Connect_Sources (Connect_Count) := FD;
+                                    Sockets.Connect
+                                      (Candidate_Socket,
+                                       Sockets.Network_Endpoint
+                                         (Addresses (Index),
+                                          Sockets.Port (Target_Port)),
+                                       Remaining (Started, Timeout),
+                                       Connect_Sources (1 .. Connect_Count));
+                                 end;
+                              end if;
+
+                              if Use_HTTP_3 then
+                                 Family_Connections (Family) := Candidate;
+                                 Candidate := null;
+                              else
+                                 Sockets.Move
+                                   (Candidate_Socket,
+                                    Family_Sockets (Family));
+                              end if;
+                              Race.Choose (Family, Selected);
+                              if Selected then
+                                 begin
+                                    Race_Stop.Request;
+                                 exception
+                                    when others => null;
+                                 end;
+                                 exit;
+                              end if;
+                              if Use_HTTP_3 then
+                                 Dispose_Connection
+                                   (Family_Connections (Family));
+                              elsif Sockets.Is_Open
+                                (Family_Sockets (Family))
+                              then
+                                 Sockets.Close_Socket
+                                   (Family_Sockets (Family));
+                              end if;
+                              exit;
+                           exception
+                              when Connection_Race_Lost =>
+                                 Close_Candidate;
+                                 exit;
+                              when Sockets.Operation_Interrupted =>
+                                 Close_Candidate;
+                                 if Race_Stop.Requested then
+                                    exit;
+                                 end if;
+                                 Lane_Error := To_Unbounded_String
+                                   ("connection attempt interrupted");
+                                 exit;
+                              when Error : Flyology.IO.Timeout_Error |
+                                   Client_Closed |
+                                   Flyology.Cancellation.Operation_Cancelled =>
+                                 Lane_Error := To_Unbounded_String
+                                   (Ada.Exceptions.Exception_Message (Error));
+                                 Close_Candidate;
+                                 exit;
+                              when Error : Sockets.Socket_Error |
+                                   Flyology.IO.Device_Error | Protocol_Error =>
+                                 Lane_Error := To_Unbounded_String
+                                   (Ada.Exceptions.Exception_Message (Error));
+                                 Close_Candidate;
+                           end;
+                        end if;
+                     end loop;
+                     Race.Finish (Lane_Address, Lane_Error);
+                  exception
+                     when Error : others =>
+                        Close_Candidate;
+                        Race.Finish
+                          (Lane_Address,
+                           To_Unbounded_String
+                             (Ada.Exceptions.Exception_Message (Error)));
+                  end Connector;
+
+                  IPv4_Connector : Connector (Sockets.IPv4);
+                  IPv6_Connector : Connector (Sockets.IPv6);
+               begin
+                  Race.Wait (Winning_Family, Race_Succeeded);
+                  if Race_Succeeded then
+                     Connected := True;
+                     if Use_HTTP_3 then
+                        Connection := Family_Connections (Winning_Family);
+                        Family_Connections (Winning_Family) := null;
+                     else
+                        Sockets.Move
+                          (Family_Sockets (Winning_Family), Socket);
+                     end if;
+                  else
+                     Race.Failure (Last_Address, Last_Error);
+                     --  Preserve terminal cancellation and deadline outcomes
+                     --  observed by the connector tasks instead of flattening
+                     --  them into address exhaustion.
+                     Interrupt_Sources (State, Token, Sources, Count);
+                     Check_Deadline (Started, Timeout);
+                  end if;
+               end;
+            end if;
          end;
       end;
 
@@ -448,15 +627,25 @@ package body Exchange_Internals is
       end if;
       loop
          Item.Control.State.Pool.Try_Checkout
-           (Ada.Real_Time.Clock, Result, Index, Value, Verify);
+           (Now                => Ada.Real_Time.Clock,
+            Prefer_HTTP_3      => Use_HTTP_3,
+            Allow_TCP_Fallback =>
+              Use_HTTP_3
+                and then Item.Control.State.Protocol_Policy =
+                  Negotiate_HTTP_3,
+            Result             => Result,
+            Slot_Index         => Index,
+            Connection         => Value,
+            Verify             => Verify);
          case Result is
             when Checkout_Idle =>
-               if Value.Protocol /= HTTP_2_Transport
-                 and then
-                   ((Use_HTTP_3 and then Value.Protocol /= HTTP_3_Transport)
-                    or else
-                      (not Use_HTTP_3
-                         and then Value.Protocol = HTTP_3_Transport))
+               if (Use_HTTP_3
+                     and then Value.Protocol /= HTTP_3_Transport
+                     and then Item.Control.State.Protocol_Policy /=
+                       Negotiate_HTTP_3)
+                 or else
+                   (not Use_HTTP_3
+                      and then Value.Protocol = HTTP_3_Transport)
                then
                   Discard_Checkout;
                elsif Verify

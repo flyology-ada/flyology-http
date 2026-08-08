@@ -1,4 +1,5 @@
 with Ada.Characters.Handling;
+with Ada.Exceptions;
 with Ada.Real_Time;
 with Ada.Strings.Fixed;
 with Flyology.HTTP.Decoded_Path_Policy;
@@ -11,6 +12,7 @@ with Flyology.IO.Structured_Servers;
 with Flyology.IO.TLS;
 
 package body Flyology.HTTP.Server.Routing is
+
    use type Ada.Real_Time.Time;
 
    package App renames Flyology.HTTP.Server.Applications;
@@ -22,6 +24,11 @@ package body Flyology.HTTP.Server.Routing is
    use type App.Response_State;
    use type App.Upgrade_Mode;
    use type Decoded_Path_Policy.Path_Disposition;
+
+   function Exception_Summary
+     (Error : Ada.Exceptions.Exception_Occurrence) return String is
+     (Ada.Exceptions.Exception_Name (Error) & ": " &
+      Ada.Exceptions.Exception_Message (Error));
 
    function Hex_Value (Value : Character) return Natural is
      (if Value in '0' .. '9' then Character'Pos (Value) - Character'Pos ('0')
@@ -1440,6 +1447,12 @@ package body Flyology.HTTP.Server.Routing is
             Header_Timeout     => Header_Timeout,
             Ingress            => State.Ingress,
             Alt_Svc            => Alt_Svc);
+      exception
+         --  A peer can disconnect, probe, or lose a dual-stack connection
+         --  race before completing TLS. That terminates this accepted
+         --  connection; it is not a listener or application failure.
+         when Flyology.IO.TLS.TLS_Error =>
+            null;
       end Handle_TCP;
 
       package TCP_Servers is new Flyology.IO.Structured_Servers
@@ -1457,19 +1470,27 @@ package body Flyology.HTTP.Server.Routing is
         Flyology.HTTP.Server.HTTP_3 (App_Context, Dispatch_HTTP_3);
 
       protected Outcome is
-         procedure Record_Failure;
+         procedure Record_Failure (Message : String);
          function Failed return Boolean;
+         function Detail return String;
       private
          Has_Failed : Boolean := False;
+         Failure_Detail : Unbounded_String;
       end Outcome;
 
       protected body Outcome is
-         procedure Record_Failure is
+         procedure Record_Failure (Message : String) is
          begin
+            if not Has_Failed then
+               Failure_Detail := To_Unbounded_String (Message);
+            end if;
             Has_Failed := True;
          end Record_Failure;
 
          function Failed return Boolean is (Has_Failed);
+
+         function Detail return String is
+           (To_String (Failure_Detail));
       end Outcome;
 
       TCP_Listener : Sockets.Socket_Type;
@@ -1538,8 +1559,9 @@ package body Flyology.HTTP.Server.Routing is
                TCP_Servers.Serve
                  (TCP_Manager, TCP_Listener, Shared, Drain_Timeout);
             exception
-               when others =>
-                  Outcome.Record_Failure;
+               when Error : others =>
+                  Outcome.Record_Failure
+                    (Exception_Summary (Error));
                   Request_Stop;
             end;
          end TCP_Task;
@@ -1557,8 +1579,9 @@ package body Flyology.HTTP.Server.Routing is
                   Max_Requests => HTTP_3_Max_Requests,
                   Token => Token);
             exception
-               when others =>
-                  Outcome.Record_Failure;
+               when Error : others =>
+                  Outcome.Record_Failure
+                    (Exception_Summary (Error));
                   Request_Stop;
             end;
          end UDP_Task;
@@ -1568,8 +1591,9 @@ package body Flyology.HTTP.Server.Routing is
             Token.Await_Request;
             TCP_Servers.Request_Shutdown (TCP_Manager);
          exception
-            when others =>
-               Outcome.Record_Failure;
+            when Error : others =>
+               Outcome.Record_Failure
+                 (Exception_Summary (Error));
                Request_Stop;
          end Stop_Task;
       begin
@@ -1579,14 +1603,168 @@ package body Flyology.HTTP.Server.Routing is
       Close_If_Open (UDP_Listener);
       Close_If_Open (TCP_Listener);
       if Outcome.Failed then
-         raise Unified_Server_Error with
-           "the unified HTTP server stopped after a listener failure";
+         raise Unified_Server_Error with Outcome.Detail;
       end if;
    exception
       when others =>
          Request_Stop;
          Close_If_Open (UDP_Listener);
          Close_If_Open (TCP_Listener);
+         raise;
+   end Serve;
+
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      IPv4_Endpoint        : Flyology.IO.Sockets.Endpoint;
+      IPv6_Endpoint        : Flyology.IO.Sockets.Endpoint;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 8;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 5;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token)
+   is
+      IPv4_TCP_Capacity : constant Positive :=
+        TCP_Capacity / 2 + TCP_Capacity rem 2;
+      IPv6_TCP_Capacity : constant Positive := TCP_Capacity / 2;
+      IPv4_H3_Capacity : constant Positive :=
+        HTTP_3_Capacity / 2 + HTTP_3_Capacity rem 2;
+      IPv6_H3_Capacity : constant Positive := HTTP_3_Capacity / 2;
+
+      protected Outcome is
+         procedure Record_Failure (Message : String);
+         function Failed return Boolean;
+         function Detail return String;
+      private
+         Has_Failed : Boolean := False;
+         Failure_Detail : Unbounded_String;
+      end Outcome;
+
+      protected body Outcome is
+         procedure Record_Failure (Message : String) is
+         begin
+            if not Has_Failed then
+               Failure_Detail := To_Unbounded_String (Message);
+            end if;
+            Has_Failed := True;
+         end Record_Failure;
+
+         function Failed return Boolean is (Has_Failed);
+
+         function Detail return String is
+           (To_String (Failure_Detail));
+      end Outcome;
+
+      procedure Request_Stop is
+      begin
+         begin
+            Token.Request;
+         exception
+            when others => null;
+         end;
+      end Request_Stop;
+   begin
+      if IPv4_Endpoint.Family /= Flyology.IO.Sockets.IPv4
+        or else IPv6_Endpoint.Family /= Flyology.IO.Sockets.IPv6
+      then
+         raise Constraint_Error with
+           "dual-stack endpoints must be ordered as IPv4 then IPv6";
+      elsif IPv4_Endpoint.Port = Flyology.IO.Sockets.Any_Port
+        or else IPv4_Endpoint.Port /= IPv6_Endpoint.Port
+      then
+         raise Constraint_Error with
+           "dual-stack endpoints must use one concrete shared port";
+      elsif TCP_Capacity < 2 or else HTTP_3_Capacity < 2 then
+         raise Constraint_Error with
+           "dual-stack capacity must admit each address family";
+      end if;
+
+      declare
+         task IPv4_Server;
+         task IPv6_Server;
+
+         task body IPv4_Server is
+         begin
+            begin
+               Serve
+                 (Item, Context,
+                  Endpoint             => IPv4_Endpoint,
+                  TLS_Backend          => TLS_Backend,
+                  Certificate_DER      => Certificate_DER,
+                  Private_Key          => Private_Key,
+                  TCP_Capacity         => IPv4_TCP_Capacity,
+                  HTTP_3_Capacity      => IPv4_H3_Capacity,
+                  Transport_Settings   => Transport_Settings,
+                  Timeout              => Timeout,
+                  Handshake_Timeout    => Handshake_Timeout,
+                  Max_Connection_Age   => Max_Connection_Age,
+                  TCP_Max_Requests     => TCP_Max_Requests,
+                  HTTP_3_Max_Requests  => HTTP_3_Max_Requests,
+                  Header_Timeout       => Header_Timeout,
+                  Ingress              => Ingress,
+                  Alt_Svc_Max_Age      => Alt_Svc_Max_Age,
+                  Drain_Timeout        => Drain_Timeout,
+                  Token                => Token);
+            exception
+               when Error : others =>
+                  Outcome.Record_Failure
+                    (Ada.Exceptions.Exception_Message (Error));
+                  Request_Stop;
+            end;
+         end IPv4_Server;
+
+         task body IPv6_Server is
+         begin
+            begin
+               Serve
+                 (Item, Context,
+                  Endpoint             => IPv6_Endpoint,
+                  TLS_Backend          => TLS_Backend,
+                  Certificate_DER      => Certificate_DER,
+                  Private_Key          => Private_Key,
+                  TCP_Capacity         => IPv6_TCP_Capacity,
+                  HTTP_3_Capacity      => IPv6_H3_Capacity,
+                  Transport_Settings   => Transport_Settings,
+                  Timeout              => Timeout,
+                  Handshake_Timeout    => Handshake_Timeout,
+                  Max_Connection_Age   => Max_Connection_Age,
+                  TCP_Max_Requests     => TCP_Max_Requests,
+                  HTTP_3_Max_Requests  => HTTP_3_Max_Requests,
+                  Header_Timeout       => Header_Timeout,
+                  Ingress              => Ingress,
+                  Alt_Svc_Max_Age      => Alt_Svc_Max_Age,
+                  Drain_Timeout        => Drain_Timeout,
+                  Token                => Token);
+            exception
+               when Error : others =>
+                  Outcome.Record_Failure
+                    (Ada.Exceptions.Exception_Message (Error));
+                  Request_Stop;
+            end;
+         end IPv6_Server;
+      begin
+         null;
+      end;
+
+      if Outcome.Failed then
+         raise Unified_Server_Error with Outcome.Detail;
+      end if;
+   exception
+      when others =>
+         Request_Stop;
          raise;
    end Serve;
 

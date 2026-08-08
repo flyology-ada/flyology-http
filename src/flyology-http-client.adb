@@ -45,6 +45,7 @@ package body Flyology.HTTP.Client is
    use type H3.Operation_Status;
    use type QUIC.Connection_State;
    use type QUIC.Operation_Status;
+   use type QUIC.Send_Status;
    use type QUIC.Stream_ID;
    use type QUIC.Timeout_Status;
 
@@ -90,6 +91,7 @@ package body Flyology.HTTP.Client is
       Interrupt_Sent : Boolean := False;
       Owner_Done   : Boolean := False;
       Verify_On_Reuse : Boolean := False;
+      Connecting_HTTP_3 : Boolean := False;
    end record;
    type Slot_Array is array (Positive range <>) of Slot;
 
@@ -105,6 +107,8 @@ package body Flyology.HTTP.Client is
       procedure Configure (Value : Pool_Configuration);
       procedure Try_Checkout
         (Now        : Ada.Real_Time.Time;
+         Prefer_HTTP_3 : Boolean;
+         Allow_TCP_Fallback : Boolean;
          Result     : out Checkout_Result;
          Slot_Index : out Natural;
          Connection : out Pooled_Connection_Access;
@@ -196,15 +200,6 @@ package body Flyology.HTTP.Client is
       Expires   : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
    end HTTP_3_Discovery;
 
-   protected type Address_Preference is
-      procedure Remember (Family : Sockets.Address_Family);
-      procedure Current
-        (Known : out Boolean; Family : out Sockets.Address_Family);
-   private
-      Is_Known : Boolean := False;
-      Value    : Sockets.Address_Family := Sockets.IPv4;
-   end Address_Preference;
-
    protected body Pool_Controller is separate;
 
    protected body State_Lifetime is separate;
@@ -241,21 +236,6 @@ package body Flyology.HTTP.Client is
       end Preferred;
    end HTTP_3_Discovery;
 
-   protected body Address_Preference is
-      procedure Remember (Family : Sockets.Address_Family) is
-      begin
-         Value := Family;
-         Is_Known := True;
-      end Remember;
-
-      procedure Current
-        (Known : out Boolean; Family : out Sockets.Address_Family) is
-      begin
-         Known := Is_Known;
-         Family := Value;
-      end Current;
-   end Address_Preference;
-
    type Client_State (Capacity : Positive) is limited record
       Manager       : aliased Connections.Server (Capacity => Capacity);
       Pool          : Pool_Controller (Capacity);
@@ -265,7 +245,6 @@ package body Flyology.HTTP.Client is
       Protocol_Policy : Protocol_Mode := HTTP_1_Only;
       HTTP_3_Certificate : Flyology.Bytes.Unbounded_Bytes;
       HTTP_3_Alternative : HTTP_3_Discovery;
-      Successful_Address : Address_Preference;
       Connect_Policy : Connect_Target_Filter := null;
       Is_Configured : Boolean := False;
    end record;
@@ -418,6 +397,28 @@ package body Flyology.HTTP.Client is
       end;
       begin
          if Sockets.Is_Open (Connection.UDP) then
+            if Connection.Protocol = HTTP_3_Transport
+              and then QUIC.Is_Connected (Connection.QUIC_Transport)
+            then
+               declare
+                  Packet : QUIC.Datagram;
+                  Status : QUIC.Send_Status;
+                  Last   : Ada.Streams.Stream_Element_Offset;
+               begin
+                  QUIC.Build_Application_Close_Datagram
+                    (Connection.QUIC_Transport, Packet, Status);
+                  if Status = QUIC.Sent and then Packet.Length > 0 then
+                     Sockets.Send_Socket
+                       (Connection.UDP,
+                        Packet.Data
+                          (1 .. Ada.Streams.Stream_Element_Offset
+                            (Packet.Length)),
+                        Last);
+                  end if;
+               exception
+                  when others => null;
+               end;
+            end if;
             Sockets.Close_Socket (Connection.UDP);
          end if;
       exception
@@ -491,22 +492,11 @@ package body Flyology.HTTP.Client is
       Result : Return_Result;
       Value  : Pooled_Connection_Access;
       Index  : constant Natural := Data.Slot_Index;
-      Prefer_HTTP_3 : Boolean := False;
-      Alternative_Port : Port_Number;
-      Keep : Boolean := Reusable;
+      Keep : constant Boolean := Reusable;
    begin
       if Data.Connection = null then
          Data.Complete := True;
          return;
-      end if;
-      if Data.Owner.Protocol_Policy = Negotiate_HTTP_3 then
-         Data.Owner.HTTP_3_Alternative.Preferred
-           (Ada.Real_Time.Clock, Prefer_HTTP_3, Alternative_Port);
-         if Prefer_HTTP_3
-           and then Data.Connection.Protocol /= HTTP_3_Transport
-         then
-            Keep := False;
-         end if;
       end if;
       Data.Owner.Pool.Return_Lease
         (Positive (Data.Slot_Index), Keep, Verify, Ada.Real_Time.Clock,
@@ -826,12 +816,15 @@ package body Flyology.HTTP.Client is
    end Configure;
 
    package HTTP_3_Internals is
+      Connection_Race_Lost : exception;
+
       procedure Start_Connection
         (State      : not null Client_State_Access;
          Connection : not null Pooled_Connection_Access;
          Started    : Ada.Real_Time.Time;
          Timeout    : Duration;
-         Token      : access Flyology.Cancellation.Token);
+         Token      : access Flyology.Cancellation.Token;
+         Race_Token : access Flyology.Cancellation.Token := null);
 
       procedure Execute_Request
         (Data            : in out Response_Data;
@@ -1031,9 +1024,6 @@ package body Flyology.HTTP.Client is
          Parse (Flyology.HTTP.Headers.Value (Fields, "Alt-Svc", Index));
          exit when Changed;
       end loop;
-      if Changed then
-         Prune_Idle (Item);
-      end if;
    end Observe_HTTP_3_Alternative;
 
    function Execute_Internal

@@ -15,6 +15,8 @@ generic
    --  Application context shared by routed handlers.
    type App_Context is limited private;
 package Flyology.HTTP.Server.Routing is
+
+   use type Flyology.IO.Sockets.Address_Family;
    use type Flyology.IO.Sockets.Port;
 
    --  Raised after a unified listener's TCP or UDP serving task fails.
@@ -523,6 +525,69 @@ package Flyology.HTTP.Server.Routing is
    with Pre => Endpoint.Port /= Flyology.IO.Sockets.Any_Port
      and then Certificate_DER'Length in 1 .. 4_096
      and then HTTP_3_Capacity <= 32
+     and then HTTP_3_Max_Requests <= 5
+     and then Handshake_Timeout > 0.0
+     and then
+       (Drain_Timeout = Flyology.IO.Infinite or else Drain_Timeout >= 0.0);
+
+   --  Bind explicit IPv4 and IPv6 endpoints concurrently, serving TLS/TCP
+   --  HTTP/1.1 and HTTP/2 plus UDP HTTP/3 on both families. The endpoints
+   --  must use the same concrete port so one Alt-Svc authority remains valid
+   --  regardless of the address family selected by a client. Capacity values
+   --  are totals divided between the two listeners; each must therefore admit
+   --  at least two transports. Failure of either family stops the whole
+   --  server. Route, context, TLS, certificate, timeout, and shutdown
+   --  semantics are otherwise identical to the single-endpoint overload.
+   --  @param Item Frozen router shared by all protocol workers
+   --  @param Context Shared application context
+   --  @param IPv4_Endpoint Concrete local IPv4 TCP and UDP endpoint
+   --  @param IPv6_Endpoint Concrete local IPv6 TCP and UDP endpoint
+   --  @param TLS_Backend Initialized ALPN-capable TLS server provider
+   --  @param Certificate_DER DER-encoded Ed25519 HTTP/3 certificate
+   --  @param Private_Key Raw Ed25519 HTTP/3 private key
+   --  @param TCP_Capacity Total concurrent H1/H2 connections
+   --  @param HTTP_3_Capacity Total concurrent H3 connections
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request or stream application deadline
+   --  @param Handshake_Timeout TLS and QUIC handshake deadline
+   --  @param Max_Connection_Age Per-connection lifetime
+   --  @param TCP_Max_Requests HTTP/1.x persistent request limit
+   --  @param HTTP_3_Max_Requests H3 request limit per connection
+   --  @param Header_Timeout HTTP/1.x slow-header deadline
+   --  @param Ingress Optional shared HTTP/1.x retained-body budget
+   --  @param Alt_Svc_Max_Age Alt-Svc lifetime in seconds
+   --  @param Drain_Timeout TCP handler drain after shutdown
+   --  @param Token Required unified server shutdown source
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      IPv4_Endpoint        : Flyology.IO.Sockets.Endpoint;
+      IPv6_Endpoint        : Flyology.IO.Sockets.Endpoint;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 8;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 5;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token)
+   with Pre => IPv4_Endpoint.Family = Flyology.IO.Sockets.IPv4
+     and then IPv6_Endpoint.Family = Flyology.IO.Sockets.IPv6
+     and then IPv4_Endpoint.Port /= Flyology.IO.Sockets.Any_Port
+     and then IPv4_Endpoint.Port = IPv6_Endpoint.Port
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then TCP_Capacity >= 2
+     and then HTTP_3_Capacity in 2 .. 32
      and then HTTP_3_Max_Requests <= 5
      and then Handshake_Timeout > 0.0
      and then
