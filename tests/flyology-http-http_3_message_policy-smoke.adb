@@ -164,6 +164,10 @@ begin
         (On_Response_Frame
            (S_Update.State, HTTP_3_Frame_Policy.Data_Frame,
             Data_Length => 1).Status = Message_Error);
+      pragma Assert
+        (On_Response_Frame
+           (S_Update.State, HTTP_3_Frame_Policy.Headers_Frame,
+            Trailer_Headers).Status = Message_Error);
    end;
 
    declare
@@ -180,6 +184,10 @@ begin
         (On_Response_Frame
            (S_Update.State, HTTP_3_Frame_Policy.Data_Frame,
             Data_Length => 1).Status = Message_Error);
+      pragma Assert
+        (On_Response_Frame
+           (S_Update.State, HTTP_3_Frame_Policy.Headers_Frame,
+            Trailer_Headers).Status = Message_Error);
 
       No_Content := (others => <>);
       S_Update := On_Response_Frame
@@ -194,5 +202,9 @@ begin
         (On_Response_Frame
            (S_Update.State, HTTP_3_Frame_Policy.Data_Frame,
             Data_Length => 1).Status = Message_Error);
+      pragma Assert
+        (On_Response_Frame
+           (S_Update.State, HTTP_3_Frame_Policy.Headers_Frame,
+            Trailer_Headers).Status = Message_Error);
    end;
 end Flyology.HTTP.HTTP_3_Message_Policy.Smoke;

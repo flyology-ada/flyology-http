@@ -98,7 +98,7 @@ is
                   Result.Status := Message_Error;
                end if;
             when Final_Response_Open =>
-               if Headers = Trailer_Headers then
+               if Headers = Trailer_Headers and then State.Body_Allowed then
                   Result.State.Phase := Response_Trailers;
                else
                   Result.Status := Message_Error;
