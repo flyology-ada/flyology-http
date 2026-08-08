@@ -16,6 +16,7 @@ for test in \
   flyology-quic-crypto_frame_policy-smoke \
   flyology-quic-crypto_openssl-smoke \
   flyology-quic-crypto_reassembly_policy-smoke \
+  flyology-quic-flow_control_policy-smoke \
   flyology-quic-handshake_connection-smoke \
   flyology-quic-handshake_packet_policy-smoke \
   flyology-quic-handshake_sender-smoke \

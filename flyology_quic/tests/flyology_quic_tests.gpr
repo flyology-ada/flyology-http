@@ -15,6 +15,7 @@ project Flyology_QUIC_Tests is
       "flyology-quic-crypto_frame_policy-smoke.adb",
       "flyology-quic-crypto_openssl-smoke.adb",
       "flyology-quic-crypto_reassembly_policy-smoke.adb",
+      "flyology-quic-flow_control_policy-smoke.adb",
       "flyology-quic-handshake_connection-smoke.adb",
       "flyology-quic-handshake_packet_policy-smoke.adb",
       "flyology-quic-handshake_sender-smoke.adb",
