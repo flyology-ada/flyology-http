@@ -30,6 +30,15 @@ package body Flyology.QUIC.Connection_Driver is
    function Handshake_Confirmed (Item : Connection) return Boolean is
      (Item.Is_Handshake_Confirmed);
 
+   function Has_Recovery_Timeout (Item : Connection) return Boolean is
+     (Item.Current = Connected
+      and then Application_Space.Has_Recovery_Timeout (Item.Application));
+
+   function Recovery_Deadline
+     (Item : Connection) return Application_Space.Timestamp
+   is (Application_Space.Recovery_Deadline
+         (Item.Application, Item.Peer_Max_ACK_Delay));
+
    function Has_Stream
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
    is (Application_Space.Has_Stream (Item.Application, Stream_ID));
@@ -745,4 +754,46 @@ package body Flyology.QUIC.Connection_Driver is
          end;
       end loop;
    end Process_Datagram;
+
+   procedure Process_Timeout
+     (Item   : in out Connection;
+      Now    : Application_Space.Timestamp;
+      Output : out Datagram_Batch;
+      Status : out Timeout_Status)
+   is
+      Packet : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
+      Built  : Application_Space.Send_Result;
+   begin
+      Clear (Output);
+      if Item.Current /= Connected then
+         Status := Timeout_Invalid_State;
+         return;
+      elsif not Application_Space.Has_Recovery_Timeout (Item.Application) then
+         Status := No_Pending_Recovery;
+         return;
+      elsif Now < Application_Space.Recovery_Deadline
+        (Item.Application, Item.Peer_Max_ACK_Delay)
+      then
+         Status := Not_Due;
+         return;
+      end if;
+
+      for Probe in 1 .. 2 loop
+         Application_Space.Build_Probe_Packet
+           (Item.Application, Now, Packet, Built);
+         if Built.Status = Application_Space.Sent then
+            if not Append (Output, Packet, Built.Packet_Length) then
+               Status := Timeout_Output_Capacity_Exceeded;
+               return;
+            end if;
+         elsif Output.Count = 0 then
+            Status := Timeout_Packet_Error;
+            return;
+         else
+            exit;
+         end if;
+      end loop;
+      Application_Space.On_Probe_Timeout (Item.Application);
+      Status := Probes_Ready;
+   end Process_Timeout;
 end Flyology.QUIC.Connection_Driver;

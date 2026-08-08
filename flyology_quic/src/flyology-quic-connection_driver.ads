@@ -112,6 +112,25 @@ private package Flyology.QUIC.Connection_Driver is
       Now    : Application_Space.Timestamp := 0)
    with Pre => Packet'Length <= Max_Datagram_Length;
 
+   type Timeout_Status is
+     (Probes_Ready,
+      Not_Due,
+      No_Pending_Recovery,
+      Timeout_Invalid_State,
+      Timeout_Packet_Error,
+      Timeout_Output_Capacity_Exceeded);
+
+   function Has_Recovery_Timeout (Item : Connection) return Boolean;
+   function Recovery_Deadline
+     (Item : Connection) return Application_Space.Timestamp
+   with Pre => Has_Recovery_Timeout (Item);
+
+   procedure Process_Timeout
+     (Item   : in out Connection;
+      Now    : Application_Space.Timestamp;
+      Output : out Datagram_Batch;
+      Status : out Timeout_Status);
+
    procedure Open_Stream
      (Item      : in out Connection;
       Direction : Stream_ID_Policy.Stream_Direction;

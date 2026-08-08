@@ -260,6 +260,43 @@ package Flyology.QUIC.Connections is
       Now    : Timestamp := 0)
    with Pre => Packet'Length <= Max_Datagram_Length;
 
+   --  Outcome of processing a recovery timer expiration.
+   --  @enum Probes_Ready Output contains one or two ACK-eliciting PTO probes
+   --  @enum Not_Due The current recovery deadline is still in the future
+   --  @enum No_Pending_Recovery No in-flight application packet needs a timer
+   --  @enum Invalid_Timeout_State Application traffic keys are not active
+   --  @enum Timeout_Packet_Error A protected probe could not be built
+   --  @enum Timeout_Output_Capacity_Exceeded Probe output did not fit
+   type Timeout_Status is
+     (Probes_Ready,
+      Not_Due,
+      No_Pending_Recovery,
+      Invalid_Timeout_State,
+      Timeout_Packet_Error,
+      Timeout_Output_Capacity_Exceeded);
+
+   --  Report whether an application-space recovery timer is armed.
+   --  @param Item Connection to inspect
+   --  @return True while an ACK-eliciting packet remains in flight
+   function Has_Recovery_Timeout (Item : Connection) return Boolean;
+
+   --  Return the absolute monotonic deadline for the armed recovery timer.
+   --  @param Item Connected connection with in-flight application data
+   --  @return Monotonic microsecond deadline
+   function Recovery_Deadline (Item : Connection) return Timestamp
+   with Pre => Has_Recovery_Timeout (Item);
+
+   --  Process an application-space PTO and produce bounded PING probes.
+   --  @param Item Connected endpoint
+   --  @param Now Current monotonic microsecond timestamp
+   --  @param Output Probe datagrams when Status is Probes_Ready
+   --  @param Status Timer transition outcome
+   procedure Process_Timeout
+     (Item   : in out Connection;
+      Now    : Timestamp;
+      Output : out Datagram_Batch;
+      Status : out Timeout_Status);
+
    --  Directionality of a locally created stream.
    --  @enum Bidirectional Both endpoints may send
    --  @enum Unidirectional Only the creating endpoint may send

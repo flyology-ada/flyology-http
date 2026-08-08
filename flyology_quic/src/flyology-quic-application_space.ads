@@ -112,6 +112,15 @@ private package Flyology.QUIC.Application_Space is
      Pre => Is_Initialized (Item)
        and then Packet'Length >= Max_Datagram_Length;
 
+   procedure Build_Probe_Packet
+     (Item   : in out State;
+      Now    : Timestamp;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result)
+   with
+     Pre => Is_Initialized (Item)
+       and then Packet'Length >= Max_Datagram_Length;
+
    subtype ACK_Delay_Exponent is Natural range 0 .. 20;
 
    type Process_Status is
@@ -214,6 +223,11 @@ private package Flyology.QUIC.Application_Space is
    function Has_RTT_Sample (Item : State) return Boolean;
    function Smoothed_RTT (Item : State) return Recovery_Policy.Duration;
    function PTO_Count (Item : State) return Recovery_Policy.PTO_Count_Type;
+   function Has_Recovery_Timeout (Item : State) return Boolean;
+   function Recovery_Deadline
+     (Item              : State;
+      Maximum_ACK_Delay : Recovery_Policy.Duration) return Timestamp
+   with Pre => Has_Recovery_Timeout (Item);
    function Probe_Timeout
      (Item              : State;
       Maximum_ACK_Delay : Recovery_Policy.Duration)
@@ -230,6 +244,8 @@ private
       Peer_Uni    : Varint_Policy.Value_Type := 0;
       Sent        : Sent_Packet_Policy.Ledger;
       Recovery    : Recovery_Policy.State;
+      Has_Latest_ACK_Eliciting : Boolean := False;
+      Latest_ACK_Eliciting     : Timestamp := 0;
       Initialized : Boolean := False;
    end record;
 end Flyology.QUIC.Application_Space;

@@ -11,6 +11,7 @@ procedure Flyology.QUIC.Connection_Driver.Smoke is
    use type Connections.Operation_Status;
    use type Connections.Send_Status;
    use type Connections.Server_Initialize_Status;
+   use type Connections.Timeout_Status;
    use type Transport_Parameter_Policy.Encode_Status;
    use type Varint_Policy.Value_Type;
 
@@ -275,12 +276,15 @@ begin
    declare
       Public_Client, Public_Server : Connections.Connection;
       Client_Flight, Server_Flight, Finish : Connections.Datagram_Batch;
+      Probes : Connections.Datagram_Batch;
       Coalesced : Connections.Datagram;
       Client_Status, Server_Status : Connections.Operation_Status;
       Server_Initialized : Connections.Server_Initialize_Status;
       Public_Stream : Connections.Stream_ID;
       Opened        : Connections.Open_Status;
       Sent          : Connections.Send_Status;
+      Timer_Status  : Connections.Timeout_Status;
+      Deadline      : Connections.Timestamp;
       Stream_Packet : Connections.Datagram;
    begin
       Connections.Initialize_Client
@@ -368,6 +372,11 @@ begin
       pragma Assert
         (Server_Status = Connections.Succeeded
          and then Server_Flight.Count = 0);
+      Connections.Process_Timeout
+        (Public_Client, 0, Probes, Timer_Status);
+      pragma Assert
+        (Timer_Status = Connections.No_Pending_Recovery
+         and then Probes.Count = 0);
 
       Connections.Open_Stream
         (Public_Client, Connections.Bidirectional, Public_Stream, Opened);
@@ -376,6 +385,20 @@ begin
         (Public_Client, Public_Stream, 0, True, (16#68#, 16#33#), 100,
          Stream_Packet, Sent);
       pragma Assert (Sent = Connections.Sent);
+      pragma Assert (Connections.Has_Recovery_Timeout (Public_Client));
+      Deadline := Connections.Recovery_Deadline (Public_Client);
+      pragma Assert (Deadline = 1_024_100);
+      Connections.Process_Timeout
+        (Public_Client, Deadline - 1, Probes, Timer_Status);
+      pragma Assert
+        (Timer_Status = Connections.Not_Due and then Probes.Count = 0);
+      Connections.Process_Timeout
+        (Public_Client, Deadline, Probes, Timer_Status);
+      pragma Assert
+        (Timer_Status = Connections.Probes_Ready
+         and then Probes.Count = 2
+         and then Connections.Recovery_Deadline (Public_Client) =
+           Deadline + 2_048_000);
       Connections.Process_Datagram
         (Public_Server,
          Stream_Packet.Data

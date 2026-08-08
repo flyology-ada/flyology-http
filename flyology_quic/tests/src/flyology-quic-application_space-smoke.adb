@@ -90,10 +90,14 @@ begin
       and then Bytes_In_Flight (Client) =
         Recovery_Policy.Byte_Count (Sent_Data.Packet_Length));
    pragma Assert (Probe_Timeout (Client, 25_000) = 1_024_000);
+   pragma Assert
+     (Has_Recovery_Timeout (Client)
+      and then Recovery_Deadline (Client, 25_000) = 1_024_100);
    On_Probe_Timeout (Client);
    pragma Assert
      (PTO_Count (Client) = 1
-      and then Probe_Timeout (Client, 25_000) = 2_048_000);
+      and then Probe_Timeout (Client, 25_000) = 2_048_000
+      and then Recovery_Deadline (Client, 25_000) = 2_048_100);
    Process_Packet
      (Server,
       Packet
@@ -129,6 +133,7 @@ begin
       and then not Received.ACK_Eliciting
       and then Received.Resolved_Count = 1
       and then Retained_Packets (Client) = 0
+      and then not Has_Recovery_Timeout (Client)
       and then Bytes_In_Flight (Client) = 0
       and then PTO_Count (Client) = 0
       and then Has_RTT_Sample (Client)

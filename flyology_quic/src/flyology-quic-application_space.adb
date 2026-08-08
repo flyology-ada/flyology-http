@@ -121,6 +121,24 @@ package body Flyology.QUIC.Application_Space is
    function PTO_Count (Item : State) return Recovery_Policy.PTO_Count_Type is
      (Recovery_Policy.PTO_Count (Item.Recovery));
 
+   function Has_Recovery_Timeout (Item : State) return Boolean is
+     (Item.Has_Latest_ACK_Eliciting
+      and then Sent_Packet_Policy.Retained (Item.Sent) > 0);
+
+   function Recovery_Deadline
+     (Item              : State;
+      Maximum_ACK_Delay : Recovery_Policy.Duration) return Timestamp
+   is
+      Timeout_Length : constant Timestamp := Probe_Timeout
+        (Item, Maximum_ACK_Delay);
+   begin
+      if Timeout_Length > Timestamp'Last - Item.Latest_ACK_Eliciting then
+         return Timestamp'Last;
+      else
+         return Item.Latest_ACK_Eliciting + Timeout_Length;
+      end if;
+   end Recovery_Deadline;
+
    function Probe_Timeout
      (Item              : State;
       Maximum_ACK_Delay : Recovery_Policy.Duration)
@@ -166,6 +184,8 @@ package body Flyology.QUIC.Application_Space is
       Item.Peer_Uni := Value_Or_Zero (Peer.Initial_Max_Streams_Uni);
       Sent_Packet_Policy.Reset (Item.Sent);
       Recovery_Policy.Reset (Item.Recovery);
+      Item.Has_Latest_ACK_Eliciting := False;
+      Item.Latest_ACK_Eliciting := 0;
       Item.Initialized := True;
    end Initialize;
 
@@ -302,6 +322,8 @@ package body Flyology.QUIC.Application_Space is
          Result.Status := Internal_State_Error;
          return;
       end if;
+      Item.Has_Latest_ACK_Eliciting := True;
+      Item.Latest_ACK_Eliciting := Now;
       Result.Status := Sent;
    end Build_Stream_Packet;
 
@@ -351,14 +373,16 @@ package body Flyology.QUIC.Application_Space is
          else Internal_State_Error);
    end Build_ACK_Packet;
 
-   procedure Build_Handshake_Done_Packet
+   procedure Build_Tracked_Control_Packet
      (Item   : in out State;
+      Frame_Type : Ada.Streams.Stream_Element;
       Now    : Timestamp;
+      Permit_Probe : Boolean;
       Packet : out Ada.Streams.Stream_Element_Array;
       Result : out Send_Result)
    is
       Plaintext : constant Ada.Streams.Stream_Element_Array :=
-        (1 => 16#1E#, 2 .. 3 => 0);
+        (1 => Frame_Type, 2 .. 3 => 0);
       Built          : Application_Connection.Build_Result;
       Record_Status  : Sent_Packet_Policy.Record_Status;
       Account_Status : Recovery_Policy.Send_Status;
@@ -371,7 +395,8 @@ package body Flyology.QUIC.Application_Space is
       then
          Result.Status := Recovery_Capacity_Exceeded;
          return;
-      elsif not Recovery_Policy.Can_Send
+      elsif not Permit_Probe
+        and then not Recovery_Policy.Can_Send
         (Item.Recovery,
          Sent_Packet_Policy.Packet_Byte_Count (Max_Datagram_Length))
       then
@@ -405,12 +430,38 @@ package body Flyology.QUIC.Application_Space is
          return;
       end if;
       Recovery_Policy.On_Packet_Sent
-        (Item.Recovery, Sent_Packet, Permit_Probe => False,
+        (Item.Recovery, Sent_Packet, Permit_Probe,
          Status => Account_Status);
-      Result.Status :=
-        (if Account_Status = Recovery_Policy.Accounted
-         then Sent else Internal_State_Error);
+      if Account_Status = Recovery_Policy.Accounted then
+         Item.Has_Latest_ACK_Eliciting := True;
+         Item.Latest_ACK_Eliciting := Now;
+         Result.Status := Sent;
+      else
+         Result.Status := Internal_State_Error;
+      end if;
+   end Build_Tracked_Control_Packet;
+
+   procedure Build_Handshake_Done_Packet
+     (Item   : in out State;
+      Now    : Timestamp;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result) is
+   begin
+      Build_Tracked_Control_Packet
+        (Item, Frame_Type => 16#1E#, Now => Now, Permit_Probe => False,
+         Packet => Packet, Result => Result);
    end Build_Handshake_Done_Packet;
+
+   procedure Build_Probe_Packet
+     (Item   : in out State;
+      Now    : Timestamp;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result) is
+   begin
+      Build_Tracked_Control_Packet
+        (Item, Frame_Type => 16#01#, Now => Now, Permit_Probe => True,
+         Packet => Packet, Result => Result);
+   end Build_Probe_Packet;
 
    function Decoded_ACK_Delay
      (Wire_Value : Varint_Policy.Value_Type;

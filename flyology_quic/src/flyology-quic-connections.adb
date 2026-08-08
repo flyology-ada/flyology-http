@@ -309,6 +309,41 @@ package body Flyology.QUIC.Connections is
       Status := Public_Status (Result.Status);
    end Process_Datagram;
 
+   function Has_Recovery_Timeout (Item : Connection) return Boolean is
+     (Item.Backend /= System.Null_Address
+      and then Connection_Driver.Has_Recovery_Timeout (Impl (Item).Driver));
+
+   function Recovery_Deadline (Item : Connection) return Timestamp is
+     (Timestamp
+        (Connection_Driver.Recovery_Deadline (Impl (Item).Driver)));
+
+   procedure Process_Timeout
+     (Item   : in out Connection;
+      Now    : Timestamp;
+      Output : out Datagram_Batch;
+      Status : out Timeout_Status)
+   is
+      Internal_Output : Connection_Driver.Datagram_Batch;
+      Internal_Status : Connection_Driver.Timeout_Status;
+   begin
+      Connection_Driver.Process_Timeout
+        (Impl (Item).Driver, Application_Space.Timestamp (Now),
+         Internal_Output, Internal_Status);
+      Copy (Internal_Output, Output);
+      Status :=
+        (case Internal_Status is
+            when Connection_Driver.Probes_Ready => Probes_Ready,
+            when Connection_Driver.Not_Due => Not_Due,
+            when Connection_Driver.No_Pending_Recovery =>
+              No_Pending_Recovery,
+            when Connection_Driver.Timeout_Invalid_State =>
+              Invalid_Timeout_State,
+            when Connection_Driver.Timeout_Packet_Error =>
+              Timeout_Packet_Error,
+            when Connection_Driver.Timeout_Output_Capacity_Exceeded =>
+              Timeout_Output_Capacity_Exceeded);
+   end Process_Timeout;
+
    procedure Open_Stream
      (Item      : in out Connection;
       Direction : Stream_Direction;
