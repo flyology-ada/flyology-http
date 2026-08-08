@@ -2,6 +2,7 @@ with Ada.Command_Line;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Flyology.HTTP;
+with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Sockets;
@@ -27,12 +28,30 @@ procedure HTTP3_Interop_Server is
       X.Text (200, "hello");
    end Hello;
 
+   procedure Echo (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+   begin
+      pragma Assert (X.Request_Protocol = Flyology.HTTP.HTTP_3_Protocol);
+      pragma Assert (X.Request_Method = "POST");
+      pragma Assert (X.Request_Header ("X-Oracle") /= "");
+      pragma Assert
+        (Flyology.HTTP.Server.Content (X.Request_Value) = "payload");
+      X.Add_Header ("X-Echo", "accepted");
+      X.Text (201, "echo:payload");
+   end Echo;
+
    Routes : Routing.Router
-     (Capacity => 1, Slashes => Routing.Strict_Slashes);
+     (Capacity => 2, Slashes => Routing.Strict_Slashes);
    State : Context;
    Socket : aliased Sockets.Socket_Type;
 begin
    Routes.Get ("/hello", Hello'Access, Name => "hello");
+   Routes.Post
+     ("/echo", Echo'Access, Name => "echo",
+      Policy =>
+        (Routing.Default_Route_Policy with delta
+           Body_Handling => App.Buffer_Body,
+           Max_Body      => 64));
    Sockets.Create_Socket (Socket, Sockets.IPv4, Sockets.Socket_Datagram);
    Sockets.Bind_Socket
      (Socket, Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Port));
@@ -49,9 +68,9 @@ begin
       Timeout => 10.0,
       Handshake_Timeout => 10.0,
       Max_Connection_Age => 20.0,
-      Max_Requests => 1);
+      Max_Requests => 2);
 
    Ada.Text_IO.Put_Line
-     ("Ada HTTP/3 routed server interoperated with aioquic");
+     ("Ada HTTP/3 routed server interoperated with an independent oracle");
    Sockets.Close_Socket (Socket);
 end HTTP3_Interop_Server;

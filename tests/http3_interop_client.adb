@@ -151,7 +151,8 @@ begin
       end if;
    end;
 
-   Ada.Text_IO.Put_Line ("Ada HTTP/3 client interoperated with aioquic");
+   Ada.Text_IO.Put_Line
+     ("Ada HTTP/3 client interoperated with an independent oracle");
    Sockets.Close_Socket (Socket);
 exception
    when Ada.IO_Exceptions.End_Error =>
