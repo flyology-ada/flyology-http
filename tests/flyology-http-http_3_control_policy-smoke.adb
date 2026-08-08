@@ -39,6 +39,30 @@ begin
      (Item, 16#21#, Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
    pragma Assert (Status = Accepted);
 
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Goaway_Frame,
+      Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+   pragma Assert (Status = Frame_Error and then not Has_Peer_Goaway (Item));
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Goaway_Frame,
+      Ada.Streams.Stream_Element_Array'(1 => 1), Status);
+   pragma Assert (Status = ID_Error and then not Has_Peer_Goaway (Item));
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Goaway_Frame,
+      Ada.Streams.Stream_Element_Array'(1 => 4), Status);
+   pragma Assert
+     (Status = Accepted
+      and then Has_Peer_Goaway (Item)
+      and then Peer_Goaway_ID (Item) = 4);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Goaway_Frame,
+      Ada.Streams.Stream_Element_Array'(1 => 0), Status);
+   pragma Assert (Status = Accepted and then Peer_Goaway_ID (Item) = 0);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Goaway_Frame,
+      Ada.Streams.Stream_Element_Array'(1 => 4), Status);
+   pragma Assert (Status = ID_Error and then Peer_Goaway_ID (Item) = 0);
+
    Peer_Stream_Closed (Item, 3, Status);
    pragma Assert (Status = Critical_Stream_Closed);
 
@@ -60,5 +84,20 @@ begin
         (Broken, HTTP_3_Frame_Policy.Settings_Frame,
          Ada.Streams.Stream_Element_Array'(1, 0, 1, 1), Status);
       pragma Assert (Status = Settings_Error);
+   end;
+
+   declare
+      Server : Control_State;
+   begin
+      Register_Peer_Control
+        (Server, 2, HTTP_3_Stream_Policy.Server, Status);
+      Process_Frame
+        (Server, HTTP_3_Frame_Policy.Settings_Frame,
+         Ada.Streams.Stream_Element_Array'(1, 0, 7, 0), Status);
+      Process_Frame
+        (Server, HTTP_3_Frame_Policy.Goaway_Frame,
+         Ada.Streams.Stream_Element_Array'(1 => 3), Status);
+      pragma Assert
+        (Status = Accepted and then Peer_Goaway_ID (Server) = 3);
    end;
 end Flyology.HTTP.HTTP_3_Control_Policy.Smoke;

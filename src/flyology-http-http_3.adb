@@ -125,7 +125,9 @@ package body Flyology.HTTP.HTTP_3 is
          when Internal.Succeeded => Succeeded,
          when Internal.No_Event => No_Event,
          when Internal.Not_Connected => Not_Connected,
+         when Internal.Not_Started => Not_Started,
          when Internal.Already_Started => Already_Started,
+         when Internal.Connection_Draining => Connection_Draining,
          when Internal.Wrong_Role => Wrong_Role,
          when Internal.Stream_Limit_Reached => Stream_Limit_Reached,
          when Internal.Transport_Blocked => Transport_Blocked,
@@ -138,6 +140,7 @@ package body Flyology.HTTP.HTTP_3 is
          when Internal.Frame_Unexpected => Frame_Unexpected,
          when Internal.Settings_Error => Settings_Error,
          when Internal.Frame_Error => Frame_Error,
+         when Internal.ID_Error => ID_Error,
          when Internal.QPACK_Decompression_Failed =>
            QPACK_Decompression_Failed,
          when Internal.Peer_Field_Section_Too_Large =>
@@ -181,6 +184,7 @@ package body Flyology.HTTP.HTTP_3 is
      (case Value is
          when Internal.No_Event => No_Event,
          when Internal.Settings_Received => Settings_Received,
+         when Internal.Goaway_Received => Goaway_Received,
          when Internal.Headers_Received => Headers_Received,
          when Internal.Data_Received => Data_Received,
          when Internal.Push_Promise_Received => Push_Promise_Received,
@@ -206,6 +210,7 @@ package body Flyology.HTTP.HTTP_3 is
       Status := Public_Status (Internal_Status);
       Output.Kind := Public_Kind (Internal_Event.Kind);
       Output.Stream := Internal_Event.Stream;
+      Output.Identifier := Internal_Event.Identifier;
       Output.Headers := To_Public (Internal_Event.Headers);
       Output.Data_Length := Internal_Event.Data_Length;
       if Internal_Event.Data_Length > 0 then
@@ -234,6 +239,26 @@ package body Flyology.HTTP.HTTP_3 is
       Internal.Open_Request (Impl (Item).Value, Transport, Stream, Result);
       Status := Public_Status (Result);
    end Open_Request;
+
+   procedure Send_Goaway
+     (Item       : in out Session;
+      Transport  : in out QUIC.Connection;
+      Identifier : QUIC.Stream_Offset;
+      Now        : QUIC.Timestamp;
+      Packet     : out QUIC.Datagram;
+      Status     : out Operation_Status)
+   is
+      Result : Internal.Operation_Status;
+   begin
+      Packet := (others => <>);
+      if not Is_Initialized (Item) then
+         Status := Uninitialized;
+         return;
+      end if;
+      Internal.Build_Goaway
+        (Impl (Item).Value, Transport, Identifier, Now, Packet, Result);
+      Status := Public_Status (Result);
+   end Send_Goaway;
 
    procedure Send_Headers
      (Item      : in out Session;
@@ -292,4 +317,11 @@ package body Flyology.HTTP.HTTP_3 is
         (Has_Max_Field_Size => Value.Has_Max_Field_Size,
          Max_Field_Size     => Value.Max_Field_Size);
    end Peer_Settings;
+
+   function Has_Peer_Goaway (Item : Session) return Boolean is
+     (Is_Initialized (Item)
+      and then Internal.Has_Peer_Goaway (Impl (Item).Value));
+
+   function Peer_Goaway_ID (Item : Session) return QUIC.Stream_Offset is
+     (Internal.Peer_Goaway_ID (Impl (Item).Value));
 end Flyology.HTTP.HTTP_3;

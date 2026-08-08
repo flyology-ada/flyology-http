@@ -101,7 +101,9 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum No_Event No complete application event is currently buffered
    --  @enum Uninitialized Initialize has not been called
    --  @enum Not_Connected QUIC application keys are not active
+   --  @enum Not_Started The local HTTP/3 control stream does not exist
    --  @enum Already_Started The local control stream already exists
+   --  @enum Connection_Draining The peer sent GOAWAY
    --  @enum Wrong_Role The operation is not valid for this endpoint role
    --  @enum Stream_Limit_Reached The peer permits no additional stream
    --  @enum Transport_Blocked QUIC flow or congestion credit is unavailable
@@ -114,6 +116,7 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Frame_Unexpected The frame is forbidden in its current context
    --  @enum Settings_Error Peer SETTINGS are malformed
    --  @enum Frame_Error A frame is malformed or unsupported
+   --  @enum ID_Error A stream or push identifier violates HTTP/3 rules
    --  @enum QPACK_Decompression_Failed A field section cannot be decoded
    --  @enum Peer_Field_Section_Too_Large Fields exceed the peer's advertised
    --    maximum field-section size
@@ -124,7 +127,9 @@ package Flyology.HTTP.HTTP_3 is
       No_Event,
       Uninitialized,
       Not_Connected,
+      Not_Started,
       Already_Started,
+      Connection_Draining,
       Wrong_Role,
       Stream_Limit_Reached,
       Transport_Blocked,
@@ -137,6 +142,7 @@ package Flyology.HTTP.HTTP_3 is
       Frame_Unexpected,
       Settings_Error,
       Frame_Error,
+      ID_Error,
       QPACK_Decompression_Failed,
       Peer_Field_Section_Too_Large,
       Message_Error,
@@ -158,6 +164,7 @@ package Flyology.HTTP.HTTP_3 is
    --  Kind of complete HTTP/3 input returned by Poll.
    --  @enum No_Event No complete input is available
    --  @enum Settings_Received Peer SETTINGS were accepted
+   --  @enum Goaway_Received Peer initiated graceful shutdown
    --  @enum Headers_Received A HEADERS field section was decoded
    --  @enum Data_Received A DATA frame payload was decoded
    --  @enum Push_Promise_Received A PUSH_PROMISE was decoded
@@ -166,6 +173,7 @@ package Flyology.HTTP.HTTP_3 is
    type Event_Kind is
      (No_Event,
       Settings_Received,
+      Goaway_Received,
       Headers_Received,
       Data_Received,
       Push_Promise_Received,
@@ -178,12 +186,14 @@ package Flyology.HTTP.HTTP_3 is
    --  One decoded HTTP/3 application event.
    --  @field Kind Event classification
    --  @field Stream QUIC stream carrying the event
+   --  @field Identifier GOAWAY stream or push identifier
    --  @field Headers Decoded field section for a HEADERS event
    --  @field Data Bounded payload storage for a DATA event
    --  @field Data_Length Number of meaningful octets in Data
    type Event is record
       Kind        : Event_Kind := No_Event;
       Stream      : QUIC.Stream_ID := 0;
+      Identifier  : QUIC.Stream_Offset := 0;
       Headers     : Header_Block;
       Data        : Ada.Streams.Stream_Element_Array (1 .. Max_Event_Data) :=
         (others => 0);
@@ -211,6 +221,23 @@ package Flyology.HTTP.HTTP_3 is
       Transport : in out QUIC.Connection;
       Stream    : out QUIC.Stream_ID;
       Status    : out Operation_Status);
+
+   --  Send GOAWAY on the local control stream. Servers provide a client-
+   --  initiated bidirectional stream ID; clients provide a push ID. Repeated
+   --  identifiers may stay equal or decrease.
+   --  @param Item Initialized and started HTTP/3 session
+   --  @param Transport Connected QUIC connection
+   --  @param Identifier First request or push that will not be accepted
+   --  @param Now Monotonic microsecond timestamp
+   --  @param Packet Datagram to send when Status is Succeeded
+   --  @param Status Operation outcome
+   procedure Send_Goaway
+     (Item       : in out Session;
+      Transport  : in out QUIC.Connection;
+      Identifier : QUIC.Stream_Offset;
+      Now        : QUIC.Timestamp;
+      Packet     : out QUIC.Datagram;
+      Status     : out Operation_Status);
 
    --  Encode and protect a request, response, or trailer HEADERS frame.
    --  @param Item Initialized HTTP/3 session
@@ -260,6 +287,17 @@ package Flyology.HTTP.HTTP_3 is
    --  @return Peer settings used for subsequent sends
    function Peer_Settings (Item : Session) return Settings
    with Pre => Has_Peer_Settings (Item);
+
+   --  Report whether the peer initiated graceful shutdown.
+   --  @param Item Session to inspect
+   --  @return True after a Goaway_Received event
+   function Has_Peer_Goaway (Item : Session) return Boolean;
+
+   --  Return the lowest GOAWAY identifier received from the peer.
+   --  @param Item Session whose peer GOAWAY was accepted
+   --  @return First request or push the peer will not accept
+   function Peer_Goaway_ID (Item : Session) return QUIC.Stream_Offset
+   with Pre => Has_Peer_Goaway (Item);
 
 private
    subtype Name_Length is Natural range 0 .. Max_Name_Length;

@@ -10,7 +10,6 @@ procedure HTTP3_Public_Smoke is
    use type Ada.Streams.Stream_Element;
    use type H3.Event_Kind;
    use type H3.Operation_Status;
-   use type QUIC.Stream_ID;
    use type QUIC.Stream_Offset;
 
    Client_Transport, Server_Transport : QUIC.Connection;
@@ -131,5 +130,40 @@ begin
         (Client_Status = H3.Succeeded
          and then Client_Event.Kind = H3.Stream_Ended
          and then Client_Event.Stream = Request_Stream);
+
+      H3.Send_Goaway
+        (Server, Server_Transport, Identifier => 4, Now => 5_000,
+         Packet => Data_Packet, Status => Server_Status);
+      pragma Assert (Server_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Data_Packet, Client_Transport);
+      H3.Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = H3.Succeeded
+         and then Client_Event.Kind = H3.Goaway_Received
+         and then Client_Event.Identifier = 4
+         and then H3.Has_Peer_Goaway (Client)
+         and then H3.Peer_Goaway_ID (Client) = 4);
+      H3.Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      pragma Assert (Client_Status = H3.Connection_Draining);
+
+      H3.Send_Goaway
+        (Server, Server_Transport, Identifier => 8, Now => 5_001,
+         Packet => Data_Packet, Status => Server_Status);
+      pragma Assert
+        (Server_Status = H3.ID_Error and then Data_Packet.Length = 0);
+      H3.Send_Goaway
+        (Server, Server_Transport, Identifier => 0, Now => 5_002,
+         Packet => Data_Packet, Status => Server_Status);
+      pragma Assert (Server_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Data_Packet, Client_Transport);
+      H3.Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = H3.Succeeded
+         and then Client_Event.Kind = H3.Goaway_Received
+         and then Client_Event.Identifier = 0
+         and then H3.Peer_Goaway_ID (Client) = 0);
    end;
 end HTTP3_Public_Smoke;

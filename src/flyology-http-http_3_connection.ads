@@ -29,7 +29,9 @@ private package Flyology.HTTP.HTTP_3_Connection is
      (Succeeded,
       No_Event,
       Not_Connected,
+      Not_Started,
       Already_Started,
+      Connection_Draining,
       Wrong_Role,
       Stream_Limit_Reached,
       Transport_Blocked,
@@ -42,6 +44,7 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Frame_Unexpected,
       Settings_Error,
       Frame_Error,
+      ID_Error,
       QPACK_Decompression_Failed,
       Peer_Field_Section_Too_Large,
       Message_Error,
@@ -57,6 +60,7 @@ private package Flyology.HTTP.HTTP_3_Connection is
    type Event_Kind is
      (No_Event,
       Settings_Received,
+      Goaway_Received,
       Headers_Received,
       Data_Received,
       Push_Promise_Received,
@@ -68,6 +72,7 @@ private package Flyology.HTTP.HTTP_3_Connection is
    type Event is record
       Kind        : Event_Kind := No_Event;
       Stream      : QUIC.Stream_ID := 0;
+      Identifier  : QUIC.Stream_Offset := 0;
       Headers     : QPACK_Field_Section_Policy.Header_Block;
       Data        : Ada.Streams.Stream_Element_Array (1 .. Max_Event_Data) :=
         (others => 0);
@@ -85,6 +90,14 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Transport : in out QUIC.Connection;
       Stream    : out QUIC.Stream_ID;
       Status    : out Operation_Status);
+
+   procedure Build_Goaway
+     (Item       : in out Connection;
+      Transport  : in out QUIC.Connection;
+      Identifier : QUIC.Stream_Offset;
+      Now        : QUIC.Timestamp;
+      Packet     : out QUIC.Datagram;
+      Status     : out Operation_Status);
 
    procedure Build_Headers
      (Item      : in out Connection;
@@ -111,6 +124,12 @@ private package Flyology.HTTP.HTTP_3_Connection is
    function Peer_Settings
      (Item : Connection) return HTTP_3_Settings_Policy.Settings
    with Pre => Has_Peer_Settings (Item);
+
+   function Has_Peer_Goaway (Item : Connection) return Boolean;
+
+   function Peer_Goaway_ID
+     (Item : Connection) return QUIC.Stream_Offset
+   with Pre => Has_Peer_Goaway (Item);
 
 private
    subtype Slot_Index is Positive range 1 .. Max_Streams;
@@ -149,5 +168,7 @@ private
       Started          : Boolean := False;
       Local_Control_ID : QUIC.Stream_ID := 0;
       Local_Control_Offset : QUIC.Stream_Offset := 0;
+      Local_Goaway_Seen : Boolean := False;
+      Local_Goaway      : QUIC.Stream_Offset := 0;
    end record;
 end Flyology.HTTP.HTTP_3_Connection;

@@ -156,6 +156,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
            Frame_Unexpected,
          when HTTP_3_Stream_Receive_Policy.Settings_Error => Settings_Error,
          when HTTP_3_Stream_Receive_Policy.Frame_Error => Frame_Error,
+         when HTTP_3_Stream_Receive_Policy.ID_Error => ID_Error,
          when HTTP_3_Stream_Receive_Policy.QPACK_Decompression_Failed =>
            QPACK_Decompression_Failed,
          when HTTP_3_Stream_Receive_Policy.Message_Error => Message_Error,
@@ -168,6 +169,8 @@ package body Flyology.HTTP.HTTP_3_Connection is
          when HTTP_3_Stream_Receive_Policy.No_Event => No_Event,
          when HTTP_3_Stream_Receive_Policy.Settings_Received =>
            Settings_Received,
+         when HTTP_3_Stream_Receive_Policy.Goaway_Received =>
+           Goaway_Received,
          when HTTP_3_Stream_Receive_Policy.Headers_Received =>
            Headers_Received,
          when HTTP_3_Stream_Receive_Policy.Data_Received => Data_Received,
@@ -185,6 +188,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
       Output := (others => <>);
       Output.Kind := Event_For (Result.Event);
       Output.Stream := ID;
+      Output.Identifier := Result.Identifier;
       Output.Headers := Result.Headers;
       Output.Data_Length := Result.Payload_Length;
       if Result.Payload_Length > 0 then
@@ -281,6 +285,13 @@ package body Flyology.HTTP.HTTP_3_Connection is
      (Item : Connection) return HTTP_3_Settings_Policy.Settings is
      (HTTP_3_Stream_Receive_Policy.Peer_Settings (Item.Receive));
 
+   function Has_Peer_Goaway (Item : Connection) return Boolean is
+     (HTTP_3_Stream_Receive_Policy.Has_Peer_Goaway (Item.Receive));
+
+   function Peer_Goaway_ID
+     (Item : Connection) return QUIC.Stream_Offset is
+     (HTTP_3_Stream_Receive_Policy.Peer_Goaway_ID (Item.Receive));
+
    function Find_Send
      (Item : Connection; ID : QUIC.Stream_ID) return Optional_Slot is
    begin
@@ -336,6 +347,8 @@ package body Flyology.HTTP.HTTP_3_Connection is
          Status := Not_Connected;
       elsif Item.Local_Role /= Client then
          Status := Wrong_Role;
+      elsif Has_Peer_Goaway (Item) then
+         Status := Connection_Draining;
       else
          QUIC.Open_Stream (Transport, QUIC.Bidirectional, Stream, Opened);
          if Opened = QUIC.Opened then
@@ -347,6 +360,57 @@ package body Flyology.HTTP.HTTP_3_Connection is
          end if;
       end if;
    end Open_Request;
+
+   procedure Build_Goaway
+     (Item       : in out Connection;
+      Transport  : in out QUIC.Connection;
+      Identifier : QUIC.Stream_Offset;
+      Now        : QUIC.Timestamp;
+      Packet     : out QUIC.Datagram;
+      Status     : out Operation_Status)
+   is
+      Encoded : constant HTTP_3_Frame_Policy.Varint_Policy.Encoded_Value :=
+        HTTP_3_Frame_Policy.Varint_Policy.Encode (Identifier);
+      Frame   : HTTP_3_Frame_Policy.Encode_Result;
+      Sent    : QUIC.Send_Status;
+   begin
+      Packet := (others => <>);
+      if not QUIC.Is_Connected (Transport) then
+         Status := Not_Connected;
+         return;
+      elsif not Item.Started then
+         Status := Not_Started;
+         return;
+      elsif Item.Local_Role = Server
+        and then not HTTP_3_Stream_Policy.Is_Request_Stream (Identifier)
+      then
+         Status := ID_Error;
+         return;
+      elsif Item.Local_Goaway_Seen
+        and then Identifier > Item.Local_Goaway
+      then
+         Status := ID_Error;
+         return;
+      end if;
+
+      Frame := HTTP_3_Frame_Policy.Encode
+        (HTTP_3_Frame_Policy.Goaway_Frame,
+         Encoded.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)));
+      QUIC.Build_Stream_Datagram
+        (Transport, Item.Local_Control_ID, Item.Local_Control_Offset,
+         Fin => False,
+         Data => Frame.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
+         Now => Now, Packet => Packet, Status => Sent);
+      Status := Send_Status_For (Sent);
+      if Status = Succeeded then
+         Item.Local_Control_Offset :=
+           Item.Local_Control_Offset + QUIC.Stream_Offset (Frame.Length);
+         Item.Local_Goaway_Seen := True;
+         Item.Local_Goaway := Identifier;
+      end if;
+   end Build_Goaway;
 
    procedure Find_Or_Add_Message
      (Item      : in out Connection;

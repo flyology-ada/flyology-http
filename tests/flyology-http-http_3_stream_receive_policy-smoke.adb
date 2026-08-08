@@ -2,6 +2,7 @@ with Flyology.HTTP.HTTP_3_Frame_Policy;
 
 procedure Flyology.HTTP.HTTP_3_Stream_Receive_Policy.Smoke is
    use type Ada.Streams.Stream_Element_Offset;
+   use type Varint_Policy.Value_Type;
 
    Connection : Connection_State;
    Stream     : Stream_State;
@@ -33,6 +34,15 @@ begin
      (Result.Status = Consumed and then Result.Consumed = 6
       and then Result.Event = Settings_Received
       and then Has_Peer_Settings (Connection));
+   Process
+     (Connection, Stream,
+      Ada.Streams.Stream_Element_Array'(7, 1, 4), Result);
+   pragma Assert
+     (Result.Status = Consumed and then Result.Consumed = 3
+      and then Result.Event = Goaway_Received
+      and then Result.Identifier = 4
+      and then Has_Peer_Goaway (Connection)
+      and then Peer_Goaway_ID (Connection) = 4);
    Finish (Connection, Stream, Status);
    pragma Assert (Status = Closed_Critical_Stream);
 

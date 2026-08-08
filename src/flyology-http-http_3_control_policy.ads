@@ -21,6 +21,8 @@ is
       Missing_Settings,
       Frame_Unexpected,
       Settings_Error,
+      Frame_Error,
+      ID_Error,
       Critical_Stream_Closed);
 
    function Has_Peer_Control (Item : Control_State) return Boolean
@@ -34,6 +36,15 @@ is
    with
      Global => null,
      Pre => Has_Peer_Settings (Item);
+
+   function Has_Peer_Goaway (Item : Control_State) return Boolean
+   with Global => null;
+
+   function Peer_Goaway_ID
+     (Item : Control_State) return Varint_Policy.Value_Type
+   with
+     Global => null,
+     Pre => Has_Peer_Goaway (Item);
 
    procedure Register_Peer_Control
      (Item       : in out Control_State;
@@ -58,7 +69,11 @@ is
        (if Status = Accepted
           and then Frame_Type = 16#04#
           and then not Has_Peer_Settings (Item'Old)
-        then Has_Peer_Settings (Item));
+        then Has_Peer_Settings (Item))
+       and then
+         (if Status = Accepted
+            and then Frame_Type = 16#07#
+          then Has_Peer_Goaway (Item));
 
    procedure Peer_Stream_Closed
      (Item      : Control_State;
@@ -90,5 +105,9 @@ private
       Peer_Settings_Seen : Boolean := False;
       Peer_Control_ID    : Varint_Policy.Value_Type := 0;
       Settings           : HTTP_3_Settings_Policy.Settings;
+      Local_Role         : HTTP_3_Stream_Policy.Endpoint_Role :=
+        HTTP_3_Stream_Policy.Client;
+      Peer_Goaway_Seen   : Boolean := False;
+      Peer_Goaway        : Varint_Policy.Value_Type := 0;
    end record;
 end Flyology.HTTP.HTTP_3_Control_Policy;

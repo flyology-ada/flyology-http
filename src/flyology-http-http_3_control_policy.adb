@@ -4,7 +4,8 @@ package body Flyology.HTTP.HTTP_3_Control_Policy
   with SPARK_Mode => On
 is
    use type HTTP_3_Settings_Policy.Decode_Status;
-   use type Varint_Policy.Value_Type;
+   use type HTTP_3_Stream_Policy.Endpoint_Role;
+   use type Varint_Policy.Decode_Status;
 
    function Has_Peer_Control (Item : Control_State) return Boolean is
      (Item.Peer_Control_Seen);
@@ -15,6 +16,13 @@ is
    function Peer_Settings
      (Item : Control_State) return HTTP_3_Settings_Policy.Settings is
        (Item.Settings);
+
+   function Has_Peer_Goaway (Item : Control_State) return Boolean is
+     (Item.Peer_Goaway_Seen);
+
+   function Peer_Goaway_ID
+     (Item : Control_State) return Varint_Policy.Value_Type is
+       (Item.Peer_Goaway);
 
    procedure Register_Peer_Control
      (Item       : in out Control_State;
@@ -33,6 +41,7 @@ is
       end if;
       Item.Peer_Control_Seen := True;
       Item.Peer_Control_ID := Stream_ID;
+      Item.Local_Role := Local_Role;
       Status := Accepted;
    end Register_Peer_Control;
 
@@ -42,7 +51,8 @@ is
       Payload    : Ada.Streams.Stream_Element_Array;
       Status     : out Operation_Status)
    is
-      Parsed : HTTP_3_Settings_Policy.Decode_Result;
+      Parsed     : HTTP_3_Settings_Policy.Decode_Result;
+      Identifier : Varint_Policy.Decode_Result;
    begin
       if not Item.Peer_Control_Seen then
          Status := Stream_Creation_Error;
@@ -59,6 +69,26 @@ is
          Item.Settings := Parsed.Value;
          Item.Peer_Settings_Seen := True;
          Status := Accepted;
+      elsif Frame_Type = HTTP_3_Frame_Policy.Goaway_Frame then
+         Identifier := Varint_Policy.Decode (Payload);
+         if Identifier.Status /= Varint_Policy.Decoded
+           or else Natural (Identifier.Consumed) /= Payload'Length
+         then
+            Status := Frame_Error;
+         elsif Item.Local_Role = HTTP_3_Stream_Policy.Client
+           and then not HTTP_3_Stream_Policy.Is_Request_Stream
+             (Identifier.Value)
+         then
+            Status := ID_Error;
+         elsif Item.Peer_Goaway_Seen
+           and then Identifier.Value > Item.Peer_Goaway
+         then
+            Status := ID_Error;
+         else
+            Item.Peer_Goaway_Seen := True;
+            Item.Peer_Goaway := Identifier.Value;
+            Status := Accepted;
+         end if;
       elsif Frame_Type = HTTP_3_Frame_Policy.Settings_Frame
         or else Frame_Type = HTTP_3_Frame_Policy.Data_Frame
         or else Frame_Type = HTTP_3_Frame_Policy.Headers_Frame

@@ -33,6 +33,7 @@ is
    type Event_Kind is
      (No_Event,
       Settings_Received,
+      Goaway_Received,
       Headers_Received,
       Data_Received,
       Push_Promise_Received,
@@ -47,6 +48,7 @@ is
       Frame_Unexpected,
       Settings_Error,
       Frame_Error,
+      ID_Error,
       QPACK_Decompression_Failed,
       Message_Error,
       Header_Error);
@@ -57,6 +59,7 @@ is
       Consumed       : Input_Offset := 0;
       Payload_Offset : Input_Offset := 0;
       Payload_Length : Input_Offset := 0;
+      Identifier     : Varint_Policy.Value_Type := 0;
       Headers        : QPACK_Field_Section_Policy.Header_Block;
    end record;
 
@@ -73,6 +76,14 @@ is
      (Item : Connection_State) return HTTP_3_Settings_Policy.Settings
    with Global => null,
         Pre => Has_Peer_Settings (Item);
+
+   function Has_Peer_Goaway (Item : Connection_State) return Boolean
+   with Global => null;
+
+   function Peer_Goaway_ID
+     (Item : Connection_State) return Varint_Policy.Value_Type
+   with Global => null,
+        Pre => Has_Peer_Goaway (Item);
 
    procedure Open
      (Item       : out Stream_State;

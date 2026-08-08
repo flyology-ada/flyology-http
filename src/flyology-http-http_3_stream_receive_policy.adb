@@ -26,6 +26,13 @@ is
      (Item : Connection_State) return HTTP_3_Settings_Policy.Settings is
      (HTTP_3_Control_Policy.Peer_Settings (Item.Control));
 
+   function Has_Peer_Goaway (Item : Connection_State) return Boolean is
+     (HTTP_3_Control_Policy.Has_Peer_Goaway (Item.Control));
+
+   function Peer_Goaway_ID
+     (Item : Connection_State) return Varint_Policy.Value_Type is
+     (HTTP_3_Control_Policy.Peer_Goaway_ID (Item.Control));
+
    procedure Open
      (Item       : out Stream_State;
       Stream_ID  : Varint_Policy.Value_Type;
@@ -174,12 +181,20 @@ is
             when HTTP_3_Control_Policy.Missing_Settings => Missing_Settings,
             when HTTP_3_Control_Policy.Frame_Unexpected => Frame_Unexpected,
             when HTTP_3_Control_Policy.Settings_Error => Settings_Error,
+            when HTTP_3_Control_Policy.Frame_Error => Frame_Error,
+            when HTTP_3_Control_Policy.ID_Error => ID_Error,
             when HTTP_3_Control_Policy.Critical_Stream_Closed =>
               Closed_Critical_Stream);
       if Result.Status = Consumed
         and then Frame.Frame_Type = HTTP_3_Frame_Policy.Settings_Frame
       then
          Result.Event := Settings_Received;
+      elsif Result.Status = Consumed
+        and then Frame.Frame_Type = HTTP_3_Frame_Policy.Goaway_Frame
+      then
+         Result.Event := Goaway_Received;
+         Result.Identifier :=
+           HTTP_3_Control_Policy.Peer_Goaway_ID (Connection.Control);
       end if;
    end Process_Control;
 
