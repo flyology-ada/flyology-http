@@ -72,6 +72,13 @@ is
       Limit : Value_Type) return Boolean
    with Global => null;
 
+   function Check_Send
+     (Item   : State;
+      ID     : Stream_ID_Policy.Stream_ID;
+      Offset : Value_Type;
+      Length : Natural) return Reserve_Status
+   with Global => null;
+
    procedure Reserve_Send
      (Item   : in out State;
       ID     : Stream_ID_Policy.Stream_ID;

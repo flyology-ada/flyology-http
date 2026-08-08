@@ -95,6 +95,49 @@ is
         or else Item.Streams (Index).ID /= ID
         or else Item.Streams (Index).Limit >= Limit);
 
+   function Check_Send
+     (Item   : State;
+      ID     : Stream_ID_Policy.Stream_ID;
+      Offset : Value_Type;
+      Length : Natural) return Reserve_Status
+   is
+      Index    : constant Optional_Index := Find (Item, ID);
+      Ending   : Value_Type;
+      Highest  : Value_Type;
+      Limit    : Value_Type;
+      Increase : Value_Type;
+   begin
+      if not Stream_ID_Policy.Can_Send (Item.Role, ID) then
+         return Stream_Not_Sendable;
+      elsif Value_Type (Length) > Value_Type'Last - Offset then
+         return Stream_Range_Too_Large;
+      end if;
+      Ending := Offset + Value_Type (Length);
+
+      if Index = 0 then
+         if Item.Count = Max_Streams or else Free_Slot (Item) = 0 then
+            return Stream_Capacity_Exceeded;
+         end if;
+         Highest := 0;
+         Limit := Initial_Stream_Limit (Item, ID);
+      else
+         pragma Assert (Index in Stream_Index);
+         Highest := Item.Streams (Index).Highest;
+         Limit := Item.Streams (Index).Limit;
+      end if;
+
+      if Ending > Limit then
+         return Stream_Flow_Blocked;
+      end if;
+      Increase := (if Ending > Highest then Ending - Highest else 0);
+      if Increase > Item.Maximum
+        or else Item.Committed > Item.Maximum - Increase
+      then
+         return Connection_Flow_Blocked;
+      end if;
+      return Reserved;
+   end Check_Send;
+
    procedure Reset
      (Item   : out State;
       Role   : Stream_ID_Policy.Endpoint_Role;

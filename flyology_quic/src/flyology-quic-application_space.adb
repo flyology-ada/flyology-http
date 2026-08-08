@@ -13,11 +13,16 @@ package body Flyology.QUIC.Application_Space is
    use type Application_Connection.Process_Status;
    use type Application_Frame_Policy.Frame_Kind;
    use type Application_Frame_Policy.Parse_Status;
+   use type Flow_Control_Policy.Reserve_Status;
+   use type Flow_Control_Policy.Update_Status;
    use type Recovery_Policy.Send_Status;
    use type Sent_Packet_Policy.Apply_Status;
    use type Sent_Packet_Policy.Event_Kind;
    use type Sent_Packet_Policy.Record_Status;
    use type Stream_Frame_Policy.Encode_Status;
+   use type Stream_ID_Policy.Stream_Count;
+   use type Stream_ID_Policy.Stream_Direction;
+   use type Stream_ID_Policy.Open_Status;
    use type Stream_Table_Policy.Process_Status;
 
    function Is_Initialized (Item : State) return Boolean is
@@ -55,6 +60,22 @@ package body Flyology.QUIC.Application_Space is
    is
      (Sent_Packet_Policy.Retained (Item.Sent));
 
+   function Committed_Data (Item : State) return Varint_Policy.Value_Type is
+     (Flow_Control_Policy.Committed_Data (Item.Flow));
+
+   procedure Open_Stream
+     (Item      : in out State;
+      Direction : Stream_ID_Policy.Stream_Direction;
+      ID        : out Varint_Policy.Value_Type;
+      Status    : out Open_Status) is
+   begin
+      Stream_ID_Policy.Open_Local
+        (Item.Allocator, Direction,
+         (if Direction = Stream_ID_Policy.Bidirectional
+          then Item.Peer_Bidi else Item.Peer_Uni),
+         ID, Status);
+   end Open_Stream;
+
    function Bytes_In_Flight (Item : State) return Recovery_Policy.Byte_Count is
      (Recovery_Policy.Bytes_In_Flight (Item.Recovery));
 
@@ -88,11 +109,17 @@ package body Flyology.QUIC.Application_Space is
       Sending     : TLS_Key_Schedule.QUIC_Traffic_Keys;
       Receiving   : TLS_Key_Schedule.QUIC_Traffic_Keys;
       Destination : Long_Header_Policy.Connection_ID;
-      Local_ID    : Long_Header_Policy.Connection_ID) is
+      Local_ID    : Long_Header_Policy.Connection_ID;
+      Role        : Stream_ID_Policy.Endpoint_Role;
+      Peer        : Peer_Limits) is
    begin
       Application_Connection.Initialize
         (Item.Packets, Sending, Receiving, Destination, Local_ID);
       Stream_Table_Policy.Reset (Item.Streams);
+      Stream_ID_Policy.Reset (Item.Allocator, Role);
+      Flow_Control_Policy.Reset (Item.Flow, Role, Peer.Data);
+      Item.Peer_Bidi := Peer.Streams_Bidi;
+      Item.Peer_Uni := Peer.Streams_Uni;
       Sent_Packet_Policy.Reset (Item.Sent);
       Recovery_Policy.Reset (Item.Recovery);
       Item.Initialized := True;
@@ -112,6 +139,37 @@ package body Flyology.QUIC.Application_Space is
          when Application_Connection.Packet_Too_Large => Packet_Too_Large,
          when Application_Connection.Output_Too_Small => Output_Too_Small);
 
+   function Send_Status_For
+     (Status : Flow_Control_Policy.Reserve_Status) return Send_Status
+   is
+     (case Status is
+         when Flow_Control_Policy.Reserved => Sent,
+         when Flow_Control_Policy.Stream_Not_Sendable => Stream_Not_Sendable,
+         when Flow_Control_Policy.Stream_Capacity_Exceeded =>
+           Stream_Capacity_Exceeded,
+         when Flow_Control_Policy.Stream_Flow_Blocked => Stream_Flow_Blocked,
+         when Flow_Control_Policy.Connection_Flow_Blocked =>
+           Connection_Flow_Blocked,
+         when Flow_Control_Policy.Stream_Range_Too_Large =>
+           Stream_Range_Too_Large);
+
+   function Stream_Was_Opened
+     (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
+   is
+      Role : constant Stream_ID_Policy.Endpoint_Role :=
+        Stream_ID_Policy.Local_Role (Item.Allocator);
+   begin
+      if Stream_ID_Policy.Is_Local (Role, ID) then
+         return Stream_ID_Policy.Ordinal (ID) <=
+           Stream_ID_Policy.Opened_Count
+             (Item.Allocator, Stream_ID_Policy.Direction (ID));
+      else
+         return Stream_ID_Policy.Direction (ID) =
+           Stream_ID_Policy.Bidirectional
+           and then Stream_Table_Policy.Has_Stream (Item.Streams, ID);
+      end if;
+   end Stream_Was_Opened;
+
    procedure Build_Stream_Packet
      (Item      : in out State;
       Stream_ID : Varint_Policy.Value_Type;
@@ -126,11 +184,15 @@ package body Flyology.QUIC.Application_Space is
       Built          : Application_Connection.Build_Result;
       Record_Status  : Sent_Packet_Policy.Record_Status;
       Account_Status : Recovery_Policy.Send_Status;
+      Flow_Status    : Flow_Control_Policy.Reserve_Status;
       Sent_Packet    : Sent_Packet_Policy.Sent_Packet;
    begin
       Packet := (others => 0);
       Result := (others => <>);
-      if Sent_Packet_Policy.Retained (Item.Sent) =
+      if not Stream_Was_Opened (Item, Stream_ID) then
+         Result.Status := Stream_Not_Sendable;
+         return;
+      elsif Sent_Packet_Policy.Retained (Item.Sent) =
         Sent_Packet_Policy.Max_Sent_Packets
       then
          Result.Status := Recovery_Capacity_Exceeded;
@@ -140,6 +202,13 @@ package body Flyology.QUIC.Application_Space is
          Sent_Packet_Policy.Packet_Byte_Count (Max_Datagram_Length))
       then
          Result.Status := Congestion_Blocked;
+         return;
+      end if;
+
+      Flow_Status := Flow_Control_Policy.Check_Send
+        (Item.Flow, Stream_ID, Offset, Data'Length);
+      if Flow_Status /= Flow_Control_Policy.Reserved then
+         Result.Status := Send_Status_For (Flow_Status);
          return;
       end if;
 
@@ -162,6 +231,12 @@ package body Flyology.QUIC.Application_Space is
          return;
       end if;
 
+      Flow_Control_Policy.Reserve_Send
+        (Item.Flow, Stream_ID, Offset, Data'Length, Flow_Status);
+      if Flow_Status /= Flow_Control_Policy.Reserved then
+         Result.Status := Internal_State_Error;
+         return;
+      end if;
       Result.Packet_Length := Built.Packet_Length;
       Sent_Packet :=
         (Number        => Built.Number,
@@ -306,6 +381,7 @@ package body Flyology.QUIC.Application_Space is
       Applied   : Sent_Packet_Policy.Apply_Result;
       Sampled   : Boolean;
       ACKed_Ack_Eliciting : Boolean;
+      Updated   : Flow_Control_Policy.Update_Status;
    begin
       Result := (others => <>);
       Application_Connection.Process_One_RTT
@@ -339,7 +415,35 @@ package body Flyology.QUIC.Application_Space is
          then
             Result.ACK_Eliciting := True;
          end if;
-         if Frame.Kind = Application_Frame_Policy.Acknowledgment then
+         if Frame.Kind = Application_Frame_Policy.Max_Data then
+            Flow_Control_Policy.Raise_Connection_Limit
+              (Item.Flow, Frame.Maximum);
+         elsif Frame.Kind = Application_Frame_Policy.Max_Stream_Data then
+            Flow_Control_Policy.Raise_Stream_Limit
+              (Item.Flow, Frame.Stream_ID, Frame.Maximum, Updated);
+            if Updated = Flow_Control_Policy.Stream_Not_Sendable then
+               Result.Status := Invalid_Stream_State;
+               return;
+            elsif Updated = Flow_Control_Policy.Stream_Capacity_Exceeded then
+               Result.Status := Stream_Capacity_Exceeded;
+               return;
+            end if;
+         elsif Frame.Kind in Application_Frame_Policy.Max_Streams_Bidi
+           | Application_Frame_Policy.Max_Streams_Uni
+         then
+            if Frame.Maximum > Varint_Policy.Value_Type
+              (Stream_ID_Policy.Stream_Count'Last)
+            then
+               Result.Status := Invalid_Stream_Limit;
+               return;
+            elsif Frame.Kind = Application_Frame_Policy.Max_Streams_Bidi then
+               Item.Peer_Bidi := Varint_Policy.Value_Type'Max
+                 (Item.Peer_Bidi, Frame.Maximum);
+            else
+               Item.Peer_Uni := Varint_Policy.Value_Type'Max
+                 (Item.Peer_Uni, Frame.Maximum);
+            end if;
+         elsif Frame.Kind = Application_Frame_Policy.Acknowledgment then
             Ranges := ACK_Range_Policy.Decode
               (Plaintext (1 .. Length), Frame.Base);
             if Ranges.Status /= ACK_Range_Policy.Decoded then
