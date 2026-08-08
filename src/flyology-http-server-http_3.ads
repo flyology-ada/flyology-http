@@ -21,6 +21,41 @@ package Flyology.HTTP.Server.HTTP_3 is
    --  unidirectional streams occupy the current bounded QUIC stream table.
    Maximum_Requests_Per_Connection : constant Positive := 5;
 
+   --  Run a bounded multi-connection HTTP/3 listener on an unconnected bound
+   --  UDP socket. One receiver dispatches datagrams by connection identifier
+   --  to Capacity fixed worker tasks. The caller requests shutdown through
+   --  Token; Serve_Listener then drains its workers and returns without
+   --  closing Socket.
+   --  @param Context Shared application context; mutable parts synchronize
+   --  @param Socket Exclusively owned bound UDP listener
+   --  @param Certificate_DER DER-encoded Ed25519 server certificate
+   --  @param Private_Key Raw Ed25519 private key for Certificate_DER
+   --  @param Capacity Maximum concurrent QUIC connections
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request application deadline
+   --  @param Handshake_Timeout Maximum time to establish each QUIC connection
+   --  @param Max_Connection_Age Absolute lifetime of each connection
+   --  @param Max_Requests Requests served by each connection
+   --  @param Token Required listener shutdown and connection cancellation
+   procedure Serve_Listener
+     (Context            : aliased in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Capacity           : Positive := 8;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Token              : not null access Flyology.Cancellation.Token)
+   with Pre => Flyology.IO.Sockets.Is_Open (Socket)
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then Capacity <= 32
+     and then Handshake_Timeout > 0.0
+     and then Max_Requests <= Maximum_Requests_Per_Connection;
+
    --  Serve routed requests from one QUIC peer using a securely generated
    --  server connection identifier. This is the ordinary application entry
    --  point; use the Source overload when identifier ownership belongs to an

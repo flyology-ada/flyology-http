@@ -3,6 +3,7 @@ with Ada.Real_Time;
 with Ada.Strings.Fixed;
 with Ada.Unchecked_Deallocation;
 with Flyology.Bytes;
+with Flyology.Channels.Bounded;
 with Flyology.HTTP.HTTP_3;
 with Flyology.HTTP.Server.Applications.Internals;
 with Flyology.HTTP.Server.Exchange_Backends;
@@ -32,6 +33,107 @@ package body Flyology.HTTP.Server.HTTP_3 is
    Maximum_Events : constant Positive := 32;
    Maximum_Request_Streams : constant Positive := 8;
    Response_Chunk_Size : constant Positive := 1_024;
+
+   type Received_Datagram is record
+      Data     : Stream_Element_Array (1 .. QUIC.Max_Datagram_Length) :=
+        (others => 0);
+      Length   : Natural range 0 .. QUIC.Max_Datagram_Length := 0;
+      Metadata : Sockets.Datagram_Metadata;
+      Starts_Connection : Boolean := False;
+      Source   : QUIC.Connection_ID;
+   end record;
+
+   package Datagram_Channels is new Flyology.Channels.Bounded
+     (Received_Datagram, (others => <>));
+   use type Datagram_Channels.Try_Send_Result;
+
+   type Datagram_Channel_Access is access all Datagram_Channels.Channel;
+
+   type Boolean_Array is array (Positive range <>) of Boolean;
+   type Connection_ID_Array is
+     array (Positive range <>) of QUIC.Connection_ID;
+   type Endpoint_Array is array (Positive range <>) of Sockets.Endpoint;
+
+   function Same_ID (Left, Right : QUIC.Connection_ID) return Boolean is
+   begin
+      return Left.Length = Right.Length
+        and then
+          (Left.Length = 0
+           or else Left.Data
+             (1 .. Stream_Element_Offset (Left.Length)) =
+               Right.Data (1 .. Stream_Element_Offset (Right.Length)));
+   end Same_ID;
+
+   protected type Connection_Registry (Capacity : Positive) is
+      procedure Resolve
+        (Header    : QUIC.Datagram_Header;
+         Peer      : Sockets.Endpoint;
+         Candidate : QUIC.Connection_ID;
+         Index     : out Natural;
+         Starts    : out Boolean;
+         Source    : out QUIC.Connection_ID);
+      procedure Release (Index : Positive);
+   private
+      Used      : Boolean_Array (1 .. Capacity) := (others => False);
+      Peers     : Endpoint_Array (1 .. Capacity);
+      Sources   : Connection_ID_Array (1 .. Capacity);
+      Originals : Connection_ID_Array (1 .. Capacity);
+   end Connection_Registry;
+
+   protected body Connection_Registry is
+      procedure Resolve
+        (Header    : QUIC.Datagram_Header;
+         Peer      : Sockets.Endpoint;
+         Candidate : QUIC.Connection_ID;
+         Index     : out Natural;
+         Starts    : out Boolean;
+         Source    : out QUIC.Connection_ID)
+      is
+         use type Sockets.Endpoint;
+      begin
+         Index := 0;
+         Starts := False;
+         Source := (others => <>);
+         if not Header.Valid then
+            return;
+         end if;
+         for Slot in Used'Range loop
+            if Used (Slot)
+              and then Peers (Slot) = Peer
+              and then
+                (Same_ID (Sources (Slot), Header.Destination)
+                 or else Same_ID (Originals (Slot), Header.Destination))
+            then
+               Index := Slot;
+               Source := Sources (Slot);
+               return;
+            end if;
+         end loop;
+         if Header.Is_Initial then
+            for Slot in Used'Range loop
+               if not Used (Slot) and then Index = 0 then
+                  Used (Slot) := True;
+                  Peers (Slot) := Peer;
+                  Sources (Slot) := Candidate;
+                  Originals (Slot) := Header.Destination;
+                  Index := Slot;
+                  Starts := True;
+                  Source := Candidate;
+               end if;
+            end loop;
+         end if;
+      end Resolve;
+
+      procedure Release (Index : Positive) is
+      begin
+         if Index in Used'Range then
+            Used (Index) := False;
+            Peers (Index) := Sockets.No_Endpoint;
+            Sources (Index) := (others => <>);
+            Originals (Index) := (others => <>);
+         end if;
+      end Release;
+   end Connection_Registry;
 
    type Event_Array is array (Positive range 1 .. Maximum_Events) of H3.Event;
    type Event_Queue is record
@@ -70,7 +172,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
 
    type Connection_State is limited record
       Socket    : access Sockets.Socket_Type;
+      Inbox     : Datagram_Channel_Access := null;
       Peer      : Sockets.Endpoint;
+      Local     : Sockets.Endpoint;
       Token     : access Flyology.Cancellation.Token;
       Epoch     : Ada.Real_Time.Time := Ada.Real_Time.Clock;
       Transport : QUIC.Connection;
@@ -130,8 +234,11 @@ package body Flyology.HTTP.Server.HTTP_3 is
    is
       Last : Stream_Element_Offset;
    begin
-      if Item.Token = null then
+      if Item.Token = null and then Item.Inbox = null then
          Sockets.Send (Item.Socket.all, Data, Last, Timeout);
+      elsif Item.Token = null then
+         Sockets.Send_Datagram
+           (Item.Socket.all, Data, Last, Item.Peer, Item.Local, Timeout);
       else
          declare
             FD : Flyology.IO.Descriptor;
@@ -141,8 +248,14 @@ package body Flyology.HTTP.Server.HTTP_3 is
             if Cancelled then
                raise Flyology.Cancellation.Operation_Cancelled;
             end if;
-            Sockets.Send
-              (Item.Socket.all, Data, Last, Timeout, (1 => FD));
+            if Item.Inbox = null then
+               Sockets.Send
+                 (Item.Socket.all, Data, Last, Timeout, (1 => FD));
+            else
+               Sockets.Send_Datagram
+                 (Item.Socket.all, Data, Last, Item.Peer, Item.Local,
+                  Timeout, (1 => FD));
+            end if;
          exception
             when Sockets.Operation_Interrupted =>
                raise Flyology.Cancellation.Operation_Cancelled;
@@ -223,7 +336,23 @@ package body Flyology.HTTP.Server.HTTP_3 is
 
       procedure Receive is
       begin
-         if Item.Token = null then
+         if Item.Inbox /= null then
+            declare
+               Message : Received_Datagram;
+            begin
+               Datagram_Channels.Timed_Receive
+                 (Item.Inbox.all, Message, Wait);
+               Last := Stream_Element_Offset (Message.Length);
+               if Message.Length > 0 then
+                  Packet (1 .. Last) := Message.Data (1 .. Last);
+               end if;
+            exception
+               when Datagram_Channels.Timeout_Error =>
+                  raise Flyology.IO.Timeout_Error;
+               when Datagram_Channels.Channel_Closed =>
+                  raise Flyology.Cancellation.Operation_Cancelled;
+            end;
+         elsif Item.Token = null then
             Sockets.Receive (Item.Socket.all, Packet, Last, Wait);
          else
             declare
@@ -964,9 +1093,11 @@ package body Flyology.HTTP.Server.HTTP_3 is
       return 0;
    end Find;
 
-   procedure Serve
+   procedure Serve_Connection
      (Context            : in out App_Context;
-      Socket             : aliased in out Sockets.Socket_Type;
+      Socket             : not null access Sockets.Socket_Type;
+      Inbox              : Datagram_Channel_Access;
+      First              : Received_Datagram;
       Certificate_DER    : Stream_Element_Array;
       Private_Key        : QUIC.Ed25519_Private_Key;
       Source             : QUIC.Connection_ID;
@@ -978,10 +1109,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Token              : access Flyology.Cancellation.Token := null)
    is
       State : Connection_State_Access := new Connection_State'
-        (Socket => Socket'Unchecked_Access, Token => Token, others => <>);
-      Initial : Stream_Element_Array (1 .. QUIC.Max_Datagram_Length);
-      Last : Stream_Element_Offset;
-      Metadata : Sockets.Datagram_Metadata;
+        (Socket => Socket, Inbox => Inbox, Token => Token, others => <>);
       Initialized : QUIC.Server_Initialize_Status;
       Flight : QUIC.Datagram_Batch;
       QUIC_Status : QUIC.Operation_Status;
@@ -992,33 +1120,6 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Connection_Deadline : constant Ada.Real_Time.Time :=
         (if Max_Connection_Age < 0.0 then Ada.Real_Time.Time_Last
          else State.Epoch + Ada.Real_Time.To_Time_Span (Max_Connection_Age));
-
-      procedure Receive_Initial is
-      begin
-         if Token = null then
-            Sockets.Receive_Datagram
-              (Socket, Initial, Last, Metadata, Handshake_Timeout);
-         else
-            declare
-               FD : Flyology.IO.Descriptor;
-               Cancelled : Boolean;
-            begin
-               Token.Wait_Source (FD, Cancelled);
-               if Cancelled then
-                  raise Flyology.Cancellation.Operation_Cancelled;
-               end if;
-               Sockets.Receive_Datagram
-                 (Socket, Initial, Last, Metadata, Handshake_Timeout,
-                  (1 => FD));
-            exception
-               when Sockets.Operation_Interrupted =>
-                  raise Flyology.Cancellation.Operation_Cancelled;
-            end;
-         end if;
-         if Last < Initial'First or else Metadata.Truncated then
-            raise Protocol_Error with "invalid first QUIC datagram";
-         end if;
-      end Receive_Initial;
 
       procedure Start_HTTP_3 is
       begin
@@ -1206,19 +1307,26 @@ package body Flyology.HTTP.Server.HTTP_3 is
          raise Constraint_Error with
            "HTTP/3 handshake timeout must be positive";
       end if;
-      Receive_Initial;
-      State.Peer := Metadata.Source;
-      Sockets.Connect_Socket (Socket, State.Peer);
+      if First.Length = 0 or else First.Metadata.Truncated then
+         raise Protocol_Error with "invalid first QUIC datagram";
+      end if;
+      State.Peer := First.Metadata.Source;
+      State.Local := First.Metadata.Destination;
+      if Inbox = null then
+         Sockets.Connect_Socket (Socket.all, State.Peer);
+      end if;
       QUIC.Initialize_Server_From_Initial
         (State.Transport, ALPN, Transport_Settings, Certificate_DER,
-         Private_Key, Source, Initial (Initial'First .. Last), Initialized);
+         Private_Key, Source,
+         First.Data (1 .. Stream_Element_Offset (First.Length)), Initialized);
       if Initialized /= QUIC.Initialized then
          raise Protocol_Error with
            "QUIC server initialization failed: " &
            QUIC.Server_Initialize_Status'Image (Initialized);
       end if;
       QUIC.Process_Datagram
-        (State.Transport, Initial (Initial'First .. Last), Flight,
+        (State.Transport,
+         First.Data (1 .. Stream_Element_Offset (First.Length)), Flight,
          QUIC_Status, Now (State.all));
       if QUIC_Status not in QUIC.Succeeded | QUIC.Waiting_For_More then
          raise Protocol_Error with
@@ -1265,7 +1373,190 @@ package body Flyology.HTTP.Server.HTTP_3 is
       when others =>
          Cleanup;
          raise;
+   end Serve_Connection;
+
+   procedure Serve
+     (Context            : in out App_Context;
+      Socket             : aliased in out Sockets.Socket_Type;
+      Certificate_DER    : Stream_Element_Array;
+      Private_Key        : QUIC.Ed25519_Private_Key;
+      Source             : QUIC.Connection_ID;
+      Transport_Settings : QUIC.Transport_Settings := (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Token              : access Flyology.Cancellation.Token := null)
+   is
+      First : Received_Datagram;
+      Last  : Stream_Element_Offset;
+   begin
+      if Token = null then
+         Sockets.Receive_Datagram
+           (Socket, First.Data, Last, First.Metadata, Handshake_Timeout);
+      else
+         declare
+            FD : Flyology.IO.Descriptor;
+            Cancelled : Boolean;
+         begin
+            Token.Wait_Source (FD, Cancelled);
+            if Cancelled then
+               raise Flyology.Cancellation.Operation_Cancelled;
+            end if;
+            Sockets.Receive_Datagram
+              (Socket, First.Data, Last, First.Metadata, Handshake_Timeout,
+               (1 => FD));
+         exception
+            when Sockets.Operation_Interrupted =>
+               raise Flyology.Cancellation.Operation_Cancelled;
+         end;
+      end if;
+      First.Length :=
+        (if Last < First.Data'First then 0
+         else Natural (Last - First.Data'First + 1));
+      First.Starts_Connection := True;
+      Serve_Connection
+        (Context, Socket'Unchecked_Access, null, First, Certificate_DER,
+         Private_Key, Source, Transport_Settings, Timeout,
+         Handshake_Timeout, Max_Connection_Age, Max_Requests, Token);
    end Serve;
+
+   procedure Serve_Listener
+     (Context            : aliased in out App_Context;
+      Socket             : aliased in out Sockets.Socket_Type;
+      Certificate_DER    : Stream_Element_Array;
+      Private_Key        : QUIC.Ed25519_Private_Key;
+      Capacity           : Positive := 8;
+      Transport_Settings : QUIC.Transport_Settings := (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Token              : not null access Flyology.Cancellation.Token)
+   is
+      subtype Slot_Index is Positive range 1 .. Capacity;
+      subtype Inbox is Datagram_Channels.Channel (Capacity => 32);
+      type Inbox_Array is array (Slot_Index) of aliased Inbox;
+
+      Inboxes  : Inbox_Array;
+      Registry : Connection_Registry (Capacity);
+
+      task type Worker is
+         entry Start (Index : Slot_Index);
+      end Worker;
+      for Worker'Storage_Size use 16 * 1_024 * 1_024;
+
+      task body Worker is
+         Slot    : Slot_Index := Slot_Index'First;
+         Message : Received_Datagram;
+      begin
+         accept Start (Index : Slot_Index) do
+            Slot := Index;
+         end Start;
+         loop
+            begin
+               Inboxes (Slot).Receive (Message);
+               if Message.Starts_Connection then
+                  begin
+                     Serve_Connection
+                       (Context, Socket'Unchecked_Access,
+                        Inboxes (Slot)'Unchecked_Access, Message,
+                        Certificate_DER, Private_Key, Message.Source,
+                        Transport_Settings, Timeout, Handshake_Timeout,
+                        Max_Connection_Age, Max_Requests, Token);
+                  exception
+                     when others => null;
+                  end;
+                  Registry.Release (Slot);
+               end if;
+            exception
+               when Datagram_Channels.Channel_Closed =>
+                  exit;
+            end;
+         end loop;
+      end Worker;
+
+      type Worker_Array is array (Slot_Index) of Worker;
+      Workers : Worker_Array;
+
+      procedure Close_Inboxes is
+      begin
+         for Index in Inboxes'Range loop
+            Inboxes (Index).Close;
+         end loop;
+      end Close_Inboxes;
+   begin
+      if Capacity > 32 then
+         raise Constraint_Error with
+           "HTTP/3 listener capacity exceeds the bounded worker profile";
+      elsif Max_Requests > Maximum_Requests_Per_Connection then
+         raise Constraint_Error with
+           "HTTP/3 request limit exceeds the bounded connection profile";
+      elsif Handshake_Timeout <= 0.0 then
+         raise Constraint_Error with
+           "HTTP/3 handshake timeout must be positive";
+      end if;
+
+      Sockets.Enable_Datagram_Metadata (Socket);
+      for Index in Workers'Range loop
+         Workers (Index).Start (Index);
+      end loop;
+
+      loop
+         exit when Token.Requested;
+         declare
+            Message   : Received_Datagram;
+            Last      : Stream_Element_Offset;
+            FD        : Flyology.IO.Descriptor;
+            Cancelled : Boolean;
+            Header    : QUIC.Datagram_Header;
+            Candidate : QUIC.Connection_ID;
+            Index     : Natural;
+            Starts    : Boolean;
+            Source    : QUIC.Connection_ID;
+            Sent      : Datagram_Channels.Try_Send_Result;
+         begin
+            Token.Wait_Source (FD, Cancelled);
+            exit when Cancelled;
+            Sockets.Receive_Datagram
+              (Socket, Message.Data, Last, Message.Metadata,
+               Timeout => -1.0, Interrupts => (1 => FD));
+            if Last >= Message.Data'First
+              and then not Message.Metadata.Truncated
+            then
+               Message.Length :=
+                 Natural (Last - Message.Data'First + 1);
+               Header := QUIC.Inspect_Datagram_Header
+                 (Message.Data (1 .. Stream_Element_Offset (Message.Length)));
+               Candidate :=
+                 (if Header.Is_Initial then QUIC.Random_Connection_ID
+                  else (others => <>));
+               Registry.Resolve
+                 (Header, Message.Metadata.Source, Candidate,
+                  Index, Starts, Source);
+               if Index /= 0 then
+                  Message.Starts_Connection := Starts;
+                  Message.Source := Source;
+                  Inboxes (Positive (Index)).Try_Send (Message, Sent);
+                  if Starts
+                    and then Sent /= Datagram_Channels.Item_Sent
+                  then
+                     Registry.Release (Positive (Index));
+                  end if;
+               end if;
+            end if;
+         exception
+            when Sockets.Operation_Interrupted =>
+               exit when Token.Requested;
+               raise;
+         end;
+      end loop;
+      Close_Inboxes;
+   exception
+      when others =>
+         Close_Inboxes;
+         raise;
+   end Serve_Listener;
 
    procedure Serve
      (Context            : in out App_Context;
