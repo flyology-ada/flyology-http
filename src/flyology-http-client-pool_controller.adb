@@ -52,6 +52,10 @@ protected body Pool_Controller is
            (Item.Connection /= null
               and then Is_HTTP_3 (Item) = Want_HTTP_3);
 
+         function HTTP_3_Limit_Reached (Item : Slot) return Boolean is
+           (Is_HTTP_3 (Item)
+              and then Item.Request_Count >= HTTP_3_Requests_Per_Connection);
+
          function Expired (Item : Slot) return Boolean is
             Idle_Age : constant Duration := Ada.Real_Time.To_Duration
               (Now - Item.Last_Used);
@@ -68,7 +72,8 @@ protected body Pool_Controller is
               or else
               (Policy.Max_Requests_Per_Connection > 0
                  and then Item.Request_Count >=
-                   Policy.Max_Requests_Per_Connection);
+                   Policy.Max_Requests_Per_Connection)
+              or else HTTP_3_Limit_Reached (Item);
          end Expired;
 
          function Desired_Exists return Boolean is
@@ -407,6 +412,10 @@ protected body Pool_Controller is
          end if;
          if Reusable and then not Stopping
            and then Idle_Count < Policy.Max_Idle
+           and then
+             (Connection.Protocol /= HTTP_3_Transport
+                or else Slots (Slot_Index).Request_Count <
+                  HTTP_3_Requests_Per_Connection)
            and then
              (Policy.Max_Connection_Age < 0.0
                 or else Total_Age < Policy.Max_Connection_Age)

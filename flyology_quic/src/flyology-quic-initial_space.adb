@@ -51,7 +51,7 @@ package body Flyology.QUIC.Initial_Space is
       Built_Packet : Initial_Connection.Build_Result;
       Minimum : constant Natural :=
         (if Item.Role = Initial_Connection.Client
-         then Max_Datagram_Length else 0);
+         then 1_200 else 0);
    begin
       Packet := (others => 0);
       Result := (others => <>);
@@ -77,6 +77,38 @@ package body Flyology.QUIC.Initial_Space is
          Result.Packet_Length := Built_Packet.Packet_Length;
       end if;
    end Build_Crypto_Packet;
+
+   procedure Build_Transport_Close_Packet
+     (Item       : in out State;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Packet     : out Ada.Streams.Stream_Element_Array;
+      Result     : out Build_Result)
+   is
+      Frame : constant Initial_Frame_Policy.Transport_Close_Encode_Result :=
+        Initial_Frame_Policy.Encode_Transport_Close (Error_Code, Frame_Type);
+      Built : Initial_Connection.Build_Result;
+   begin
+      Packet := (others => 0);
+      Result := (others => <>);
+      Initial_Connection.Build_Initial_At_Least
+        (Item.Packets, (1 .. 0 => 0),
+         Frame.Data (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
+         Minimum_Packet_Length => 0, Packet => Packet, Result => Built);
+      Result.Status :=
+        (case Built.Status is
+            when Initial_Connection.Built => Initial_Space.Built,
+            when Initial_Connection.Packet_Number_Exhausted =>
+              Packet_Number_Exhausted,
+            when Initial_Connection.Packet_Number_Unrepresentable =>
+              Packet_Number_Unrepresentable,
+            when Initial_Connection.Insufficient_Protected_Payload
+               | Initial_Connection.Packet_Too_Large => Packet_Too_Large,
+            when Initial_Connection.Output_Too_Small => Output_Too_Small);
+      if Built.Status = Initial_Connection.Built then
+         Result.Packet_Length := Built.Packet_Length;
+      end if;
+   end Build_Transport_Close_Packet;
 
    procedure Process_Packet
      (Item   : in out State;

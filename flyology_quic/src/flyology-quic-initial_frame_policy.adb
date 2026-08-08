@@ -5,6 +5,43 @@ is
    use type Varint_Policy.Decode_Status;
    use type Varint_Policy.Value_Type;
 
+   function Encode_Transport_Close
+     (Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type)
+      return Transport_Close_Encode_Result
+   is
+      Encoded_Error : constant Varint_Policy.Encoded_Value :=
+        Varint_Policy.Encode (Error_Code);
+      Encoded_Frame : constant Varint_Policy.Encoded_Value :=
+        Varint_Policy.Encode (Frame_Type);
+      Result : Transport_Close_Encode_Result;
+      Cursor : Natural range 1 .. Max_Transport_Close_Length + 1 := 1;
+
+      procedure Append (Value : Varint_Policy.Encoded_Value)
+      with
+        Pre => Cursor + Value.Length - 1 <= Max_Transport_Close_Length,
+        Post => Cursor = Cursor'Old + Value.Length;
+
+      procedure Append (Value : Varint_Policy.Encoded_Value) is
+      begin
+         Result.Data
+           (Ada.Streams.Stream_Element_Offset (Cursor)
+              .. Ada.Streams.Stream_Element_Offset
+                   (Cursor + Value.Length - 1)) :=
+             Value.Data
+               (1 .. Ada.Streams.Stream_Element_Offset (Value.Length));
+         Cursor := Cursor + Value.Length;
+      end Append;
+   begin
+      Result.Data (1) := 16#1C#;
+      Cursor := 2;
+      Append (Encoded_Error);
+      Append (Encoded_Frame);
+      Result.Data (Ada.Streams.Stream_Element_Offset (Cursor)) := 0;
+      Result.Length := Cursor;
+      return Result;
+   end Encode_Transport_Close;
+
    function Parse_Next
      (Data   : Ada.Streams.Stream_Element_Array;
       Cursor : Frame_Offset) return Parse_Result

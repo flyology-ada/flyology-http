@@ -10,7 +10,7 @@ with Flyology.QUIC.Varint_Policy;
 private package Flyology.QUIC.Initial_Space is
    use type Ada.Streams.Stream_Element_Offset;
 
-   Max_Datagram_Length : constant := 1_200;
+   Max_Datagram_Length : constant := 1_350;
    Max_Crypto_Payload  : constant := 1_100;
 
    type State is limited private;
@@ -56,6 +56,16 @@ private package Flyology.QUIC.Initial_Space is
      Pre => Is_Initialized (Item)
        and then Token'Length <= Max_Datagram_Length
        and then Data'Length <= Max_Crypto_Payload
+       and then Packet'Length >= Max_Datagram_Length;
+
+   procedure Build_Transport_Close_Packet
+     (Item       : in out State;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Packet     : out Ada.Streams.Stream_Element_Array;
+      Result     : out Build_Result)
+   with
+     Pre => Is_Initialized (Item)
        and then Packet'Length >= Max_Datagram_Length;
 
    type Process_Status is

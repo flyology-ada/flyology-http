@@ -77,4 +77,24 @@ is
              and then Parse_Next'Result.Consumed = 0
           else
              Parse_Next'Result.Consumed = 0);
+
+   --  Encode a transport CONNECTION_CLOSE with an empty reason phrase.
+   Max_Transport_Close_Length : constant := 18;
+   subtype Transport_Close_Length is
+     Natural range 0 .. Max_Transport_Close_Length;
+
+   type Transport_Close_Encode_Result is record
+      Data   : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Transport_Close_Length) := (others => 0);
+      Length : Transport_Close_Length := 0;
+   end record;
+
+   function Encode_Transport_Close
+     (Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type)
+      return Transport_Close_Encode_Result
+   with
+     Global => null,
+     Post => Encode_Transport_Close'Result.Length in 4 ..
+       Max_Transport_Close_Length;
 end Flyology.QUIC.Initial_Frame_Policy;

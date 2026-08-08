@@ -155,6 +155,7 @@ is
       Status      : Process_Status := Processed;
       Consumed    : Plaintext_Offset := 0;
       Frame_Count : Plaintext_Offset := 0;
+      Triggering_Frame_Type : Varint_Policy.Value_Type := 0;
    end record;
 
    procedure Process_Plaintext

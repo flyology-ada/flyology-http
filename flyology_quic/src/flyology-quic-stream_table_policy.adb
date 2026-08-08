@@ -267,6 +267,7 @@ is
          pragma Loop_Variant (Decreases => Data_Length - Cursor);
 
          Frame := Application_Frame_Policy.Parse_Next (Plaintext, Cursor);
+         Result.Triggering_Frame_Type := Frame.Frame_Type;
          if Frame.Status /= Application_Frame_Policy.Parsed then
             Result.Status :=
               (case Frame.Status is

@@ -113,6 +113,31 @@ begin
    end;
 
    declare
+      Empty : constant Ada.Streams.Stream_Element_Array (1 .. 0) :=
+        (others => 0);
+      Packet : Ada.Streams.Stream_Element_Array (1 .. 64);
+      Decoded : Ada.Streams.Stream_Element_Array (Packet'Range);
+      Sent_Packet : Send_Result;
+      Received_Packet : One_RTT_Receiver.Receive_Result;
+   begin
+      Send
+        (Backend, Key, IV, HP, Destination, 4, 4, False, False, Empty,
+         Packet, Sent_Packet);
+      pragma Assert
+        (Sent_Packet.Status = Sent and then Sent_Packet.Packet_Length = 29);
+      One_RTT_Receiver.Receive
+        (Backend, Key, IV, HP, 8, 0,
+         Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Sent_Packet.Packet_Length)),
+         Decoded, Received_Packet);
+      pragma Assert
+        (Received_Packet.Status = One_RTT_Receiver.Received
+         and then Received_Packet.Number = 4
+         and then Received_Packet.Plaintext_Length = 0);
+   end;
+
+   declare
       Tiny : constant Ada.Streams.Stream_Element_Array := (0, 0);
       Packet : Ada.Streams.Stream_Element_Array (1 .. 64);
       Result : Send_Result;

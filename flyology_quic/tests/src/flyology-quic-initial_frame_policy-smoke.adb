@@ -1,4 +1,5 @@
 procedure Flyology.QUIC.Initial_Frame_Policy.Smoke is
+   use type Ada.Streams.Stream_Element_Array;
    use type Varint_Policy.Value_Type;
 
    function Nibble (Value : Character) return Natural is
@@ -142,5 +143,36 @@ begin
          and then Close.Close_Frame_Type = 6
          and then Close.Close_Reason_Length = 3
          and then Close.Consumed = 7);
+   end;
+
+   declare
+      Encoded : constant Transport_Close_Encode_Result :=
+        Encode_Transport_Close (16#08#, 16#06#);
+      Decoded : constant Parse_Result :=
+        Parse_Next
+          (Encoded.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)),
+           0);
+      Wide : constant Transport_Close_Encode_Result :=
+        Encode_Transport_Close (2**32, 2**16);
+      Wide_Decoded : constant Parse_Result :=
+        Parse_Next
+          (Wide.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Wide.Length)), 0);
+   begin
+      pragma Assert
+        (Encoded.Length = 4
+         and then Encoded.Data (1 .. 4) = (16#1C#, 16#08#, 16#06#, 0)
+         and then Decoded.Status = Parsed
+         and then Decoded.Kind = Transport_Close
+         and then Decoded.Close_Error_Code = 16#08#
+         and then Decoded.Close_Frame_Type = 16#06#
+         and then Decoded.Close_Reason_Length = 0);
+      pragma Assert
+        (Wide.Length = 14
+         and then Wide_Decoded.Status = Parsed
+         and then Wide_Decoded.Close_Error_Code = 2**32
+         and then Wide_Decoded.Close_Frame_Type = 2**16
+         and then Wide_Decoded.Close_Reason_Length = 0);
    end;
 end Flyology.QUIC.Initial_Frame_Policy.Smoke;

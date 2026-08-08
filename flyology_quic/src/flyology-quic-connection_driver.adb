@@ -164,6 +164,7 @@ package body Flyology.QUIC.Connection_Driver is
 
    procedure Build_Application_Close_Datagram
      (Item   : in out Connection;
+      Application_Error : Varint_Policy.Value_Type;
       Packet : out Datagram;
       Status : out Application_Space.Send_Status)
    is
@@ -171,17 +172,144 @@ package body Flyology.QUIC.Connection_Driver is
    begin
       Packet := (others => <>);
       Application_Space.Build_Application_Close_Packet
-        (Item.Application, Packet.Data, Built);
+        (Item.Application, Application_Error, Packet.Data, Built);
       Status := Built.Status;
       if Built.Status = Application_Space.Sent then
          Packet.Length := Built.Packet_Length;
       end if;
    end Build_Application_Close_Datagram;
 
+   function Append
+     (Output : in out Datagram_Batch;
+      Packet : Ada.Streams.Stream_Element_Array;
+      Length : Natural) return Boolean;
+
    procedure Clear (Output : out Datagram_Batch) is
    begin
       Output := (others => <>);
    end Clear;
+
+   procedure Fail_Initial_With_Close
+     (Item       : in out Connection;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Output     : in out Datagram_Batch;
+      Result     : in out Operation_Result)
+   is
+      Packet : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
+      Built  : Initial_Space.Build_Result;
+   begin
+      Initial_Space.Build_Transport_Close_Packet
+        (Item.Initial, Error_Code, Frame_Type, Packet, Built);
+      Item.Current := Failed;
+      if Built.Status = Initial_Space.Built
+        and then Append (Output, Packet, Built.Packet_Length)
+      then
+         Result.Status := Succeeded;
+      elsif Built.Status = Initial_Space.Built then
+         Result.Status := Output_Capacity_Exceeded;
+      else
+         Result.Status := Packet_Error;
+      end if;
+   end Fail_Initial_With_Close;
+
+   function Transport_Error_For
+     (Status : Handshake_Space.Process_Status)
+      return Varint_Policy.Value_Type
+   is
+     (case Status is
+         when Handshake_Space.Invalid_Reserved_Bits
+            | Handshake_Space.Frame_Not_Allowed
+            | Handshake_Space.Conflicting_Crypto_Data => 16#0A#,
+         when Handshake_Space.Frame_Truncated
+            | Handshake_Space.Frame_Value_Too_Large
+            | Handshake_Space.Invalid_ACK_Range => 16#07#,
+         when Handshake_Space.Crypto_Data_Too_Large => 16#0D#,
+         when Handshake_Space.Processed
+            | Handshake_Space.Duplicate_Packet
+            | Handshake_Space.Packet_Too_Old
+            | Handshake_Space.Envelope_Rejected
+            | Handshake_Space.Authentication_Failed => 16#01#);
+
+   procedure Fail_Handshake_With_Close
+     (Item       : in out Connection;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Output     : in out Datagram_Batch;
+      Result     : in out Operation_Result)
+   is
+      Packet : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
+      Built  : Handshake_Space.Build_Result;
+   begin
+      Handshake_Space.Build_Transport_Close_Packet
+        (Item.Handshake, Error_Code, Frame_Type, Packet, Built);
+      Item.Current := Failed;
+      if Built.Status = Handshake_Space.Built
+        and then Append (Output, Packet, Built.Packet_Length)
+      then
+         Result.Status := Succeeded;
+      elsif Built.Status = Handshake_Space.Built then
+         Result.Status := Output_Capacity_Exceeded;
+      else
+         Result.Status := Packet_Error;
+      end if;
+   end Fail_Handshake_With_Close;
+
+   function Transport_Error_For
+     (Status : Application_Space.Process_Status)
+      return Varint_Policy.Value_Type
+   is
+     (case Status is
+         when Application_Space.Flow_Control_Error => 16#03#,
+         when Application_Space.Invalid_Stream_Limit => 16#04#,
+         when Application_Space.Invalid_Stream_State => 16#05#,
+         when Application_Space.Stream_Final_Size_Error
+            | Application_Space.Stream_Reset_Conflict => 16#06#,
+         when Application_Space.Frame_Truncated
+            | Application_Space.Unknown_Frame_Type
+            | Application_Space.Frame_Value_Too_Large
+            | Application_Space.Invalid_ACK_Range => 16#07#,
+         when Application_Space.Invalid_Reserved_Bits
+            | Application_Space.Invalid_Connection_ID
+            | Application_Space.Unexpected_Destination
+            | Application_Space.Unexpected_Handshake_Done
+            | Application_Space.Protocol_Violation
+            | Application_Space.ACK_Range_Capacity_Exceeded
+            | Application_Space.Acknowledges_Unsent_Packet
+            | Application_Space.Conflicting_Stream_Data => 16#0A#,
+         when Application_Space.Unsupported_Key_Phase => 16#0E#,
+         when Application_Space.Unexpected_TLS_Message => 16#10A#,
+         when Application_Space.Stream_Capacity_Exceeded
+            | Application_Space.Stream_Data_Too_Large => 16#01#,
+         when Application_Space.Processed
+            | Application_Space.Duplicate
+            | Application_Space.Too_Old
+            | Application_Space.Envelope_Rejected
+            | Application_Space.Authentication_Failed => 16#01#);
+
+   procedure Fail_Application_With_Close
+     (Item       : in out Connection;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Output     : in out Datagram_Batch;
+      Result     : in out Operation_Result)
+   is
+      Packet : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
+      Built  : Application_Space.Send_Result;
+   begin
+      Application_Space.Build_Transport_Close_Packet
+        (Item.Application, Error_Code, Frame_Type, Packet, Built);
+      Item.Current := Failed;
+      if Built.Status = Application_Space.Sent
+        and then Append (Output, Packet, Built.Packet_Length)
+      then
+         Result.Status := Succeeded;
+      elsif Built.Status = Application_Space.Sent then
+         Result.Status := Output_Capacity_Exceeded;
+      else
+         Result.Status := Packet_Error;
+      end if;
+   end Fail_Application_With_Close;
 
    function Append
      (Output : in out Datagram_Batch;
@@ -239,23 +367,30 @@ package body Flyology.QUIC.Connection_Driver is
       return Body_Length + 4;
    end Message_Length;
 
-   function Message_Length (Item : Handshake_Space.State) return Natural is
-      Available : constant Natural :=
+   function Message_Length
+     (Item : Handshake_Space.State; Offset : Natural) return Natural
+   is
+      Contiguous : constant Natural :=
         Natural (Handshake_Space.Contiguous_Length (Item));
+      Available : constant Natural :=
+        (if Offset <= Contiguous then Contiguous - Offset else 0);
       Body_Length : Natural;
    begin
       if Available < 4 then
          return 0;
       end if;
       Body_Length :=
-        Natural (Handshake_Byte (Item, 1)) * 65_536
-        + Natural (Handshake_Byte (Item, 2)) * 256
-        + Natural (Handshake_Byte (Item, 3));
+        Natural (Handshake_Byte (Item, Offset + 1)) * 65_536
+        + Natural (Handshake_Byte (Item, Offset + 2)) * 256
+        + Natural (Handshake_Byte (Item, Offset + 3));
       if Body_Length > 65_531 or else Available < Body_Length + 4 then
          return 0;
       end if;
       return Body_Length + 4;
    end Message_Length;
+
+   function Message_Length (Item : Handshake_Space.State) return Natural is
+     (Message_Length (Item, 0));
 
    function Authentication_Length
      (Item : Handshake_Space.State) return Natural
@@ -353,6 +488,7 @@ package body Flyology.QUIC.Connection_Driver is
          Destination, Source);
       Item.Is_Client := True;
       Item.Is_Handshake_Confirmed := False;
+      Item.Handshake_Consumed := 0;
       Item.Local_ID := Source;
       Item.Peer_ID := Destination;
       Item.Local_Parameters := Local_Parameters;
@@ -378,6 +514,7 @@ package body Flyology.QUIC.Connection_Driver is
          Destination, Source);
       Item.Is_Client := False;
       Item.Is_Handshake_Confirmed := False;
+      Item.Handshake_Consumed := 0;
       Item.Local_ID := Source;
       Item.Peer_ID := Destination;
       Item.Local_Parameters := Local_Parameters;
@@ -466,8 +603,18 @@ package body Flyology.QUIC.Connection_Driver is
               (Item.TLS, Hello, Server_Hello, Authentication, TLS_Result);
             Result.TLS_Status := TLS_Result.Status;
             if TLS_Result.Status /= TLS_Session.Succeeded then
-               Item.Current := Failed;
-               Result.Status := TLS_Error;
+               Fail_Initial_With_Close
+                 (Item,
+                  Error_Code =>
+                    (case TLS_Result.Status is
+                        when TLS_Session.Invalid_Transport_Parameters =>
+                          16#08#,
+                        when TLS_Session.ALPN_Mismatch => 16#178#,
+                        when TLS_Session.Invalid_Extensions => 16#16D#,
+                        when TLS_Session.Invalid_Message => 16#10A#,
+                        when others => 16#150#),
+                  Frame_Type => 16#06#,
+                  Output => Output, Result => Result);
                return;
             end if;
             Initial_Space.Build_Crypto_Packet
@@ -489,6 +636,7 @@ package body Flyology.QUIC.Connection_Driver is
               (Item.Handshake, Sending, Receiving, Item.Peer_ID,
                Item.Local_ID);
             Item.Handshake_Initialized := True;
+            Item.Handshake_Consumed := 0;
             while Offset < TLS_Result.Authentication_Length loop
                Chunk := Natural'Min
                  (Handshake_Space.Max_Crypto_Payload,
@@ -533,6 +681,7 @@ package body Flyology.QUIC.Connection_Driver is
               (Item.Handshake, Sending, Receiving, Item.Peer_ID,
                Item.Local_ID);
             Item.Handshake_Initialized := True;
+            Item.Handshake_Consumed := 0;
             Item.Current := Client_Handshake;
             Result.Status := Succeeded;
          end;
@@ -564,7 +713,9 @@ package body Flyology.QUIC.Connection_Driver is
          Result.Status := Succeeded;
          return;
       elsif Processed.Status /= Handshake_Space.Processed then
-         Result.Status := Packet_Error;
+         Fail_Handshake_With_Close
+           (Item, Transport_Error_For (Processed.Status),
+            Frame_Type => 16#06#, Output => Output, Result => Result);
          return;
       end if;
 
@@ -588,8 +739,16 @@ package body Flyology.QUIC.Connection_Driver is
               (Item.TLS, Authentication, Finished, TLS_Result);
             Result.TLS_Status := TLS_Result.Status;
             if TLS_Result.Status /= TLS_Session.Succeeded then
-               Item.Current := Failed;
-               Result.Status := TLS_Error;
+               Fail_Handshake_With_Close
+                 (Item,
+                  Error_Code =>
+                    (case TLS_Result.Status is
+                        when TLS_Session.ALPN_Mismatch => 16#178#,
+                        when TLS_Session.Invalid_Extensions => 16#16D#,
+                        when TLS_Session.Invalid_Message => 16#10A#,
+                        when others => 16#150#),
+                  Frame_Type => 16#06#,
+                  Output => Output, Result => Result);
                return;
             end if;
             Handshake_Space.Build_Crypto_Packet
@@ -606,6 +765,7 @@ package body Flyology.QUIC.Connection_Driver is
                return;
             end if;
             Initialize_Application (Item);
+            Item.Handshake_Consumed := Length;
             Item.Current := Connected;
             Result.Status := Succeeded;
          end;
@@ -628,8 +788,13 @@ package body Flyology.QUIC.Connection_Driver is
               (Item.TLS, Finished, TLS_Result);
             Result.TLS_Status := TLS_Result.Status;
             if TLS_Result.Status /= TLS_Session.Succeeded then
-               Item.Current := Failed;
-               Result.Status := TLS_Error;
+               Fail_Handshake_With_Close
+                 (Item,
+                  Error_Code =>
+                    (if TLS_Result.Status = TLS_Session.Invalid_Message
+                     then 16#10A# else 16#150#),
+                  Frame_Type => 16#06#,
+                  Output => Output, Result => Result);
                return;
             end if;
             Initialize_Application (Item);
@@ -645,11 +810,19 @@ package body Flyology.QUIC.Connection_Driver is
                return;
             end if;
             Item.Is_Handshake_Confirmed := True;
+            Item.Handshake_Consumed := Length;
             Item.Current := Connected;
             Result.Status := Succeeded;
          end;
       elsif Item.Current = Connected then
-         Result.Status := Succeeded;
+         Length := Message_Length (Item.Handshake, Item.Handshake_Consumed);
+         if Length > 0 then
+            Fail_Handshake_With_Close
+              (Item, Error_Code => 16#10A#, Frame_Type => 16#06#,
+               Output => Output, Result => Result);
+         else
+            Result.Status := Succeeded;
+         end if;
       else
          Result.Status := Invalid_State;
       end if;
@@ -703,11 +876,21 @@ package body Flyology.QUIC.Connection_Driver is
                   Now, Item.Peer_ACK_Exponent, Item.Peer_Max_ACK_Delay,
                   Handshake_Confirmed => Item.Is_Handshake_Confirmed,
                   Result => Application_Result);
-               if Application_Result.Status not in
+               if Application_Result.Status = Application_Space.Processed
+                 and then Application_Result.Frame_Count = 0
+               then
+                  Fail_Application_With_Close
+                    (Item, Error_Code => 16#0A#, Frame_Type => 0,
+                     Output => Output, Result => Result);
+               elsif Application_Result.Status not in
                  Application_Space.Processed | Application_Space.Duplicate
                    | Application_Space.Too_Old
                then
-                  Result.Status := Packet_Error;
+                  Fail_Application_With_Close
+                    (Item,
+                     Transport_Error_For (Application_Result.Status),
+                     Application_Result.Triggering_Frame_Type,
+                     Output, Result);
                elsif Application_Result.Status = Application_Space.Processed
                then
                   if Application_Result.Peer_Closed then

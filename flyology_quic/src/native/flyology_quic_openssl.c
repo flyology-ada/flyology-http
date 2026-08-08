@@ -358,6 +358,7 @@ int flyology_quic_openssl_protect
 {
    struct quic_crypto_module *module = handle;
    EVP_CIPHER_CTX *context = NULL;
+   int aad_produced = 0;
    int produced = 0;
    int final_length = 0;
    int success = 0;
@@ -380,7 +381,7 @@ int flyology_quic_openssl_protect
                                    12, NULL) != 1 ||
        module->EVP_EncryptInit_ex(context, NULL, NULL, key, nonce) != 1 ||
        (header_length != 0 &&
-        module->EVP_EncryptUpdate(context, NULL, &produced, header,
+        module->EVP_EncryptUpdate(context, NULL, &aad_produced, header,
                                   (int)header_length) != 1) ||
        (plaintext_length != 0 &&
         module->EVP_EncryptUpdate(context, ciphertext, &produced, plaintext,
@@ -412,6 +413,7 @@ int flyology_quic_openssl_unprotect
    unsigned char empty_output[1];
    unsigned char *output;
    size_t encrypted_length;
+   int aad_produced = 0;
    int produced = 0;
    int final_length = 0;
    int final_status;
@@ -438,7 +440,7 @@ int flyology_quic_openssl_unprotect
                                    12, NULL) != 1 ||
        module->EVP_DecryptInit_ex(context, NULL, NULL, key, nonce) != 1 ||
        (header_length != 0 &&
-        module->EVP_DecryptUpdate(context, NULL, &produced, header,
+        module->EVP_DecryptUpdate(context, NULL, &aad_produced, header,
                                   (int)header_length) != 1) ||
        (encrypted_length != 0 &&
         module->EVP_DecryptUpdate(context, output, &produced, ciphertext,
@@ -457,10 +459,17 @@ int flyology_quic_openssl_unprotect
       status = 1;
       goto done;
    }
-   if (final_status != 1 ||
-       (size_t)(produced + final_length) != plaintext_length) {
+   if (final_status != 1) {
       provider_error(module, error, error_size,
-                     "OpenSSL QUIC payload unprotection failed");
+                     "OpenSSL QUIC payload unprotection finalization failed");
+      goto done;
+   }
+   if ((size_t)(produced + final_length) != plaintext_length) {
+      if (error != NULL && error_size != 0)
+         snprintf(error, error_size,
+                  "OpenSSL QUIC payload unprotection length mismatch: "
+                  "produced=%d final=%d expected=%zu",
+                  produced, final_length, plaintext_length);
       goto done;
    }
    status = 0;

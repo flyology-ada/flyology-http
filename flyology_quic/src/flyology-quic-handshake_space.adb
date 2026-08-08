@@ -77,6 +77,42 @@ package body Flyology.QUIC.Handshake_Space is
       end if;
    end Build_Crypto_Packet;
 
+   procedure Build_Transport_Close_Packet
+     (Item       : in out State;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Packet     : out Ada.Streams.Stream_Element_Array;
+      Result     : out Build_Result)
+   is
+      Frame : constant Initial_Frame_Policy.Transport_Close_Encode_Result :=
+        Initial_Frame_Policy.Encode_Transport_Close (Error_Code, Frame_Type);
+      Built : Handshake_Connection.Build_Result;
+   begin
+      Packet := (others => 0);
+      Result := (others => <>);
+      Handshake_Connection.Build_Handshake
+        (Item.Packets,
+         Frame.Data (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
+         Packet, Built);
+      if Built.Status = Handshake_Connection.Built
+        and then Built.Packet_Length <= Max_Datagram_Length
+      then
+         Result.Status := Handshake_Space.Built;
+         Result.Packet_Length := Built.Packet_Length;
+      else
+         Result.Status :=
+           (case Built.Status is
+               when Handshake_Connection.Built => Packet_Too_Large,
+               when Handshake_Connection.Packet_Number_Exhausted =>
+                 Packet_Number_Exhausted,
+               when Handshake_Connection.Packet_Number_Unrepresentable =>
+                 Packet_Number_Unrepresentable,
+               when Handshake_Connection.Insufficient_Protected_Payload
+                  | Handshake_Connection.Packet_Too_Large => Packet_Too_Large,
+               when Handshake_Connection.Output_Too_Small => Output_Too_Small);
+      end if;
+   end Build_Transport_Close_Packet;
+
    procedure Process_Packet
      (Item   : in out State;
       Packet : Ada.Streams.Stream_Element_Array;

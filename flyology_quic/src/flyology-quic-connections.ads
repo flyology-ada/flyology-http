@@ -14,7 +14,7 @@ package Flyology.QUIC.Connections is
    use type Interfaces.Unsigned_64;
 
    --  Largest UDP payload currently accepted or emitted by the driver.
-   Max_Datagram_Length : constant := 1_200;
+   Max_Datagram_Length : constant := 1_350;
    --  Largest response flight emitted by one input datagram.
    Max_Output_Datagrams : constant := 20;
    --  Largest stream payload carried by one generated datagram.
@@ -83,6 +83,7 @@ package Flyology.QUIC.Connections is
    subtype Timestamp is Interfaces.Unsigned_64 range 0 .. 2**63 - 1;
 
    --  Initial flow-control and stream limits advertised to a peer.
+   --  @field Max_UDP_Payload_Size Largest accepted QUIC UDP payload
    --  @field Max_Data Connection-level receive credit
    --  @field Max_Stream_Data_Bidi_Local Receive credit on local bidi streams
    --  @field Max_Stream_Data_Bidi_Remote Receive credit on peer bidi streams
@@ -90,6 +91,7 @@ package Flyology.QUIC.Connections is
    --  @field Max_Streams_Bidi Maximum peer-created bidirectional streams
    --  @field Max_Streams_Uni Maximum peer-created unidirectional streams
    type Transport_Settings is record
+      Max_UDP_Payload_Size        : Stream_Offset := Max_Datagram_Length;
       Max_Data                    : Stream_Offset := 65_536;
       Max_Stream_Data_Bidi_Local  : Stream_Offset := 16_384;
       Max_Stream_Data_Bidi_Remote : Stream_Offset := 16_384;
@@ -474,6 +476,19 @@ package Flyology.QUIC.Connections is
      (Item   : in out Connection;
       Packet : out Datagram;
       Status : out Send_Status)
+   with Pre => Is_Connected (Item);
+
+   --  Build a protected application CONNECTION_CLOSE carrying Error_Code and
+   --  an empty reason phrase.
+   --  @param Item Connected endpoint
+   --  @param Error_Code HTTP/3 or other application protocol error
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   procedure Build_Application_Close_Datagram
+     (Item       : in out Connection;
+      Error_Code : Stream_Offset;
+      Packet     : out Datagram;
+      Status     : out Send_Status)
    with Pre => Is_Connected (Item);
 
    --  Return the number of peer streams retained by the connection.

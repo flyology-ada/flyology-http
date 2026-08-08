@@ -18,7 +18,7 @@ with Flyology.QUIC.Varint_Policy;
 private package Flyology.QUIC.Connection_Driver is
    use type Ada.Streams.Stream_Element_Offset;
 
-   Max_Datagram_Length : constant := 1_200;
+   Max_Datagram_Length : constant := 1_350;
    Max_Output_Datagrams : constant := 20;
    subtype Datagram_Index is Positive range 1 .. Max_Output_Datagrams;
 
@@ -182,6 +182,7 @@ private package Flyology.QUIC.Connection_Driver is
 
    procedure Build_Application_Close_Datagram
      (Item   : in out Connection;
+      Application_Error : Varint_Policy.Value_Type;
       Packet : out Datagram;
       Status : out Application_Space.Send_Status)
    with Pre => Is_Connected (Item);
@@ -237,6 +238,7 @@ private
       Handshake             : Handshake_Space.State;
       Application           : Application_Space.State;
       Handshake_Initialized : Boolean := False;
+      Handshake_Consumed    : Natural range 0 .. 65_535 := 0;
       Application_Initialized : Boolean := False;
       Is_Handshake_Confirmed : Boolean := False;
       Is_Client             : Boolean := True;

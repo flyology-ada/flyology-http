@@ -1,10 +1,12 @@
 with Flyology.QUIC.ACK_Frame_Policy;
 with Flyology.QUIC.ACK_Range_Policy;
 with Flyology.QUIC.Application_Frame_Policy;
+with Flyology.QUIC.Initial_Frame_Policy;
 with Flyology.QUIC.Stream_Frame_Policy;
 with Interfaces;
 
 package body Flyology.QUIC.Application_Space is
+   use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
    use type Interfaces.Unsigned_64;
    use type ACK_Frame_Policy.Encode_Status;
@@ -660,11 +662,15 @@ package body Flyology.QUIC.Application_Space is
 
    procedure Build_Application_Close_Packet
      (Item   : in out State;
+      Application_Error : Varint_Policy.Value_Type;
       Packet : out Ada.Streams.Stream_Element_Array;
       Result : out Send_Result)
    is
-      Plaintext : constant Ada.Streams.Stream_Element_Array :=
-        (16#1D#, 0, 0);
+      Encoded : constant Varint_Policy.Encoded_Value :=
+        Varint_Policy.Encode (Application_Error);
+      Plaintext : Ada.Streams.Stream_Element_Array
+        (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length + 2)) :=
+          (others => 0);
       Built : Application_Connection.Build_Result;
    begin
       --  APPLICATION_CLOSE, application error zero, and an empty reason are
@@ -673,6 +679,11 @@ package body Flyology.QUIC.Application_Space is
       --  remain buildable when the ordinary sent-packet table is full.
       Packet := (others => 0);
       Result := (others => <>);
+      Plaintext (1) := 16#1D#;
+      Plaintext
+        (2 .. Ada.Streams.Stream_Element_Offset (Encoded.Length + 1)) :=
+          Encoded.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length));
       Application_Connection.Build_One_RTT
         (Item.Packets, Plaintext, Packet, Built);
       Result.Number := Built.Number;
@@ -681,6 +692,33 @@ package body Flyology.QUIC.Application_Space is
         (if Built.Status = Application_Connection.Built
          then Sent else Send_Status_For (Built.Status));
    end Build_Application_Close_Packet;
+
+   procedure Build_Transport_Close_Packet
+     (Item       : in out State;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Packet     : out Ada.Streams.Stream_Element_Array;
+      Result     : out Send_Result)
+   is
+      Plaintext : constant
+        Initial_Frame_Policy.Transport_Close_Encode_Result :=
+          Initial_Frame_Policy.Encode_Transport_Close
+            (Error_Code, Frame_Type);
+      Built : Application_Connection.Build_Result;
+   begin
+      Packet := (others => 0);
+      Result := (others => <>);
+      Application_Connection.Build_One_RTT
+        (Item.Packets,
+         Plaintext.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Plaintext.Length)),
+         Packet, Built);
+      Result.Number := Built.Number;
+      Result.Packet_Length := Built.Packet_Length;
+      Result.Status :=
+        (if Built.Status = Application_Connection.Built
+         then Sent else Send_Status_For (Built.Status));
+   end Build_Transport_Close_Packet;
 
    procedure Build_Probe_Packet
      (Item   : in out State;
@@ -880,9 +918,14 @@ package body Flyology.QUIC.Application_Space is
       end if;
       Length := Application_Frame_Policy.Frame_Offset
         (Received.Packet.Plaintext_Length);
+      if Length = 0 then
+         Result.Status := Protocol_Violation;
+         return;
+      end if;
       Stream_Table_Policy.Process_Plaintext
         (Candidate_Streams, Plaintext (1 .. Length), Streams);
       Result.Frame_Count := Natural (Streams.Frame_Count);
+      Result.Triggering_Frame_Type := Streams.Triggering_Frame_Type;
       if Streams.Status /= Stream_Table_Policy.Processed then
          Result.Status := Process_Status_For (Streams.Status);
          return;
@@ -891,6 +934,7 @@ package body Flyology.QUIC.Application_Space is
       while Cursor < Length loop
          Frame := Application_Frame_Policy.Parse_Next
            (Plaintext (1 .. Length), Cursor);
+         Result.Triggering_Frame_Type := Frame.Frame_Type;
          if Frame.Status /= Application_Frame_Policy.Parsed then
             Result.Status := Unknown_Frame_Type;
             return;
@@ -910,6 +954,56 @@ package body Flyology.QUIC.Application_Space is
                return;
             end if;
             Result.Handshake_Done := True;
+         elsif Frame.Kind = Application_Frame_Policy.Crypto then
+            declare
+               Data_Offset : constant Application_Frame_Policy.Frame_Offset :=
+                 Frame.Base.Crypto_Data_Offset;
+               Data_Length : constant Application_Frame_Policy.Frame_Offset :=
+                 Frame.Base.Crypto_Length;
+               Body_Length : Natural := 0;
+            begin
+               if Data_Length >= 4 then
+                  Body_Length :=
+                    Natural
+                      (Plaintext
+                         (Plaintext'First
+                            + Ada.Streams.Stream_Element_Offset
+                                (Data_Offset + 1))) * 65_536
+                    + Natural
+                      (Plaintext
+                         (Plaintext'First
+                            + Ada.Streams.Stream_Element_Offset
+                                (Data_Offset + 2))) * 256
+                    + Natural
+                      (Plaintext
+                         (Plaintext'First
+                            + Ada.Streams.Stream_Element_Offset
+                                (Data_Offset + 3)));
+               end if;
+               if Stream_ID_Policy.Local_Role (Item.Allocator) =
+                    Stream_ID_Policy.Client
+                 and then Frame.Base.Crypto_Offset = 0
+                 and then Data_Length >= 4
+                 and then Plaintext
+                   (Plaintext'First
+                      + Ada.Streams.Stream_Element_Offset (Data_Offset)) = 4
+                 and then Body_Length = Natural (Data_Length) - 4
+               then
+                  --  A client that does not implement resumption may ignore
+                  --  a complete post-handshake NewSessionTicket. Other
+                  --  messages, including KeyUpdate, remain fatal in QUIC.
+                  null;
+               else
+                  Result.Status := Unexpected_TLS_Message;
+                  return;
+               end if;
+            end;
+         elsif Frame.Kind = Application_Frame_Policy.New_Token
+           and then Stream_ID_Policy.Local_Role (Item.Allocator) =
+             Stream_ID_Policy.Server
+         then
+            Result.Status := Protocol_Violation;
+            return;
          elsif Frame.Kind = Application_Frame_Policy.Transport_Close then
             Result.Peer_Closed := True;
             Result.Application_Close := False;
@@ -971,9 +1065,9 @@ package body Flyology.QUIC.Application_Space is
            | Application_Frame_Policy.Max_Streams_Uni
          then
             if Frame.Maximum > Varint_Policy.Value_Type
-              (Stream_ID_Policy.Stream_Count'Last)
+              (2**60)
             then
-               Result.Status := Invalid_Stream_Limit;
+               Result.Status := Frame_Value_Too_Large;
                return;
             elsif Frame.Kind = Application_Frame_Policy.Max_Streams_Bidi then
                Candidate_Peer_Bidi := Varint_Policy.Value_Type'Max
@@ -982,6 +1076,12 @@ package body Flyology.QUIC.Application_Space is
                Candidate_Peer_Uni := Varint_Policy.Value_Type'Max
                  (Candidate_Peer_Uni, Frame.Maximum);
             end if;
+         elsif Frame.Kind in Application_Frame_Policy.Streams_Blocked_Bidi
+           | Application_Frame_Policy.Streams_Blocked_Uni
+           and then Frame.Maximum > 2**60
+         then
+            Result.Status := Frame_Value_Too_Large;
+            return;
          elsif Frame.Kind = Application_Frame_Policy.Acknowledgment then
             Ranges := ACK_Range_Policy.Decode
               (Plaintext (1 .. Length), Frame.Base);

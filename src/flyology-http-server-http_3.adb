@@ -23,7 +23,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
    use type H3.Event_Kind;
    use type H3.Operation_Status;
    use type QUIC.Operation_Status;
+   use type QUIC.Connection_State;
    use type QUIC.Server_Initialize_Status;
+   use type QUIC.Send_Status;
    use type QUIC.Stream_ID;
    use type QUIC.Timeout_Status;
 
@@ -292,7 +294,49 @@ package body Flyology.HTTP.Server.HTTP_3 is
       end loop;
    end Send;
 
-   procedure Drain_Events (Item : in out Connection_State) is
+   function Application_Error_For
+     (Status : H3.Operation_Status) return QUIC.Stream_Offset
+   is
+     (case Status is
+         when H3.Stream_Creation_Error => 16#103#,
+         when H3.Closed_Critical_Stream => 16#104#,
+         when H3.Frame_Unexpected => 16#105#,
+         when H3.Frame_Too_Large | H3.Frame_Error => 16#106#,
+         when H3.Stream_Capacity_Exceeded
+            | H3.Peer_Field_Section_Too_Large => 16#107#,
+         when H3.ID_Error => 16#108#,
+         when H3.Settings_Error => 16#109#,
+         when H3.Missing_Settings => 16#10A#,
+         when H3.Message_Error | H3.Header_Error => 16#10E#,
+         when H3.QPACK_Decompression_Failed => 16#200#,
+         when H3.QPACK_Encoder_Stream_Error => 16#201#,
+         when H3.QPACK_Decoder_Stream_Error => 16#202#,
+         when H3.Transport_Error | H3.Transport_Blocked => 16#102#,
+         when H3.Succeeded | H3.No_Event | H3.Uninitialized
+            | H3.Not_Connected | H3.Not_Started | H3.Already_Started
+            | H3.Connection_Draining | H3.Wrong_Role
+            | H3.Stream_Limit_Reached => 16#101#);
+
+   procedure Close_For_H3_Error
+     (Item    : in out Connection_State;
+      Status  : H3.Operation_Status;
+      Timeout : Duration)
+   is
+      Packet : QUIC.Datagram;
+      Sent   : QUIC.Send_Status;
+   begin
+      QUIC.Build_Application_Close_Datagram
+        (Item.Transport, Application_Error_For (Status), Packet, Sent);
+      if Sent /= QUIC.Sent then
+         raise Flyology.IO.Device_Error with
+           "HTTP/3 application close failed: " & QUIC.Send_Status'Image (Sent);
+      end if;
+      Send (Item, Packet, Timeout);
+      Item.Closed := True;
+   end Close_For_H3_Error;
+
+   procedure Drain_Events
+     (Item : in out Connection_State; Timeout : Duration) is
       Value  : H3.Event;
       Status : H3.Operation_Status;
    begin
@@ -300,8 +344,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
          H3.Poll (Item.Session, Item.Transport, Value, Status);
          exit when Status = H3.No_Event;
          if Status /= H3.Succeeded then
-            raise Protocol_Error with
-              "HTTP/3 receive failed: " & H3.Operation_Status'Image (Status);
+            Close_For_H3_Error (Item, Status, Timeout);
+            return;
          end if;
          Push (Item.Pending, Value);
       end loop;
@@ -393,6 +437,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
       case Status is
          when QUIC.Succeeded | QUIC.Waiting_For_More =>
             Send (Item, Flight, Timeout);
+            if QUIC.State (Item.Transport) = QUIC.Failed then
+               Item.Closed := True;
+            end if;
          when QUIC.Connection_Closed =>
             Item.Closed := True;
          when others =>
@@ -403,7 +450,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
         and then Item.H3_Started
         and then not Item.Closed
       then
-         Drain_Events (Item);
+         Drain_Events (Item, Timeout);
       end if;
    end Receive_One;
 
@@ -1333,6 +1380,10 @@ package body Flyology.HTTP.Server.HTTP_3 is
            "QUIC Initial failed: " & QUIC.Operation_Status'Image (QUIC_Status);
       end if;
       Send (State.all, Flight, Handshake_Timeout);
+      if QUIC.State (State.Transport) = QUIC.Failed then
+         Cleanup;
+         return;
+      end if;
       while not QUIC.Is_Connected (State.Transport) loop
          if Remaining (State.Epoch + Ada.Real_Time.To_Time_Span
            (Handshake_Timeout)) = 0.0

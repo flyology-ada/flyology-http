@@ -294,7 +294,9 @@ package body Flyology.QUIC.TLS_Session is
       if Parsed.Status /= TLS_Handshake_Policy.Parsed
         or else Parsed.Kind /= TLS_Handshake_Policy.Client_Hello
       then
-         Result.Status := Invalid_Message;
+         Result.Status :=
+           (if Parsed.Status = TLS_Handshake_Policy.Invalid_Extensions
+            then Invalid_Extensions else Invalid_Message);
          Mark_Failed (Item);
          return;
       end if;
@@ -515,7 +517,9 @@ package body Flyology.QUIC.TLS_Session is
         or else Parsed.Kind /= TLS_Handshake_Policy.Server_Hello
         or else Parsed.Session_ID_Length /= 0
       then
-         Result.Status := Invalid_Message;
+         Result.Status :=
+           (if Parsed.Status = TLS_Handshake_Policy.Invalid_Extensions
+            then Invalid_Extensions else Invalid_Message);
          Mark_Failed (Item);
          return;
       end if;
@@ -590,7 +594,9 @@ package body Flyology.QUIC.TLS_Session is
       if Hello.Status /= TLS_Handshake_Policy.Parsed
         or else Hello.Kind /= TLS_Handshake_Policy.Encrypted_Extensions
       then
-         Result.Status := Invalid_Message;
+         Result.Status :=
+           (if Hello.Status = TLS_Handshake_Policy.Invalid_Extensions
+            then Invalid_Extensions else Invalid_Message);
          Mark_Failed (Item);
          return;
       end if;

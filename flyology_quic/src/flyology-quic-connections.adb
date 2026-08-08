@@ -170,6 +170,8 @@ package body Flyology.QUIC.Connections is
       if Sender = Transport_Parameter_Policy.Server then
          Value.Original_Destination_Connection_ID := Parameter (Original);
       end if;
+      Value.Max_UDP_Payload_Size :=
+        (True, Settings.Max_UDP_Payload_Size);
       Value.Initial_Max_Data := (True, Settings.Max_Data);
       Value.Initial_Max_Stream_Data_Bidi_Local :=
         (True, Settings.Max_Stream_Data_Bidi_Local);
@@ -547,7 +549,23 @@ package body Flyology.QUIC.Connections is
       Internal_Status : Application_Space.Send_Status;
    begin
       Connection_Driver.Build_Application_Close_Datagram
-        (Impl (Item).Driver, Internal_Packet, Internal_Status);
+        (Impl (Item).Driver, 0, Internal_Packet, Internal_Status);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Application_Close_Datagram;
+
+   procedure Build_Application_Close_Datagram
+     (Item       : in out Connection;
+      Error_Code : Stream_Offset;
+      Packet     : out Datagram;
+      Status     : out Send_Status)
+   is
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      Connection_Driver.Build_Application_Close_Datagram
+        (Impl (Item).Driver, Varint_Policy.Value_Type (Error_Code),
+         Internal_Packet, Internal_Status);
       Copy (Internal_Packet, Packet);
       Status := Public_Status (Internal_Status);
    end Build_Application_Close_Datagram;

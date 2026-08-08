@@ -20,7 +20,7 @@ with Flyology.QUIC.Varint_Policy;
 private package Flyology.QUIC.Application_Space is
    use type Ada.Streams.Stream_Element_Offset;
 
-   Max_Datagram_Length : constant := 1_200;
+   Max_Datagram_Length : constant := 1_350;
    Max_Stream_Payload  : constant := 1_100;
    Max_Retransmittable_Length : constant := Max_Stream_Payload + 25;
 
@@ -130,8 +130,19 @@ private package Flyology.QUIC.Application_Space is
 
    procedure Build_Application_Close_Packet
      (Item   : in out State;
+      Application_Error : Varint_Policy.Value_Type;
       Packet : out Ada.Streams.Stream_Element_Array;
       Result : out Send_Result)
+   with
+     Pre => Is_Initialized (Item)
+       and then Packet'Length >= Max_Datagram_Length;
+
+   procedure Build_Transport_Close_Packet
+     (Item       : in out State;
+      Error_Code : Varint_Policy.Value_Type;
+      Frame_Type : Varint_Policy.Value_Type;
+      Packet     : out Ada.Streams.Stream_Element_Array;
+      Result     : out Send_Result)
    with
      Pre => Is_Initialized (Item)
        and then Packet'Length >= Max_Datagram_Length;
@@ -162,6 +173,8 @@ private package Flyology.QUIC.Application_Space is
       Invalid_ACK_Range,
       Invalid_Connection_ID,
       Unexpected_Handshake_Done,
+      Unexpected_TLS_Message,
+      Protocol_Violation,
       ACK_Range_Capacity_Exceeded,
       Acknowledges_Unsent_Packet,
       Invalid_Stream_Limit,
@@ -183,6 +196,7 @@ private package Flyology.QUIC.Application_Space is
       Peer_Closed     : Boolean := False;
       Application_Close : Boolean := False;
       Close_Error     : Varint_Policy.Value_Type := 0;
+      Triggering_Frame_Type : Varint_Policy.Value_Type := 0;
    end record;
 
    procedure Process_Packet

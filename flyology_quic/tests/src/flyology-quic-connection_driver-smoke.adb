@@ -189,7 +189,7 @@ begin
    Start_Client (Client, Client_Output, Client_Result);
    pragma Assert
      (Client_Result.Status = Succeeded and then Client_Output.Count = 1
-      and then Client_Output.Items (1).Length = Max_Datagram_Length);
+      and then Client_Output.Items (1).Length = 1_200);
    Connection_IO.Send (Client_Socket, Client_Output, Timeout => 1.0);
    Connection_IO.Receive
      (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);

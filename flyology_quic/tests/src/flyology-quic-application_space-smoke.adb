@@ -412,4 +412,47 @@ begin
          and then Attack_Received.Application_Close
          and then Attack_Received.Close_Error = 11);
    end;
+
+   --  Clients may ignore a complete post-handshake NewSessionTicket, while
+   --  QUIC still rejects a TLS KeyUpdate carried in 1-RTT CRYPTO.
+   declare
+      Ticket_Sender : Application_Connection.Connection;
+      Ticket_Client : State;
+      Ticket_Packet : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
+      Ticket_Built : Application_Connection.Build_Result;
+      Ticket_Received : Process_Result;
+   begin
+      Application_Connection.Initialize
+        (Ticket_Sender, Server_Keys, Client_Keys, Client_ID, Server_ID);
+      Initialize
+        (Ticket_Client, Client_Keys, Server_Keys, Server_ID, Client_ID,
+         Stream_ID_Policy.Client, Server_Peer, Client_Peer);
+
+      Application_Connection.Build_One_RTT
+        (Ticket_Sender, (16#06#, 0, 4, 4, 0, 0, 0),
+         Ticket_Packet, Ticket_Built);
+      Process_Packet
+        (Ticket_Client,
+         Ticket_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Ticket_Built.Packet_Length)),
+         Now => 600, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Ticket_Received);
+      pragma Assert (Ticket_Received.Status = Processed);
+
+      Application_Connection.Build_One_RTT
+        (Ticket_Sender, (16#06#, 0, 5, 16#18#, 0, 0, 1, 0),
+         Ticket_Packet, Ticket_Built);
+      Process_Packet
+        (Ticket_Client,
+         Ticket_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Ticket_Built.Packet_Length)),
+         Now => 601, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Ticket_Received);
+      pragma Assert (Ticket_Received.Status = Unexpected_TLS_Message);
+   end;
 end Flyology.QUIC.Application_Space.Smoke;

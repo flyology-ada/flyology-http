@@ -49,9 +49,9 @@ begin
    pragma Assert
      (Built_1.Status = Built and then Built_2.Status = Built
       and then Built_3.Status = Built
-      and then Built_1.Packet_Length = Max_Datagram_Length
-      and then Built_2.Packet_Length = Max_Datagram_Length
-      and then Built_3.Packet_Length = Max_Datagram_Length);
+      and then Built_1.Packet_Length = 1_200
+      and then Built_2.Packet_Length = 1_200
+      and then Built_3.Packet_Length = 1_200);
 
    Process_Packet
      (Server,
