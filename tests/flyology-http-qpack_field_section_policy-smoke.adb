@@ -11,6 +11,7 @@ begin
    Request.Fields (3) := Make_Field (":path", "/");
    Request.Fields (4) := Make_Field (":authority", "example.com");
    Request.Fields (5) := Make_Field ("x-test", "ok");
+   pragma Assert (Field_Section_Size (Request) = 217);
 
    Wire := Encode (Request);
    pragma Assert (Wire.Status = Encoded);

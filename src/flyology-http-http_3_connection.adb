@@ -277,6 +277,10 @@ package body Flyology.HTTP.HTTP_3_Connection is
    function Has_Peer_Settings (Item : Connection) return Boolean is
      (HTTP_3_Stream_Receive_Policy.Has_Peer_Settings (Item.Receive));
 
+   function Peer_Settings
+     (Item : Connection) return HTTP_3_Settings_Policy.Settings is
+     (HTTP_3_Stream_Receive_Policy.Peer_Settings (Item.Receive));
+
    function Find_Send
      (Item : Connection; ID : QUIC.Stream_ID) return Optional_Slot is
    begin
@@ -382,6 +386,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
       Encoded    : QPACK_Field_Section_Policy.Encode_Result;
       Frame      : HTTP_3_Frame_Policy.Encode_Result;
       Sent       : QUIC.Send_Status;
+      Peer       : HTTP_3_Settings_Policy.Settings;
    begin
       Packet := (others => <>);
       if not QUIC.Is_Connected (Transport) then
@@ -394,6 +399,18 @@ package body Flyology.HTTP.HTTP_3_Connection is
             Status := Frame_Unexpected;
          end if;
          return;
+      end if;
+
+      if Has_Peer_Settings (Item) then
+         Peer := Peer_Settings (Item);
+         if Peer.Has_Max_Field_Size
+           and then HTTP_3_Settings_Policy.Varint_Policy.Value_Type
+             (QPACK_Field_Section_Policy.Field_Section_Size (Headers)) >
+               Peer.Max_Field_Size
+         then
+            Status := Peer_Field_Section_Too_Large;
+            return;
+         end if;
       end if;
 
       if Item.Sending (Slot).Kind = Request_Message then

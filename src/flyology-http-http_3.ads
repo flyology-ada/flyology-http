@@ -110,11 +110,13 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Stream_Capacity_Exceeded HTTP/3 stream storage is exhausted
    --  @enum Stream_Creation_Error The stream role or identifier is invalid
    --  @enum Closed_Critical_Stream A mandatory peer stream ended
-   --  @enum Missing_Settings A request arrived before peer SETTINGS
+   --  @enum Missing_Settings Peer control stream did not begin with SETTINGS
    --  @enum Frame_Unexpected The frame is forbidden in its current context
    --  @enum Settings_Error Peer SETTINGS are malformed
    --  @enum Frame_Error A frame is malformed or unsupported
    --  @enum QPACK_Decompression_Failed A field section cannot be decoded
+   --  @enum Peer_Field_Section_Too_Large Fields exceed the peer's advertised
+   --    maximum field-section size
    --  @enum Message_Error HTTP message sequencing is invalid
    --  @enum Header_Error HTTP field semantics are invalid
    type Operation_Status is
@@ -136,6 +138,7 @@ package Flyology.HTTP.HTTP_3 is
       Settings_Error,
       Frame_Error,
       QPACK_Decompression_Failed,
+      Peer_Field_Section_Too_Large,
       Message_Error,
       Header_Error);
 
@@ -251,6 +254,12 @@ package Flyology.HTTP.HTTP_3 is
    --  @param Item Session to inspect
    --  @return True after a Settings_Received event
    function Has_Peer_Settings (Item : Session) return Boolean;
+
+   --  Return the SETTINGS advertised by the peer.
+   --  @param Item Session whose peer SETTINGS were accepted
+   --  @return Peer settings used for subsequent sends
+   function Peer_Settings (Item : Session) return Settings
+   with Pre => Has_Peer_Settings (Item);
 
 private
    subtype Name_Length is Natural range 0 .. Max_Name_Length;

@@ -32,6 +32,24 @@ is
    function Field_Value (Item : Header_Field) return String is
      (if Item.Value_Size = 0 then "" else Item.Value (1 .. Item.Value_Size));
 
+   function Field_Section_Size
+     (Block : Header_Block) return Field_Section_Size_Type
+   is
+      Result : Field_Section_Size_Type := 0;
+   begin
+      for Index in 1 .. Block.Count loop
+         pragma Loop_Invariant
+           (Result <=
+              (Index - 1) *
+                (Max_Name_Length + Max_Value_Length + 32));
+         Result := Result
+           + Block.Fields (Index).Name_Size
+           + Block.Fields (Index).Value_Size
+           + 32;
+      end loop;
+      return Result;
+   end Field_Section_Size;
+
    function Decode
      (Data : Ada.Streams.Stream_Element_Array) return Decode_Result
    is

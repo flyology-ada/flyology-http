@@ -140,6 +140,8 @@ package body Flyology.HTTP.HTTP_3 is
          when Internal.Frame_Error => Frame_Error,
          when Internal.QPACK_Decompression_Failed =>
            QPACK_Decompression_Failed,
+         when Internal.Peer_Field_Section_Too_Large =>
+           Peer_Field_Section_Too_Large,
          when Internal.Message_Error => Message_Error,
          when Internal.Header_Error => Header_Error);
 
@@ -281,4 +283,13 @@ package body Flyology.HTTP.HTTP_3 is
    function Has_Peer_Settings (Item : Session) return Boolean is
      (Is_Initialized (Item)
       and then Internal.Has_Peer_Settings (Impl (Item).Value));
+
+   function Peer_Settings (Item : Session) return Settings is
+      Value : constant Internal_Settings.Settings :=
+        Internal.Peer_Settings (Impl (Item).Value);
+   begin
+      return
+        (Has_Max_Field_Size => Value.Has_Max_Field_Size,
+         Max_Field_Size     => Value.Max_Field_Size);
+   end Peer_Settings;
 end Flyology.HTTP.HTTP_3;

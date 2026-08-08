@@ -1,6 +1,7 @@
 with Ada.Streams;
 with Flyology.HTTP.HTTP_3_Control_Policy;
 with Flyology.HTTP.HTTP_3_Message_Policy;
+with Flyology.HTTP.HTTP_3_Settings_Policy;
 with Flyology.HTTP.HTTP_3_Stream_Policy;
 with Flyology.HTTP.QPACK_Field_Section_Policy;
 with Flyology.QUIC.Varint_Policy;
@@ -67,6 +68,11 @@ is
 
    function Has_Peer_Settings (Item : Connection_State) return Boolean
    with Global => null;
+
+   function Peer_Settings
+     (Item : Connection_State) return HTTP_3_Settings_Policy.Settings
+   with Global => null,
+        Pre => Has_Peer_Settings (Item);
 
    procedure Open
      (Item       : out Stream_State;

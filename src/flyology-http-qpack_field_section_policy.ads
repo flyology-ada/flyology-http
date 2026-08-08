@@ -50,6 +50,15 @@ is
       Fields : Header_Field_Array;
    end record;
 
+   Max_Field_Section_Size : constant :=
+     Max_Fields * (Max_Name_Length + Max_Value_Length + 32);
+   subtype Field_Section_Size_Type is Natural range
+     0 .. Max_Field_Section_Size;
+
+   function Field_Section_Size
+     (Block : Header_Block) return Field_Section_Size_Type
+   with Global => null;
+
    type Decode_Status is
      (Decoded,
       Truncated,

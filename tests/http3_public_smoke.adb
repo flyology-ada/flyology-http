@@ -11,6 +11,7 @@ procedure HTTP3_Public_Smoke is
    use type H3.Event_Kind;
    use type H3.Operation_Status;
    use type QUIC.Stream_ID;
+   use type QUIC.Stream_Offset;
 
    Client_Transport, Server_Transport : QUIC.Connection;
    Client, Server : H3.Session;
@@ -21,7 +22,9 @@ begin
    Flyology.QUIC.Test_Connections.Connect
      (Client_Transport, Server_Transport);
    H3.Initialize (Client, H3.Client);
-   H3.Initialize (Server, H3.Server);
+   H3.Initialize
+     (Server, H3.Server,
+      (Has_Max_Field_Size => True, Max_Field_Size => 200));
 
    H3.Start
      (Client, Client_Transport, Now => 1_000,
@@ -45,7 +48,9 @@ begin
    pragma Assert
      (Client_Status = H3.Succeeded
       and then Client_Event.Kind = H3.Settings_Received
-      and then H3.Has_Peer_Settings (Client));
+      and then H3.Has_Peer_Settings (Client)
+      and then H3.Peer_Settings (Client).Has_Max_Field_Size
+      and then H3.Peer_Settings (Client).Max_Field_Size = 200);
 
    declare
       Request_Headers  : H3.Header_Block;
@@ -60,6 +65,18 @@ begin
         (Request_Headers, H3.Make_Field (":authority", "example.com"));
       H3.Open_Request
         (Client, Client_Transport, Request_Stream, Client_Status);
+      declare
+         Too_Large : H3.Header_Block := Request_Headers;
+      begin
+         H3.Append (Too_Large, H3.Make_Field ("x-extra", "overflow"));
+         H3.Send_Headers
+           (Client, Client_Transport, Request_Stream, Too_Large,
+            Fin => True, Now => 1_999, Packet => Request_Packet,
+            Status => Client_Status);
+         pragma Assert
+           (Client_Status = H3.Peer_Field_Section_Too_Large
+            and then Request_Packet.Length = 0);
+      end;
       H3.Send_Headers
         (Client, Client_Transport, Request_Stream, Request_Headers,
          Fin => True, Now => 2_000, Packet => Request_Packet,

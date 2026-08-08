@@ -22,6 +22,10 @@ is
    function Has_Peer_Settings (Item : Connection_State) return Boolean is
      (HTTP_3_Control_Policy.Has_Peer_Settings (Item.Control));
 
+   function Peer_Settings
+     (Item : Connection_State) return HTTP_3_Settings_Policy.Settings is
+     (HTTP_3_Control_Policy.Peer_Settings (Item.Control));
+
    procedure Open
      (Item       : out Stream_State;
       Stream_ID  : Varint_Policy.Value_Type;

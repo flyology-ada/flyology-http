@@ -43,6 +43,7 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Settings_Error,
       Frame_Error,
       QPACK_Decompression_Failed,
+      Peer_Field_Section_Too_Large,
       Message_Error,
       Header_Error);
 
@@ -106,6 +107,10 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Status    : out Operation_Status);
 
    function Has_Peer_Settings (Item : Connection) return Boolean;
+
+   function Peer_Settings
+     (Item : Connection) return HTTP_3_Settings_Policy.Settings
+   with Pre => Has_Peer_Settings (Item);
 
 private
    subtype Slot_Index is Positive range 1 .. Max_Streams;
