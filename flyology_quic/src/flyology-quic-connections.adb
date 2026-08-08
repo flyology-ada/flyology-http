@@ -9,8 +9,12 @@ with Flyology.QUIC.Transport_Parameter_Policy;
 with System.Address_To_Access_Conversions;
 
 package body Flyology.QUIC.Connections is
+   use type Ada.Streams.Stream_Element_Offset;
    use type System.Address;
    use type Initial_Packet_Policy.Parse_Status;
+   use type Long_Header_Policy.Packet_Kind;
+   use type Long_Header_Policy.Parse_Status;
+   use type Interfaces.Unsigned_32;
    use type Transport_Parameter_Policy.Encode_Status;
    use type Transport_Parameter_Policy.Decode_Status;
    use type Transport_Parameter_Policy.Endpoint_Role;
@@ -95,6 +99,48 @@ package body Flyology.QUIC.Connections is
          raise Randomness_Error with
            "the QUIC cryptographic provider could not generate randomness";
    end Random_Connection_ID;
+
+   function Inspect_Datagram_Header
+     (Data : Ada.Streams.Stream_Element_Array;
+      Short_Header_Destination_Length : Positive := 8)
+      return Datagram_Header
+   is
+      use type Ada.Streams.Stream_Element;
+      Result : Datagram_Header;
+   begin
+      if Data'Length = 0 then
+         return Result;
+      elsif (Data (Data'First) and 16#80#) /= 0 then
+         declare
+            Header : constant Long_Header_Policy.Parse_Result :=
+              Long_Header_Policy.Parse (Data);
+         begin
+            if Header.Status = Long_Header_Policy.Parsed
+              and then Header.Version = Long_Header_Policy.Version_1
+              and then Header.Destination.Length <=
+                Max_Connection_ID_Length
+            then
+               Result.Valid := True;
+               Result.Is_Initial :=
+                 Header.Kind = Long_Header_Policy.Initial;
+               Result.Destination := Public_ID (Header.Destination);
+            end if;
+         end;
+      elsif (Data (Data'First) and 16#C0#) = 16#40#
+        and then Data'Length >= Short_Header_Destination_Length + 1
+      then
+         Result.Valid := True;
+         Result.Destination.Length := Short_Header_Destination_Length;
+         Result.Destination.Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+             (Short_Header_Destination_Length)) :=
+           Data
+             (Data'First + Ada.Streams.Stream_Element_Offset'(1) ..
+              Data'First + Ada.Streams.Stream_Element_Offset
+                (Short_Header_Destination_Length));
+      end if;
+      return Result;
+   end Inspect_Datagram_Header;
 
    function Parameter
      (Value : Connection_ID)

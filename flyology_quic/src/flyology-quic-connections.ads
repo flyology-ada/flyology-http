@@ -48,6 +48,30 @@ package Flyology.QUIC.Connections is
      (Length : Positive := 8) return Connection_ID
    with Pre => Length <= Max_Connection_ID_Length;
 
+   --  Invariant header information needed by a UDP connection dispatcher.
+   --  @field Valid The datagram begins with a supported QUIC v1 header
+   --  @field Is_Initial The datagram begins with a client Initial packet
+   --  @field Destination Destination connection identifier from that header
+   type Datagram_Header is record
+      Valid       : Boolean := False;
+      Is_Initial  : Boolean := False;
+      Destination : Connection_ID;
+   end record;
+
+   --  Inspect the invariant portion of the first QUIC packet in a datagram.
+   --  Short headers do not encode their destination identifier length, so a
+   --  dispatcher supplies the fixed length it assigned to local identifiers.
+   --  This operation does not authenticate or otherwise process the packet.
+   --  @param Data UDP datagram payload
+   --  @param Short_Header_Destination_Length Locally assigned CID length
+   --  @return Bounded routing information, or Valid False for malformed input
+   function Inspect_Datagram_Header
+     (Data : Ada.Streams.Stream_Element_Array;
+      Short_Header_Destination_Length : Positive := 8)
+      return Datagram_Header
+   with Pre =>
+     Short_Header_Destination_Length <= Max_Connection_ID_Length;
+
    --  Raw Ed25519 private key used by the current server identity provider.
    subtype Ed25519_Private_Key is
      Ada.Streams.Stream_Element_Array (1 .. 32);
