@@ -121,6 +121,7 @@ is
         or else Frame_Type = HTTP_3_Frame_Policy.Data_Frame
         or else Frame_Type = HTTP_3_Frame_Policy.Headers_Frame
         or else Frame_Type = HTTP_3_Frame_Policy.Push_Promise_Frame
+        or else HTTP_3_Frame_Policy.Is_HTTP_2_Reserved (Frame_Type)
       then
          Status := Frame_Unexpected;
       else

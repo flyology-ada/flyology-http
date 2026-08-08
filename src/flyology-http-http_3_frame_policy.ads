@@ -19,13 +19,21 @@ is
    subtype Frame_Offset is
      Ada.Streams.Stream_Element_Offset range 0 .. Max_Frame_Length;
 
-   Data_Frame         : constant Varint_Policy.Value_Type := 16#00#;
-   Headers_Frame      : constant Varint_Policy.Value_Type := 16#01#;
-   Cancel_Push_Frame  : constant Varint_Policy.Value_Type := 16#03#;
-   Settings_Frame     : constant Varint_Policy.Value_Type := 16#04#;
-   Push_Promise_Frame : constant Varint_Policy.Value_Type := 16#05#;
-   Goaway_Frame       : constant Varint_Policy.Value_Type := 16#07#;
-   Max_Push_ID_Frame  : constant Varint_Policy.Value_Type := 16#0D#;
+   Data_Frame          : constant Varint_Policy.Value_Type := 16#00#;
+   Headers_Frame       : constant Varint_Policy.Value_Type := 16#01#;
+   Priority_Frame      : constant Varint_Policy.Value_Type := 16#02#;
+   Cancel_Push_Frame   : constant Varint_Policy.Value_Type := 16#03#;
+   Settings_Frame      : constant Varint_Policy.Value_Type := 16#04#;
+   Push_Promise_Frame  : constant Varint_Policy.Value_Type := 16#05#;
+   Ping_Frame          : constant Varint_Policy.Value_Type := 16#06#;
+   Goaway_Frame        : constant Varint_Policy.Value_Type := 16#07#;
+   Window_Update_Frame : constant Varint_Policy.Value_Type := 16#08#;
+   Continuation_Frame  : constant Varint_Policy.Value_Type := 16#09#;
+   Max_Push_ID_Frame   : constant Varint_Policy.Value_Type := 16#0D#;
+
+   function Is_HTTP_2_Reserved
+     (Frame_Type : Varint_Policy.Value_Type) return Boolean
+   with Global => null;
 
    type Parse_Status is (Parsed, Truncated, Frame_Length_Too_Large);
 

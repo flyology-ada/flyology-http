@@ -17,6 +17,20 @@ begin
    pragma Assert (R_Update.Status = Accepted);
    R_Update := On_Request_Frame (Request, 16#21#);
    pragma Assert (R_Update.Status = Accepted);
+   pragma Assert
+     (On_Request_Frame (Request, HTTP_3_Frame_Policy.Priority_Frame).Status =
+        Frame_Unexpected);
+   pragma Assert
+     (On_Request_Frame (Request, HTTP_3_Frame_Policy.Ping_Frame).Status =
+        Frame_Unexpected);
+   pragma Assert
+     (On_Request_Frame
+        (Request, HTTP_3_Frame_Policy.Window_Update_Frame).Status =
+          Frame_Unexpected);
+   pragma Assert
+     (On_Request_Frame
+        (Request, HTTP_3_Frame_Policy.Continuation_Frame).Status =
+          Frame_Unexpected);
    R_Update :=
      On_Request_Frame
        (Request, HTTP_3_Frame_Policy.Headers_Frame, Trailer_Headers);
@@ -73,6 +87,10 @@ begin
    Response := S_Update.State;
    pragma Assert (Finish_Response (Response) = Message_Complete);
    pragma Assert (On_Response_Frame (Response, 16#21#).Status = Accepted);
+   pragma Assert
+     (On_Response_Frame
+        (Response, HTTP_3_Frame_Policy.Priority_Frame).Status =
+          Frame_Unexpected);
    pragma Assert
      (On_Response_Frame (Response, HTTP_3_Frame_Policy.Data_Frame).Status =
         Frame_Unexpected);

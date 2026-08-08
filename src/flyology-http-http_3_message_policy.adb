@@ -12,7 +12,8 @@ is
       or else Frame_Type = HTTP_3_Frame_Policy.Settings_Frame
       or else Frame_Type = HTTP_3_Frame_Policy.Push_Promise_Frame
       or else Frame_Type = HTTP_3_Frame_Policy.Goaway_Frame
-      or else Frame_Type = HTTP_3_Frame_Policy.Max_Push_ID_Frame);
+      or else Frame_Type = HTTP_3_Frame_Policy.Max_Push_ID_Frame
+      or else HTTP_3_Frame_Policy.Is_HTTP_2_Reserved (Frame_Type));
 
    function On_Request_Frame
      (State      : Request_State;

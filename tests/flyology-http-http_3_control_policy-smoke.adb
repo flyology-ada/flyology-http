@@ -38,6 +38,22 @@ begin
    Process_Frame
      (Item, 16#21#, Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
    pragma Assert (Status = Accepted);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Priority_Frame,
+      Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+   pragma Assert (Status = Frame_Unexpected);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Ping_Frame,
+      Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+   pragma Assert (Status = Frame_Unexpected);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Window_Update_Frame,
+      Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+   pragma Assert (Status = Frame_Unexpected);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Continuation_Frame,
+      Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+   pragma Assert (Status = Frame_Unexpected);
 
    Process_Frame
      (Item, HTTP_3_Frame_Policy.Goaway_Frame,

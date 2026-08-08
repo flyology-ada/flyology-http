@@ -5,6 +5,14 @@ is
    use type Varint_Policy.Decode_Status;
    use type Varint_Policy.Value_Type;
 
+   function Is_HTTP_2_Reserved
+     (Frame_Type : Varint_Policy.Value_Type) return Boolean
+   is
+     (Frame_Type = Priority_Frame
+      or else Frame_Type = Ping_Frame
+      or else Frame_Type = Window_Update_Frame
+      or else Frame_Type = Continuation_Frame);
+
    function Parse
      (Data : Ada.Streams.Stream_Element_Array) return Parse_Result
    is

@@ -167,6 +167,10 @@ begin
         (Connection, Request,
          Ada.Streams.Stream_Element_Array'(5, 1, 0), Result);
       pragma Assert (Result.Status = Frame_Unexpected);
+      Process
+        (Connection, Request,
+         Ada.Streams.Stream_Element_Array'(2, 0), Result);
+      pragma Assert (Result.Status = Frame_Unexpected);
       Finish (Connection, Request, Status);
       pragma Assert (Status = Consumed);
    end;

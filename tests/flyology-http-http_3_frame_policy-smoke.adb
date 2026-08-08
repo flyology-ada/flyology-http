@@ -6,6 +6,13 @@ procedure Flyology.HTTP.HTTP_3_Frame_Policy.Smoke is
      (16#48#, 16#33#);
    Frame : constant Encode_Result := Encode (Headers_Frame, Payload);
 begin
+   pragma Assert (Is_HTTP_2_Reserved (Priority_Frame));
+   pragma Assert (Is_HTTP_2_Reserved (Ping_Frame));
+   pragma Assert (Is_HTTP_2_Reserved (Window_Update_Frame));
+   pragma Assert (Is_HTTP_2_Reserved (Continuation_Frame));
+   pragma Assert (not Is_HTTP_2_Reserved (Headers_Frame));
+   pragma Assert (not Is_HTTP_2_Reserved (16#21#));
+
    pragma Assert
      (Frame.Length = 4
       and then Frame.Data (1 .. 4) =
