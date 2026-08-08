@@ -1,9 +1,11 @@
 with Ada.Strings.Unbounded;
+with Ada.Streams;
 with Flyology.Cancellation;
 with Flyology.IO.Connections;
 with Flyology.IO.Sockets;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Middleware;
+with Flyology.QUIC.Connections;
 
 --  Provides deterministic method-and-path routing above HTTP.Server.
 --  @formal App_Context Application-owned context passed to every endpoint
@@ -458,6 +460,76 @@ package Flyology.HTTP.Server.Routing is
       Token              : access Flyology.Cancellation.Token := null;
       Header_Timeout     : Duration := -1.0;
       Ingress            : access Ingress_Budget := null);
+
+   --  Receive and serve one HTTP/3 connection on an exclusively owned bound
+   --  UDP socket. Requests use the same routes, middleware, body policies, and
+   --  application exchange helpers as HTTP/1.1 and HTTP/2. The server identity
+   --  is an Ed25519 certificate and raw private key. A secure server
+   --  connection identifier is generated for the connection.
+   --  @param Item Router registry
+   --  @param Context Typed shared application context
+   --  @param Socket Exclusively owned bound UDP socket
+   --  @param Certificate_DER DER-encoded Ed25519 server certificate
+   --  @param Private_Key Raw Ed25519 private key for Certificate_DER
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request application deadline
+   --  @param Handshake_Timeout Maximum time to establish QUIC
+   --  @param Max_Connection_Age Absolute connection lifetime
+   --  @param Max_Requests Requests served before Serve_HTTP_3 returns
+   --  @param Token Optional connection cancellation source
+   procedure Serve_HTTP_3
+     (Item               : in out Router;
+      Context            : in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := 5;
+      Token              : access Flyology.Cancellation.Token := null)
+   with Pre => Flyology.IO.Sockets.Is_Open (Socket)
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then Handshake_Timeout > 0.0
+     and then Max_Requests <= 5;
+
+   --  Receive and serve one HTTP/3 connection with an application-supplied
+   --  server connection identifier. This overload is intended for connection
+   --  managers that own identifier generation.
+   --  @param Item Router registry
+   --  @param Context Typed shared application context
+   --  @param Socket Exclusively owned bound UDP socket
+   --  @param Certificate_DER DER-encoded Ed25519 server certificate
+   --  @param Private_Key Raw Ed25519 private key for Certificate_DER
+   --  @param Source Fresh server source connection identifier
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request application deadline
+   --  @param Handshake_Timeout Maximum time to establish QUIC
+   --  @param Max_Connection_Age Absolute connection lifetime
+   --  @param Max_Requests Requests served before Serve_HTTP_3 returns
+   --  @param Token Optional connection cancellation source
+   procedure Serve_HTTP_3
+     (Item               : in out Router;
+      Context            : in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Source             : Flyology.QUIC.Connections.Connection_ID;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := 5;
+      Token              : access Flyology.Cancellation.Token := null)
+   with Pre => Flyology.IO.Sockets.Is_Open (Socket)
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then Handshake_Timeout > 0.0
+     and then Max_Requests <= 5
+     and then Source.Length in 1 ..
+       Flyology.QUIC.Connections.Max_Connection_ID_Length;
 
 private
    use Ada.Strings.Unbounded;

@@ -5,6 +5,7 @@ with Flyology.HTTP.Decoded_Path_Policy;
 with Flyology.HTTP.Route_Parameter_Policy;
 with Flyology.HTTP.Server.Connections;
 with Flyology.HTTP.Server.HTTP_2;
+with Flyology.HTTP.Server.HTTP_3;
 with Flyology.IO;
 with Flyology.IO.Connections.TLS;
 with Flyology.IO.TLS;
@@ -1364,5 +1365,58 @@ package body Flyology.HTTP.Server.Routing is
             end;
       end case;
    end Serve;
+
+   procedure Serve_HTTP_3
+     (Item               : in out Router;
+      Context            : in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := 5;
+      Token              : access Flyology.Cancellation.Token := null)
+   is
+   begin
+      Serve_HTTP_3
+        (Item, Context, Socket, Certificate_DER, Private_Key,
+         Flyology.QUIC.Connections.Random_Connection_ID,
+         Transport_Settings, Timeout, Handshake_Timeout,
+         Max_Connection_Age, Max_Requests, Token);
+   end Serve_HTTP_3;
+
+   procedure Serve_HTTP_3
+     (Item               : in out Router;
+      Context            : in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Source             : Flyology.QUIC.Connections.Connection_ID;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := 5;
+      Token              : access Flyology.Cancellation.Token := null)
+   is
+      procedure Dispatch_HTTP_3
+        (State : in out App_Context;
+         X     : in out Applications.Exchange) is
+      begin
+         Dispatch (Item, State, X);
+      end Dispatch_HTTP_3;
+
+      package HTTP_3_Engine is new
+        Flyology.HTTP.Server.HTTP_3 (App_Context, Dispatch_HTTP_3);
+   begin
+      HTTP_3_Engine.Serve
+        (Context, Socket, Certificate_DER, Private_Key, Source,
+         Transport_Settings, Timeout, Handshake_Timeout,
+         Max_Connection_Age, Max_Requests, Token);
+   end Serve_HTTP_3;
 
 end Flyology.HTTP.Server.Routing;

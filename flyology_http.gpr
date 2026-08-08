@@ -51,6 +51,7 @@ project Flyology_HTTP is
             "flyology-http-server-cors.ads",
             "flyology-http-server-logging.ads",
             "flyology-http-server-http_2.ads",
+            "flyology-http-server-http_3.ads",
             "flyology-http-server-metrics.ads",
             "flyology-http-server-middleware.ads",
             "flyology-http-server-middleware_authentication.ads",

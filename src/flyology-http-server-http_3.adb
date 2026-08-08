@@ -1,0 +1,1289 @@
+with Ada.Characters.Handling;
+with Ada.Real_Time;
+with Ada.Strings.Fixed;
+with Ada.Unchecked_Deallocation;
+with Flyology.Bytes;
+with Flyology.HTTP.HTTP_3;
+with Flyology.HTTP.Server.Applications.Internals;
+with Flyology.HTTP.Server.Exchange_Backends;
+with Flyology.IO;
+
+package body Flyology.HTTP.Server.HTTP_3 is
+   use Ada.Streams;
+   use type Ada.Real_Time.Time;
+   use type Flyology.HTTP.Server.Applications.Response_State;
+
+   package Bytes renames Flyology.Bytes;
+   package H3 renames Flyology.HTTP.HTTP_3;
+   package Backends renames Flyology.HTTP.Server.Exchange_Backends;
+   package QUIC renames Flyology.QUIC.Connections;
+   package Sockets renames Flyology.IO.Sockets;
+
+   use type H3.Event_Kind;
+   use type H3.Operation_Status;
+   use type QUIC.Operation_Status;
+   use type QUIC.Server_Initialize_Status;
+   use type QUIC.Stream_ID;
+   use type QUIC.Timeout_Status;
+
+   CRLF : constant String := Character'Val (13) & Character'Val (10);
+   ALPN : constant Stream_Element_Array :=
+     (1 => Character'Pos ('h'), 2 => Character'Pos ('3'));
+   Maximum_Events : constant Positive := 32;
+   Maximum_Request_Streams : constant Positive := 8;
+   Response_Chunk_Size : constant Positive := 1_024;
+
+   type Event_Array is array (Positive range 1 .. Maximum_Events) of H3.Event;
+   type Event_Queue is record
+      Values : Event_Array;
+      First  : Positive := 1;
+      Count  : Natural range 0 .. Maximum_Events := 0;
+   end record;
+
+   procedure Push (Item : in out Event_Queue; Value : H3.Event) is
+      Index : Positive;
+   begin
+      if Item.Count = Maximum_Events then
+         raise Resource_Exhausted with "HTTP/3 pending event queue is full";
+      end if;
+      Index := ((Item.First - 1 + Item.Count) mod Maximum_Events) + 1;
+      Item.Values (Index) := Value;
+      Item.Count := Item.Count + 1;
+   end Push;
+
+   procedure Pop
+     (Item : in out Event_Queue; Value : out H3.Event; Present : out Boolean)
+   is
+   begin
+      Present := Item.Count > 0;
+      if not Present then
+         Value := (others => <>);
+         return;
+      end if;
+      Value := Item.Values (Item.First);
+      Item.First := Item.First mod Maximum_Events + 1;
+      Item.Count := Item.Count - 1;
+   end Pop;
+
+   type Connection_State;
+   type Connection_State_Access is access all Connection_State;
+
+   type Connection_State is limited record
+      Socket    : access Sockets.Socket_Type;
+      Peer      : Sockets.Endpoint;
+      Token     : access Flyology.Cancellation.Token;
+      Epoch     : Ada.Real_Time.Time := Ada.Real_Time.Clock;
+      Transport : QUIC.Connection;
+      Session   : H3.Session;
+      Pending   : Event_Queue;
+      H3_Started : Boolean := False;
+      Closed    : Boolean := False;
+   end record;
+
+   procedure Free_Connection_State is new Ada.Unchecked_Deallocation
+     (Connection_State, Connection_State_Access);
+
+   function Now (Item : Connection_State) return QUIC.Timestamp is
+      Elapsed : constant Duration :=
+        Ada.Real_Time.To_Duration (Ada.Real_Time.Clock - Item.Epoch);
+   begin
+      return QUIC.Timestamp (Long_Long_Integer (Elapsed * 1_000_000.0));
+   end Now;
+
+   function Remaining (Deadline : Ada.Real_Time.Time) return Duration is
+   begin
+      if Deadline = Ada.Real_Time.Time_Last then
+         return -1.0;
+      elsif Ada.Real_Time.Clock >= Deadline then
+         return 0.0;
+      else
+         return Ada.Real_Time.To_Duration (Deadline - Ada.Real_Time.Clock);
+      end if;
+   end Remaining;
+
+   function Receive_Timeout
+     (Item : Connection_State; Maximum : Duration) return Duration
+   is
+      Result : Duration := Maximum;
+      Current : constant QUIC.Timestamp := Now (Item);
+   begin
+      if QUIC.Has_Recovery_Timeout (Item.Transport) then
+         declare
+            Deadline : constant QUIC.Timestamp :=
+              QUIC.Recovery_Deadline (Item.Transport);
+            Recovery : constant Duration :=
+              (if Deadline <= Current then 0.0
+               else Duration (Deadline - Current) / 1_000_000.0);
+         begin
+            if Result < 0.0 or else Recovery < Result then
+               Result := Recovery;
+            end if;
+         end;
+      end if;
+      return Result;
+   end Receive_Timeout;
+
+   procedure Send_Bytes
+     (Item : in out Connection_State;
+      Data : Stream_Element_Array;
+      Timeout : Duration)
+   is
+      Last : Stream_Element_Offset;
+   begin
+      if Item.Token = null then
+         Sockets.Send (Item.Socket.all, Data, Last, Timeout);
+      else
+         declare
+            FD : Flyology.IO.Descriptor;
+            Cancelled : Boolean;
+         begin
+            Item.Token.Wait_Source (FD, Cancelled);
+            if Cancelled then
+               raise Flyology.Cancellation.Operation_Cancelled;
+            end if;
+            Sockets.Send
+              (Item.Socket.all, Data, Last, Timeout, (1 => FD));
+         exception
+            when Sockets.Operation_Interrupted =>
+               raise Flyology.Cancellation.Operation_Cancelled;
+         end;
+      end if;
+      if Last /= Data'Last then
+         raise Flyology.IO.Device_Error with "partial HTTP/3 datagram send";
+      end if;
+   end Send_Bytes;
+
+   procedure Send
+     (Item : in out Connection_State;
+      Packet : QUIC.Datagram;
+      Timeout : Duration)
+   is
+   begin
+      if Packet.Length > 0 then
+         Send_Bytes
+           (Item,
+            Packet.Data
+              (1 .. Stream_Element_Offset (Packet.Length)),
+            Timeout);
+      end if;
+   end Send;
+
+   procedure Send
+     (Item : in out Connection_State;
+      Flight : QUIC.Datagram_Batch;
+      Timeout : Duration)
+   is
+   begin
+      for Index in 1 .. Flight.Count loop
+         Send (Item, Flight.Items (Index), Timeout);
+      end loop;
+   end Send;
+
+   procedure Drain_Events (Item : in out Connection_State) is
+      Value  : H3.Event;
+      Status : H3.Operation_Status;
+   begin
+      loop
+         H3.Poll (Item.Session, Item.Transport, Value, Status);
+         exit when Status = H3.No_Event;
+         if Status /= H3.Succeeded then
+            raise Protocol_Error with
+              "HTTP/3 receive failed: " & H3.Operation_Status'Image (Status);
+         end if;
+         Push (Item.Pending, Value);
+      end loop;
+   end Drain_Events;
+
+   procedure Process_Recovery
+     (Item : in out Connection_State; Timeout : Duration)
+   is
+      Flight : QUIC.Datagram_Batch;
+      Status : QUIC.Timeout_Status;
+   begin
+      QUIC.Process_Timeout (Item.Transport, Now (Item), Flight, Status);
+      case Status is
+         when QUIC.Probes_Ready =>
+            Send (Item, Flight, Timeout);
+         when QUIC.Not_Due | QUIC.No_Pending_Recovery =>
+            null;
+         when others =>
+            raise Flyology.IO.Device_Error with
+              "QUIC recovery failed: " & QUIC.Timeout_Status'Image (Status);
+      end case;
+   end Process_Recovery;
+
+   procedure Receive_One
+     (Item : in out Connection_State; Timeout : Duration)
+   is
+      Packet : Stream_Element_Array (1 .. QUIC.Max_Datagram_Length);
+      Last   : Stream_Element_Offset;
+      Flight : QUIC.Datagram_Batch;
+      Status : QUIC.Operation_Status;
+      Wait   : constant Duration := Receive_Timeout (Item, Timeout);
+
+      procedure Receive is
+      begin
+         if Item.Token = null then
+            Sockets.Receive (Item.Socket.all, Packet, Last, Wait);
+         else
+            declare
+               FD : Flyology.IO.Descriptor;
+               Cancelled : Boolean;
+            begin
+               Item.Token.Wait_Source (FD, Cancelled);
+               if Cancelled then
+                  raise Flyology.Cancellation.Operation_Cancelled;
+               end if;
+               Sockets.Receive
+                 (Item.Socket.all, Packet, Last, Wait, (1 => FD));
+            exception
+               when Sockets.Operation_Interrupted =>
+                  raise Flyology.Cancellation.Operation_Cancelled;
+            end;
+         end if;
+      end Receive;
+   begin
+      begin
+         Receive;
+      exception
+         when Flyology.IO.Timeout_Error =>
+            if QUIC.Has_Recovery_Timeout (Item.Transport)
+              and then QUIC.Recovery_Deadline (Item.Transport) <= Now (Item)
+            then
+               Process_Recovery (Item, Timeout);
+               return;
+            end if;
+            raise;
+      end;
+      if Last < Packet'First then
+         return;
+      end if;
+      QUIC.Process_Datagram
+        (Item.Transport, Packet (Packet'First .. Last), Flight, Status,
+         Now (Item));
+      case Status is
+         when QUIC.Succeeded | QUIC.Waiting_For_More =>
+            Send (Item, Flight, Timeout);
+         when QUIC.Connection_Closed =>
+            Item.Closed := True;
+         when others =>
+            raise Protocol_Error with
+              "QUIC receive failed: " & QUIC.Operation_Status'Image (Status);
+      end case;
+      if QUIC.Is_Connected (Item.Transport)
+        and then Item.H3_Started
+        and then not Item.Closed
+      then
+         Drain_Events (Item);
+      end if;
+   end Receive_One;
+
+   type Stream_Backend is limited new Backends.Backend with record
+      Owner            : Connection_State_Access;
+      Stream           : QUIC.Stream_ID := 0;
+      Payload_Bytes    : Bytes.Unbounded_Bytes;
+      Body_Cursor      : Natural := 1;
+      Body_Limit       : Natural := Max_Request_Body;
+      Deadline         : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
+      Head_Request     : Boolean := False;
+      Response_Begun   : Boolean := False;
+      Response_Ended   : Boolean := False;
+   end record;
+
+   overriding function Response_Started
+     (Item : Stream_Backend) return Boolean;
+   overriding procedure Narrow_Deadline
+     (Item : in out Stream_Backend; Deadline : Ada.Real_Time.Time);
+   overriding function Body_Complete
+     (Item : Stream_Backend) return Boolean;
+   overriding function Body_Bytes (Item : Stream_Backend) return Natural;
+   overriding procedure Narrow_Body_Limit
+     (Item : in out Stream_Backend; Maximum : Natural);
+   overriding procedure Read_Body
+     (Item     : in out Stream_Backend;
+      Data     : out Stream_Element_Array;
+      Last     : out Stream_Element_Offset;
+      Finished : out Boolean;
+      Token    : access Flyology.Cancellation.Token);
+   overriding procedure Accept_Body
+     (Item  : in out Stream_Backend;
+      Token : access Flyology.Cancellation.Token);
+   overriding procedure Buffer_Body
+     (Item  : in out Stream_Backend;
+      Value : in out Request;
+      Token : access Flyology.Cancellation.Token);
+   overriding procedure Discard_Body
+     (Item  : in out Stream_Backend;
+      Token : access Flyology.Cancellation.Token);
+   overriding procedure Respond
+     (Item          : in out Stream_Backend;
+      Status        : Positive;
+      Content_Type  : String;
+      Payload       : String;
+      Extra_Headers : String;
+      Close         : Boolean;
+      Timeout       : Duration;
+      Token         : access Flyology.Cancellation.Token);
+   overriding procedure Begin_Response_Stream
+     (Item          : in out Stream_Backend;
+      Status        : Positive;
+      Content_Type  : String;
+      Extra_Headers : String;
+      Close         : Boolean;
+      Timeout       : Duration;
+      Token         : access Flyology.Cancellation.Token);
+   overriding procedure Write_Response_Chunk
+     (Item : in out Stream_Backend; Data : String; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token);
+   overriding procedure Write_Response_Chunk
+     (Item : in out Stream_Backend; Data : Stream_Element_Array;
+      Timeout : Duration; Token : access Flyology.Cancellation.Token);
+   overriding procedure End_Response_Stream
+     (Item : in out Stream_Backend; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token);
+   overriding procedure Begin_SSE
+     (Item : in out Stream_Backend; Extra_Headers : String;
+      Timeout : Duration; Token : access Flyology.Cancellation.Token);
+   overriding procedure Send_Event
+     (Item : in out Stream_Backend; Data, Event, Id : String;
+      Retry : Natural; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token;
+      Include_Id, Include_Retry : Boolean);
+   overriding procedure Send_SSE_Comment
+     (Item : in out Stream_Backend; Comment : String; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token);
+   overriding procedure End_SSE
+     (Item : in out Stream_Backend; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token);
+   overriding procedure Mark_Failed (Item : in out Stream_Backend);
+
+   overriding function Response_Started
+     (Item : Stream_Backend) return Boolean is (Item.Response_Begun);
+
+   overriding procedure Narrow_Deadline
+     (Item : in out Stream_Backend; Deadline : Ada.Real_Time.Time) is
+   begin
+      Item.Deadline := Deadline;
+   end Narrow_Deadline;
+
+   overriding function Body_Complete
+     (Item : Stream_Backend) return Boolean is
+     (Item.Body_Cursor > Bytes.Length (Item.Payload_Bytes));
+
+   overriding function Body_Bytes (Item : Stream_Backend) return Natural is
+     (Bytes.Length (Item.Payload_Bytes));
+
+   overriding procedure Narrow_Body_Limit
+     (Item : in out Stream_Backend; Maximum : Natural) is
+   begin
+      if Maximum > Item.Body_Limit then
+         raise Protocol_Error with "request body limit cannot be widened";
+      elsif Bytes.Length (Item.Payload_Bytes) > Maximum then
+         raise Payload_Too_Large;
+      end if;
+      Item.Body_Limit := Maximum;
+   end Narrow_Body_Limit;
+
+   overriding procedure Read_Body
+     (Item     : in out Stream_Backend;
+      Data     : out Stream_Element_Array;
+      Last     : out Stream_Element_Offset;
+      Finished : out Boolean;
+      Token    : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Token);
+      Count : constant Natural :=
+        (if Item.Body_Cursor > Bytes.Length (Item.Payload_Bytes) then 0
+         else Natural'Min
+           (Data'Length,
+            Bytes.Length (Item.Payload_Bytes) - Item.Body_Cursor + 1));
+   begin
+      Last := Data'First - 1;
+      if Count > 0 then
+         for Offset in 0 .. Count - 1 loop
+            Data (Data'First + Stream_Element_Offset (Offset)) :=
+              Bytes.Element (Item.Payload_Bytes, Item.Body_Cursor + Offset);
+         end loop;
+         Last := Data'First + Stream_Element_Offset (Count) - 1;
+         Item.Body_Cursor := Item.Body_Cursor + Count;
+      end if;
+      Finished := Body_Complete (Item);
+   end Read_Body;
+
+   overriding procedure Accept_Body
+     (Item  : in out Stream_Backend;
+      Token : access Flyology.Cancellation.Token) is
+      pragma Unreferenced (Item, Token);
+   begin
+      null;
+   end Accept_Body;
+
+   overriding procedure Buffer_Body
+     (Item  : in out Stream_Backend;
+      Value : in out Request;
+      Token : access Flyology.Cancellation.Token) is
+      pragma Unreferenced (Token);
+   begin
+      Value.Body_Value := To_Unbounded_String
+        (Bytes.To_Byte_String (Item.Payload_Bytes));
+      Item.Body_Cursor := Bytes.Length (Item.Payload_Bytes) + 1;
+   end Buffer_Body;
+
+   overriding procedure Discard_Body
+     (Item  : in out Stream_Backend;
+      Token : access Flyology.Cancellation.Token) is
+      pragma Unreferenced (Token);
+   begin
+      Item.Body_Cursor := Bytes.Length (Item.Payload_Bytes) + 1;
+   end Discard_Body;
+
+   procedure Wait_For_Transport (Item : in out Stream_Backend) is
+      Wait : constant Duration := Remaining (Item.Deadline);
+   begin
+      if Wait = 0.0 then
+         raise Flyology.IO.Timeout_Error;
+      end if;
+      Receive_One (Item.Owner.all, Wait);
+      if Item.Owner.Closed then
+         raise Flyology.IO.Device_Error with "HTTP/3 peer closed";
+      end if;
+   end Wait_For_Transport;
+
+   procedure Send_Headers
+     (Item : in out Stream_Backend; Fields : H3.Header_Block;
+      Fin : Boolean)
+   is
+      Packet : QUIC.Datagram;
+      Status : H3.Operation_Status;
+   begin
+      loop
+         H3.Send_Headers
+           (Item.Owner.Session, Item.Owner.Transport, Item.Stream, Fields,
+            Fin, Now (Item.Owner.all), Packet, Status);
+         exit when Status = H3.Succeeded;
+         if Status /= H3.Transport_Blocked then
+            raise Flyology.IO.Device_Error with
+              "HTTP/3 response headers failed: " &
+              H3.Operation_Status'Image (Status);
+         end if;
+         Wait_For_Transport (Item);
+      end loop;
+      Send (Item.Owner.all, Packet, Remaining (Item.Deadline));
+      Item.Response_Begun := True;
+      Item.Response_Ended := Fin;
+   end Send_Headers;
+
+   procedure Send_Data
+     (Item : in out Stream_Backend; Data : Stream_Element_Array;
+      Fin : Boolean)
+   is
+      Packet : QUIC.Datagram;
+      Status : H3.Operation_Status;
+   begin
+      loop
+         H3.Send_Data
+           (Item.Owner.Session, Item.Owner.Transport, Item.Stream, Data, Fin,
+            Now (Item.Owner.all), Packet, Status);
+         exit when Status = H3.Succeeded;
+         if Status /= H3.Transport_Blocked then
+            raise Flyology.IO.Device_Error with
+              "HTTP/3 response data failed: " &
+              H3.Operation_Status'Image (Status);
+         end if;
+         Wait_For_Transport (Item);
+      end loop;
+      Send (Item.Owner.all, Packet, Remaining (Item.Deadline));
+      Item.Response_Ended := Fin;
+   end Send_Data;
+
+   procedure Append_Field
+     (Fields : in out H3.Header_Block; Name, Value : String) is
+   begin
+      if H3.Header_Count (Fields) = H3.Max_Fields
+        or else Name'Length not in 1 .. H3.Max_Name_Length
+        or else Value'Length > H3.Max_Value_Length
+      then
+         raise Program_Error with "HTTP/3 response field section is too large";
+      end if;
+      H3.Append (Fields, H3.Make_Field (Name, Value));
+   end Append_Field;
+
+   procedure Add_Extra_Headers
+     (Fields : in out H3.Header_Block; Text : String)
+   is
+      Position : Natural := Text'First;
+   begin
+      while Position <= Text'Last loop
+         declare
+            Marker : constant Natural :=
+              Ada.Strings.Fixed.Index (Text (Position .. Text'Last), CRLF);
+         begin
+            if Marker = 0 then
+               raise Program_Error with "malformed HTTP response header";
+            end if;
+            declare
+               Line_Last : constant Natural := Marker - 1;
+               Colon : constant Natural := Ada.Strings.Fixed.Index
+                 (Text (Position .. Line_Last), ":");
+            begin
+               if Colon <= Position then
+                  raise Program_Error with "malformed HTTP response header";
+               end if;
+               declare
+                  Name : constant String := Ada.Characters.Handling.To_Lower
+                    (Text (Position .. Colon - 1));
+                  First : Natural := Colon + 1;
+               begin
+                  while First <= Line_Last
+                    and then Text (First) in ' ' | Character'Val (9)
+                  loop
+                     First := First + 1;
+                  end loop;
+                  if Name = "content-length" then
+                     raise Program_Error with
+                       "content-length is managed by the HTTP/3 adapter";
+                  end if;
+                  Append_Field
+                    (Fields, Name,
+                     (if First > Line_Last then ""
+                      else Text (First .. Line_Last)));
+               end;
+               Position := Marker + 2;
+            end;
+         end;
+      end loop;
+   end Add_Extra_Headers;
+
+   procedure Send_Response_Head
+     (Item : in out Stream_Backend; Status : Positive;
+      Content_Type, Extra_Headers : String;
+      Has_Content_Length : Boolean; Content_Length : Natural;
+      Fin : Boolean)
+   is
+      Fields : H3.Header_Block;
+      Status_Text : constant String :=
+        Ada.Strings.Fixed.Trim (Positive'Image (Status), Ada.Strings.Both);
+   begin
+      if Status not in Status_Code then
+         raise Constraint_Error with "invalid HTTP/3 response status";
+      end if;
+      Append_Field (Fields, ":status", Status_Text);
+      if Content_Type /= "" then
+         Append_Field (Fields, "content-type", Content_Type);
+      end if;
+      if Has_Content_Length then
+         Append_Field
+           (Fields, "content-length",
+            Ada.Strings.Fixed.Trim
+              (Natural'Image (Content_Length), Ada.Strings.Both));
+      end if;
+      Add_Extra_Headers (Fields, Extra_Headers);
+      Send_Headers (Item, Fields, Fin);
+   end Send_Response_Head;
+
+   procedure Send_All_Data
+     (Item : in out Stream_Backend; Data : Stream_Element_Array)
+   is
+      Cursor : Stream_Element_Offset := Data'First;
+   begin
+      while Cursor <= Data'Last loop
+         declare
+            Count : constant Natural := Natural'Min
+              (Response_Chunk_Size, Natural (Data'Last - Cursor + 1));
+            Last : constant Stream_Element_Offset :=
+              Cursor + Stream_Element_Offset (Count) - 1;
+         begin
+            Send_Data (Item, Data (Cursor .. Last), Fin => Last = Data'Last);
+            Cursor := Last + 1;
+         end;
+      end loop;
+   end Send_All_Data;
+
+   overriding procedure Respond
+     (Item          : in out Stream_Backend;
+      Status        : Positive;
+      Content_Type  : String;
+      Payload       : String;
+      Extra_Headers : String;
+      Close         : Boolean;
+      Timeout       : Duration;
+      Token         : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Close, Timeout, Token);
+      Forbidden : constant Boolean := Status in 204 | 205 | 304;
+      Has_Data : constant Boolean :=
+        not Item.Head_Request and then not Forbidden and then Payload /= "";
+   begin
+      if Forbidden and then Payload /= "" then
+         raise Program_Error with "HTTP status does not permit content";
+      end if;
+      Send_Response_Head
+        (Item, Status, Content_Type, Extra_Headers,
+         Has_Content_Length => Status not in 204 | 304,
+         Content_Length => Payload'Length, Fin => not Has_Data);
+      if Has_Data then
+         Send_All_Data
+           (Item, Bytes.To_Array (Bytes.From_Byte_String (Payload)));
+      end if;
+   end Respond;
+
+   overriding procedure Begin_Response_Stream
+     (Item          : in out Stream_Backend;
+      Status        : Positive;
+      Content_Type  : String;
+      Extra_Headers : String;
+      Close         : Boolean;
+      Timeout       : Duration;
+      Token         : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Close, Timeout, Token);
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "streaming response requires a consumed request body";
+      elsif Status in 204 | 205 | 304 then
+         raise Program_Error with
+           "HTTP status does not permit a streaming response";
+      end if;
+      Send_Response_Head
+        (Item, Status, Content_Type, Extra_Headers,
+         Has_Content_Length => False, Content_Length => 0, Fin => False);
+   end Begin_Response_Stream;
+
+   overriding procedure Write_Response_Chunk
+     (Item : in out Stream_Backend; Data : String; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token) is
+      pragma Unreferenced (Timeout, Token);
+   begin
+      if not Item.Head_Request and then Data /= "" then
+         declare
+            Value : constant Stream_Element_Array :=
+              Bytes.To_Array (Bytes.From_Byte_String (Data));
+            Cursor : Stream_Element_Offset := Value'First;
+         begin
+            while Cursor <= Value'Last loop
+               declare
+                  Count : constant Natural := Natural'Min
+                    (Response_Chunk_Size,
+                     Natural (Value'Last - Cursor + 1));
+                  Last : constant Stream_Element_Offset :=
+                    Cursor + Stream_Element_Offset (Count) - 1;
+               begin
+                  Send_Data (Item, Value (Cursor .. Last), Fin => False);
+                  Cursor := Last + 1;
+               end;
+            end loop;
+         end;
+      end if;
+   end Write_Response_Chunk;
+
+   overriding procedure Write_Response_Chunk
+     (Item : in out Stream_Backend; Data : Stream_Element_Array;
+      Timeout : Duration; Token : access Flyology.Cancellation.Token) is
+      pragma Unreferenced (Timeout, Token);
+      Cursor : Stream_Element_Offset := Data'First;
+   begin
+      if not Item.Head_Request then
+         while Cursor <= Data'Last loop
+            declare
+               Count : constant Natural := Natural'Min
+                 (Response_Chunk_Size, Natural (Data'Last - Cursor + 1));
+               Last : constant Stream_Element_Offset :=
+                 Cursor + Stream_Element_Offset (Count) - 1;
+            begin
+               Send_Data (Item, Data (Cursor .. Last), Fin => False);
+               Cursor := Last + 1;
+            end;
+         end loop;
+      end if;
+   end Write_Response_Chunk;
+
+   overriding procedure End_Response_Stream
+     (Item : in out Stream_Backend; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token) is
+      pragma Unreferenced (Timeout, Token);
+      Empty : Stream_Element_Array (1 .. 0);
+   begin
+      Send_Data (Item, Empty, Fin => True);
+   end End_Response_Stream;
+
+   overriding procedure Begin_SSE
+     (Item : in out Stream_Backend; Extra_Headers : String;
+      Timeout : Duration; Token : access Flyology.Cancellation.Token) is
+      pragma Unreferenced (Timeout, Token);
+   begin
+      if Item.Head_Request then
+         raise Program_Error with "SSE is not available for HEAD";
+      elsif not Body_Complete (Item) then
+         raise Program_Error with "SSE request body has not been consumed";
+      end if;
+      Send_Response_Head
+        (Item, 200, "text/event-stream",
+         "Cache-Control: no-cache" & CRLF & Extra_Headers,
+         Has_Content_Length => False, Content_Length => 0, Fin => False);
+   end Begin_SSE;
+
+   procedure Validate_SSE_Field (Value, Name : String) is
+   begin
+      if Ada.Strings.Fixed.Index
+        (Value, String'(1 => Character'Val (10))) /= 0
+        or else Ada.Strings.Fixed.Index
+          (Value, String'(1 => Character'Val (13))) /= 0
+      then
+         raise Program_Error with Name & " contains a newline";
+      end if;
+   end Validate_SSE_Field;
+
+   function Valid_UTF8 (Value : String) return Boolean is
+      Index : Natural := Value'First;
+
+      function Byte (Offset : Natural) return Natural is
+        (Character'Pos (Value (Index + Offset)));
+
+      function Continuation (Offset : Natural) return Boolean is
+        (Index + Offset <= Value'Last
+         and then Byte (Offset) in 16#80# .. 16#BF#);
+   begin
+      while Index <= Value'Last loop
+         if Byte (0) <= 16#7F# then
+            Index := Index + 1;
+         elsif Byte (0) in 16#C2# .. 16#DF#
+           and then Continuation (1)
+         then
+            Index := Index + 2;
+         elsif Byte (0) = 16#E0#
+           and then Index + 2 <= Value'Last
+           and then Byte (1) in 16#A0# .. 16#BF#
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) in 16#E1# .. 16#EC# | 16#EE# .. 16#EF#
+           and then Continuation (1)
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) = 16#ED#
+           and then Index + 2 <= Value'Last
+           and then Byte (1) in 16#80# .. 16#9F#
+           and then Continuation (2)
+         then
+            Index := Index + 3;
+         elsif Byte (0) = 16#F0#
+           and then Index + 3 <= Value'Last
+           and then Byte (1) in 16#90# .. 16#BF#
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         elsif Byte (0) in 16#F1# .. 16#F3#
+           and then Continuation (1)
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         elsif Byte (0) = 16#F4#
+           and then Index + 3 <= Value'Last
+           and then Byte (1) in 16#80# .. 16#8F#
+           and then Continuation (2)
+           and then Continuation (3)
+         then
+            Index := Index + 4;
+         else
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Valid_UTF8;
+
+   function Decimal (Value : Natural) return String is
+     (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+
+   overriding procedure Send_Event
+     (Item : in out Stream_Backend; Data, Event, Id : String;
+      Retry : Natural; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token;
+      Include_Id, Include_Retry : Boolean)
+   is
+      pragma Unreferenced (Timeout, Token);
+      Payload : Unbounded_String;
+      First : Integer := Data'First;
+   begin
+      Validate_SSE_Field (Event, "SSE event name");
+      Validate_SSE_Field (Id, "SSE id");
+      if not Valid_UTF8 (Data)
+        or else not Valid_UTF8 (Event)
+        or else not Valid_UTF8 (Id)
+        or else Ada.Strings.Fixed.Index
+          (Id, String'(1 => Character'Val (0))) /= 0
+      then
+         raise Program_Error with "SSE fields must contain valid UTF-8";
+      end if;
+      if Event /= "" then
+         Append (Payload, "event: " & Event & Character'Val (10));
+      end if;
+      if Id /= "" or else Include_Id then
+         Append (Payload, "id: " & Id & Character'Val (10));
+      end if;
+      if Retry > 0 or else Include_Retry then
+         Append (Payload, "retry: " & Decimal (Retry) & Character'Val (10));
+      end if;
+      if Data = "" then
+         Append (Payload, "data:" & Character'Val (10));
+      else
+         while First <= Data'Last loop
+            declare
+               Break : Natural := 0;
+               Last : Integer;
+            begin
+               for Index in First .. Data'Last loop
+                  if Data (Index) in Character'Val (10) | Character'Val (13)
+                  then
+                     Break := Index;
+                     exit;
+                  end if;
+               end loop;
+               Last := (if Break = 0 then Data'Last else Break - 1);
+               Append (Payload, "data:");
+               if Last >= First then
+                  Append (Payload, " " & Data (First .. Last));
+               end if;
+               Append (Payload, Character'Val (10));
+               exit when Break = 0;
+               First := Break + 1;
+               if Data (Break) = Character'Val (13)
+                 and then First <= Data'Last
+                 and then Data (First) = Character'Val (10)
+               then
+                  First := First + 1;
+               end if;
+            end;
+         end loop;
+      end if;
+      Append (Payload, Character'Val (10));
+      Write_Response_Chunk
+        (Item, To_String (Payload), Remaining (Item.Deadline), null);
+   end Send_Event;
+
+   overriding procedure Send_SSE_Comment
+     (Item : in out Stream_Backend; Comment : String; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Timeout, Token);
+      Payload : Unbounded_String;
+      First : Integer := Comment'First;
+   begin
+      if not Valid_UTF8 (Comment) then
+         raise Program_Error with "SSE comment must contain valid UTF-8";
+      end if;
+      if Comment = "" then
+         Append (Payload, ":" & Character'Val (10));
+      else
+         while First <= Comment'Last loop
+            declare
+               Break : Natural := 0;
+               Last : Integer;
+            begin
+               for Index in First .. Comment'Last loop
+                  if Comment (Index) in
+                    Character'Val (10) | Character'Val (13)
+                  then
+                     Break := Index;
+                     exit;
+                  end if;
+               end loop;
+               Last := (if Break = 0 then Comment'Last else Break - 1);
+               Append (Payload, ":");
+               if Last >= First then
+                  Append (Payload, " " & Comment (First .. Last));
+               end if;
+               Append (Payload, Character'Val (10));
+               exit when Break = 0;
+               First := Break + 1;
+               if Comment (Break) = Character'Val (13)
+                 and then First <= Comment'Last
+                 and then Comment (First) = Character'Val (10)
+               then
+                  First := First + 1;
+               end if;
+            end;
+         end loop;
+      end if;
+      Append (Payload, Character'Val (10));
+      Write_Response_Chunk
+        (Item, To_String (Payload), Remaining (Item.Deadline), null);
+   end Send_SSE_Comment;
+
+   overriding procedure End_SSE
+     (Item : in out Stream_Backend; Timeout : Duration;
+      Token : access Flyology.Cancellation.Token) is
+   begin
+      End_Response_Stream (Item, Timeout, Token);
+   end End_SSE;
+
+   overriding procedure Mark_Failed (Item : in out Stream_Backend) is
+      Packet : QUIC.Datagram;
+      Status : H3.Operation_Status;
+   begin
+      if Item.Response_Ended then
+         return;
+      end if;
+      H3.Cancel_Request
+        (Item.Owner.Session, Item.Owner.Transport, Item.Stream,
+         H3.Cancel_Processing, Now (Item.Owner.all), Packet, Status);
+      if Status = H3.Succeeded then
+         Send (Item.Owner.all, Packet, Remaining (Item.Deadline));
+      end if;
+      Item.Response_Ended := True;
+   end Mark_Failed;
+
+   type Request_Slot is record
+      Occupied    : Boolean := False;
+      Stream      : QUIC.Stream_ID := 0;
+      Headers     : H3.Header_Block;
+      Saw_Headers : Boolean := False;
+      Payload_Bytes : Bytes.Unbounded_Bytes;
+      Started     : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
+   end record;
+   type Request_Array is
+     array (Positive range 1 .. Maximum_Request_Streams) of Request_Slot;
+   type Request_Array_Access is access all Request_Array;
+
+   procedure Free_Request_Array is new Ada.Unchecked_Deallocation
+     (Request_Array, Request_Array_Access);
+
+   function Find (Requests : Request_Array; Stream : QUIC.Stream_ID)
+      return Natural is
+   begin
+      for Index in Requests'Range loop
+         if Requests (Index).Occupied
+           and then Requests (Index).Stream = Stream
+         then
+            return Index;
+         end if;
+      end loop;
+      return 0;
+   end Find;
+
+   procedure Serve
+     (Context            : in out App_Context;
+      Socket             : aliased in out Sockets.Socket_Type;
+      Certificate_DER    : Stream_Element_Array;
+      Private_Key        : QUIC.Ed25519_Private_Key;
+      Source             : QUIC.Connection_ID;
+      Transport_Settings : QUIC.Transport_Settings := (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Token              : access Flyology.Cancellation.Token := null)
+   is
+      State : Connection_State_Access := new Connection_State'
+        (Socket => Socket'Unchecked_Access, Token => Token, others => <>);
+      Initial : Stream_Element_Array (1 .. QUIC.Max_Datagram_Length);
+      Last : Stream_Element_Offset;
+      Metadata : Sockets.Datagram_Metadata;
+      Initialized : QUIC.Server_Initialize_Status;
+      Flight : QUIC.Datagram_Batch;
+      QUIC_Status : QUIC.Operation_Status;
+      H3_Status : H3.Operation_Status;
+      Control : QUIC.Datagram;
+      Requests : Request_Array_Access := new Request_Array;
+      Served : Natural := 0;
+      Connection_Deadline : constant Ada.Real_Time.Time :=
+        (if Max_Connection_Age < 0.0 then Ada.Real_Time.Time_Last
+         else State.Epoch + Ada.Real_Time.To_Time_Span (Max_Connection_Age));
+
+      procedure Receive_Initial is
+      begin
+         if Token = null then
+            Sockets.Receive_Datagram
+              (Socket, Initial, Last, Metadata, Handshake_Timeout);
+         else
+            declare
+               FD : Flyology.IO.Descriptor;
+               Cancelled : Boolean;
+            begin
+               Token.Wait_Source (FD, Cancelled);
+               if Cancelled then
+                  raise Flyology.Cancellation.Operation_Cancelled;
+               end if;
+               Sockets.Receive_Datagram
+                 (Socket, Initial, Last, Metadata, Handshake_Timeout,
+                  (1 => FD));
+            exception
+               when Sockets.Operation_Interrupted =>
+                  raise Flyology.Cancellation.Operation_Cancelled;
+            end;
+         end if;
+         if Last < Initial'First or else Metadata.Truncated then
+            raise Protocol_Error with "invalid first QUIC datagram";
+         end if;
+      end Receive_Initial;
+
+      procedure Start_HTTP_3 is
+      begin
+         H3.Initialize (State.Session, H3.Server);
+         loop
+            H3.Start
+              (State.Session, State.Transport, Now (State.all), Control,
+               H3_Status);
+            exit when H3_Status = H3.Succeeded;
+            if H3_Status /= H3.Transport_Blocked then
+               raise Protocol_Error with
+                 "HTTP/3 startup failed: " &
+                 H3.Operation_Status'Image (H3_Status);
+            end if;
+            Receive_One (State.all, Handshake_Timeout);
+         end loop;
+         State.H3_Started := True;
+         Send (State.all, Control, Handshake_Timeout);
+      end Start_HTTP_3;
+
+      function Header_Value
+        (Fields : H3.Header_Block; Name : String) return String is
+      begin
+         for Index in 1 .. H3.Header_Count (Fields) loop
+            if H3.Field_Name (H3.Field_At (Fields, Index)) = Name then
+               return H3.Field_Value (H3.Field_At (Fields, Index));
+            end if;
+         end loop;
+         return "";
+      end Header_Value;
+
+      procedure Dispatch_Request (Slot : Positive) is
+         Method : constant String := Header_Value
+           (Requests (Slot).Headers, ":method");
+         Target : constant String := Header_Value
+           (Requests (Slot).Headers, ":path");
+         Authority : constant String := Header_Value
+           (Requests (Slot).Headers, ":authority");
+         Validated : constant Flyology.HTTP.Method := To_Method (Method);
+         pragma Unreferenced (Validated);
+         Backend : aliased Stream_Backend;
+         Value : aliased Request;
+         Deadline : constant Ada.Real_Time.Time :=
+           (if Timeout < 0.0 then Ada.Real_Time.Time_Last
+            else Requests (Slot).Started +
+              Ada.Real_Time.To_Time_Span (Timeout));
+         X : Applications.Exchange := Applications.Internals.Create
+           (Value, Backend'Access, State.Peer, Token, Deadline);
+      begin
+         if Method = "CONNECT" or else Target = "" then
+            raise Protocol_Error with
+              "HTTP/3 CONNECT is not supported by the application adapter";
+         end if;
+         Value.Method_Value := To_Unbounded_String (Method);
+         Value.Target_Value := To_Unbounded_String (Target);
+         Value.Version_Value := HTTP_1_1;
+         Value.Protocol_Value := HTTP_3_Protocol;
+         Value.Keep_Alive := True;
+         for Index in 1 .. H3.Header_Count (Requests (Slot).Headers) loop
+            declare
+               Field : constant H3.Header_Field :=
+                 H3.Field_At (Requests (Slot).Headers, Index);
+               Name : constant String := H3.Field_Name (Field);
+            begin
+               if Name'Length > 0 and then Name (Name'First) /= ':' then
+                  Append
+                    (Value.Header_Block,
+                     Name & ": " & H3.Field_Value (Field) & CRLF);
+               end if;
+            end;
+         end loop;
+         if Authority /= "" and then Header_Value
+           (Requests (Slot).Headers, "host") = ""
+         then
+            Append (Value.Header_Block, "Host: " & Authority & CRLF);
+         end if;
+         Backend.Owner := State;
+         Backend.Stream := Requests (Slot).Stream;
+         Backend.Payload_Bytes := Requests (Slot).Payload_Bytes;
+         Backend.Deadline := Deadline;
+         Backend.Head_Request := Method = "HEAD";
+         begin
+            Handle (Context, X);
+            if X.Response = Applications.Not_Started then
+               X.No_Content;
+            elsif X.Response in
+              Applications.Streaming_Response | Applications.Streaming_SSE |
+              Applications.Upgraded | Applications.Failed
+            then
+               X.Mark_Failed;
+            end if;
+         exception
+            when others =>
+               if not X.Wire_Response_Started then
+                  begin
+                     X.Problem
+                       (500, "internal-server-error", "Internal server error");
+                  exception
+                     when others => X.Mark_Failed;
+                  end;
+               else
+                  X.Mark_Failed;
+               end if;
+         end;
+         Served := Served + 1;
+      end Dispatch_Request;
+
+      procedure Release (Slot : Positive) is
+      begin
+         Requests (Slot).Occupied := False;
+         Requests (Slot).Stream := 0;
+         Requests (Slot).Saw_Headers := False;
+         Requests (Slot).Started := Ada.Real_Time.Time_Last;
+         Bytes.Clear (Requests (Slot).Payload_Bytes);
+      end Release;
+
+      procedure Process_Event (Value : H3.Event) is
+         Slot : Natural := Find (Requests.all, Value.Stream);
+      begin
+         case Value.Kind is
+            when H3.Headers_Received =>
+               if Slot = 0 then
+                  for Index in Requests.all'Range loop
+                     if not Requests (Index).Occupied and then Slot = 0 then
+                        Slot := Index;
+                     end if;
+                  end loop;
+                  if Slot = 0 then
+                     raise Resource_Exhausted with
+                       "HTTP/3 request capacity is full";
+                  end if;
+                  Requests (Slot).Occupied := True;
+                  Requests (Slot).Stream := Value.Stream;
+                  Requests (Slot).Started := Ada.Real_Time.Clock;
+               end if;
+               if not Requests (Slot).Saw_Headers then
+                  Requests (Slot).Headers := Value.Headers;
+                  Requests (Slot).Saw_Headers := True;
+               end if;
+            when H3.Data_Received =>
+               if Slot = 0 or else not Requests (Slot).Saw_Headers then
+                  raise Protocol_Error with
+                    "HTTP/3 DATA preceded request HEADERS";
+               elsif Bytes.Length (Requests (Slot).Payload_Bytes)
+                 + Value.Data_Length >
+                 Max_Request_Body
+               then
+                  raise Payload_Too_Large;
+               elsif Value.Data_Length > 0 then
+                  Bytes.Append
+                    (Requests (Slot).Payload_Bytes,
+                     Value.Data
+                       (1 .. Stream_Element_Offset (Value.Data_Length)));
+               end if;
+            when H3.Stream_Ended =>
+               if Slot = 0 or else not Requests (Slot).Saw_Headers then
+                  raise Protocol_Error with
+                    "HTTP/3 stream ended without request";
+               end if;
+               Dispatch_Request (Positive (Slot));
+               Release (Positive (Slot));
+            when H3.Stream_Reset =>
+               if Slot /= 0 then
+                  Release (Positive (Slot));
+               end if;
+            when H3.Settings_Received | H3.Goaway_Received | H3.No_Event =>
+               null;
+         end case;
+      end Process_Event;
+
+      procedure Cleanup is
+      begin
+         if Requests /= null then
+            Free_Request_Array (Requests);
+         end if;
+         if State /= null then
+            Free_Connection_State (State);
+         end if;
+      end Cleanup;
+   begin
+      if Max_Requests > Maximum_Requests_Per_Connection then
+         raise Constraint_Error with
+           "HTTP/3 request limit exceeds the bounded connection profile";
+      elsif Handshake_Timeout <= 0.0 then
+         raise Constraint_Error with
+           "HTTP/3 handshake timeout must be positive";
+      end if;
+      Receive_Initial;
+      State.Peer := Metadata.Source;
+      Sockets.Connect_Socket (Socket, State.Peer);
+      QUIC.Initialize_Server_From_Initial
+        (State.Transport, ALPN, Transport_Settings, Certificate_DER,
+         Private_Key, Source, Initial (Initial'First .. Last), Initialized);
+      if Initialized /= QUIC.Initialized then
+         raise Protocol_Error with
+           "QUIC server initialization failed: " &
+           QUIC.Server_Initialize_Status'Image (Initialized);
+      end if;
+      QUIC.Process_Datagram
+        (State.Transport, Initial (Initial'First .. Last), Flight,
+         QUIC_Status, Now (State.all));
+      if QUIC_Status not in QUIC.Succeeded | QUIC.Waiting_For_More then
+         raise Protocol_Error with
+           "QUIC Initial failed: " & QUIC.Operation_Status'Image (QUIC_Status);
+      end if;
+      Send (State.all, Flight, Handshake_Timeout);
+      while not QUIC.Is_Connected (State.Transport) loop
+         if Remaining (State.Epoch + Ada.Real_Time.To_Time_Span
+           (Handshake_Timeout)) = 0.0
+         then
+            raise Flyology.IO.Timeout_Error;
+         end if;
+         Receive_One
+           (State.all, Remaining
+             (State.Epoch + Ada.Real_Time.To_Time_Span (Handshake_Timeout)));
+         if State.Closed then
+            Cleanup;
+            return;
+         end if;
+      end loop;
+      Start_HTTP_3;
+
+      while not State.Closed
+        and then Served < Max_Requests
+        and then Remaining (Connection_Deadline) /= 0.0
+      loop
+         declare
+            Value : H3.Event;
+            Present : Boolean;
+         begin
+            Pop (State.Pending, Value, Present);
+            if Present then
+               Process_Event (Value);
+            else
+               Receive_One (State.all, Remaining (Connection_Deadline));
+            end if;
+         exception
+            when Flyology.IO.Timeout_Error =>
+               exit when Remaining (Connection_Deadline) = 0.0;
+         end;
+      end loop;
+      Cleanup;
+   exception
+      when others =>
+         Cleanup;
+         raise;
+   end Serve;
+
+   procedure Serve
+     (Context            : in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Token              : access Flyology.Cancellation.Token := null) is
+   begin
+      Serve
+        (Context, Socket, Certificate_DER, Private_Key,
+         QUIC.Random_Connection_ID, Transport_Settings, Timeout,
+         Handshake_Timeout, Max_Connection_Age, Max_Requests, Token);
+   end Serve;
+
+end Flyology.HTTP.Server.HTTP_3;
