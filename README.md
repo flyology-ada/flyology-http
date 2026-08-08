@@ -13,8 +13,10 @@ Ada-native QUIC transport crate. `flyology_http` depends on that crate and
 owns the HTTP/3 and QPACK layers; HTTP semantics do not live in the transport
 crate. The public `Flyology.HTTP.HTTP_3` session API can exchange bounded
 request and response HEADERS and DATA over live QUIC connections in client and
-server roles. The transport and HTTP/3 sessions interoperate in both directions
-with an aioquic black-box test peer.
+server roles. A routed server adapter also presents HTTP/3 requests through the
+same `Applications.Exchange`, routes, middleware, body policies, streaming
+response, and SSE APIs used by HTTP/1.1 and HTTP/2. The transport and HTTP/3
+sessions interoperate in both directions with an aioquic black-box test peer.
 
 Documentation is published at [http.flyology.org](https://http.flyology.org/).
 The [client guide](https://http.flyology.org/guide/client/), dedicated
@@ -61,6 +63,34 @@ The `flyology_http` dependency brings in Flyology. Applications configure and
 prepare Flyology's version-matched runtime as described in the
 [Flyology guide](https://flyology.org/guide/).
 
+## Routed HTTP/3 server
+
+Register ordinary application handlers, bind a UDP socket, and pass the server
+identity to the router. `Serve_HTTP_3` generates a secure QUIC connection
+identifier internally:
+
+```ada
+type Context is limited null record;
+package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+procedure Hello (State : in out Context; X : in out Applications.Exchange) is
+begin
+   X.Text (200, "hello " & X.Parameter ("name"));
+end Hello;
+
+Routes.Get ("/hello/{name}", Hello'Access, Name => "hello");
+Sockets.Create_Socket (Socket, Sockets.IPv4, Sockets.Socket_Datagram);
+Sockets.Bind_Socket
+  (Socket, Sockets.Network_Endpoint (Sockets.Any_IPv4, 4_433));
+Routes.Serve_HTTP_3 (State, Socket, Certificate_DER, Private_Key);
+```
+
+`Certificate_DER` is an Ed25519 certificate and `Private_Key` is its 32-byte
+raw private key. The maintained `showcases/http3_application_server.adb` loads
+both from files and supplies a complete route. This first adapter exclusively
+owns the bound socket and serves one QUIC peer per invocation; a listener-level
+multi-client connection manager is not yet included.
+
 ## Scope
 
 - HTTP/1.0 response compatibility and HTTP/1.1 client and server messages.
@@ -78,6 +108,9 @@ prepare Flyology's version-matched runtime as described in the
 - A low-level HTTP/3 client/server session over the Ada-native `flyology_quic`
   transport, with control streams, SETTINGS, a static-table QPACK profile,
   request and response sequencing, and bounded HEADERS and DATA events.
+- An HTTP/3 routed-server adapter using the protocol-neutral application
+  exchange, including middleware, route parameters, body policies, fixed and
+  streamed responses, and SSE.
 
 The HTTP/2 server uses the protocol-neutral `Applications.Exchange` and the
 same routes and middleware as HTTP/1.1. The raw HTTP/1.x `Server.Connection`
@@ -91,12 +124,15 @@ the client disables it and applications should use ordinary routed responses.
 Extended CONNECT needs a stream-oriented tunnel API rather than the existing
 HTTP/1.1 connection-borrowing WebSocket API. On the client, borrowed streaming
 request sources and `Expect: 100-continue` remain HTTP/1.1-only. The library
-does not provide proxying or content decoding. HTTP/3 is not yet integrated
-with the higher-level HTTP client pool, routing, or application-server APIs;
-its current QPACK profile does not use the dynamic table, and callers drive UDP
-I/O and QUIC recovery timers. It is experimental and does not claim production
-qualification. HTTP/3 server push is disabled. Because this profile does not
-advertise MAX_PUSH_ID, received push promises and push streams are rejected as
-required by RFC 9114.
+does not provide proxying or content decoding. HTTP/3 is integrated with
+routing and the application exchange on the server, but not with the
+higher-level HTTP client pool. The current routed adapter serves one peer on an
+exclusively owned UDP socket, dispatches request streams synchronously, and
+buffers each complete request stream before entering the route handler. Its
+bounded connection profile currently serves at most five requests. The QPACK
+profile does not use the dynamic table. It is experimental and does not claim
+production qualification. HTTP/3 server push is disabled. Because this profile
+does not advertise MAX_PUSH_ID, received push promises and push streams are
+rejected as required by RFC 9114.
 
 Flyology HTTP is dual-licensed under MIT or Apache-2.0.

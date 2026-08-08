@@ -18,6 +18,7 @@ project Flyology_HTTP_Showcases is
       "http_hybrid_benchmark_server.adb",
       "http_client_cli.adb",
       "http_application_server.adb",
+      "http3_application_server.adb",
       "https_server.adb",
       "structured_http.adb");
    for Create_Missing_Dirs use "True";

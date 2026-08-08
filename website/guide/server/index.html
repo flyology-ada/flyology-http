@@ -55,6 +55,7 @@
             <li><a href="#exchange">Exchange</a></li>
             <li><a href="#routing">Routing</a></li>
             <li><a href="#http2">HTTP/2 routing</a></li>
+            <li><a href="#http3">HTTP/3 routing</a></li>
             <li><a href="#body-policy">Bodies and budgets</a></li>
             <li><a href="#middleware">Middleware</a></li>
             <li><a href="#errors">Errors</a></li>
@@ -152,6 +153,18 @@ State.Routes.Serve
    Token   =&gt; Cancellation);</code></pre></figure>
             <p><code>HTTP_1_Only</code> selects the HTTP/1.x engine, <code>HTTP_2_Only</code> selects prior knowledge or an already selected h2 TLS connection, and <code>ALPN_Negotiated</code> reads an upgraded TLS channel's selection and chooses h2 or HTTP/1.x. See the <a href="../http2/#server">HTTP/2 guide</a> for the complete call shape and limits.</p>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The low-level HTTP/1.x connection API is protocol-specific.</strong> Direct HTTP/2 handlers receive <code>Applications.Exchange</code>; they do not receive a shared mutable <code>Server.Connection</code>. WebSocket upgrade remains HTTP/1.1-only.</p></aside>
+          </section>
+
+          <section id="http3"><span class="step-label">HTTP/3</span><h2>Run the same routes over Ada-native QUIC.</h2>
+            <p>Bind a datagram socket and pass an Ed25519 certificate plus its raw 32-byte private key to <code>Serve_HTTP_3</code>. The router generates a secure QUIC connection identifier and drives the handshake, recovery timers, HTTP/3 session, and application exchange. Existing route handlers and middleware can inspect <code>X.Request_Protocol</code> when protocol-specific behavior is necessary.</p>
+            <figure class="code-panel"><figcaption>one routed HTTP/3 peer on UDP</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Routes.Get ("/hello/{name}", Hello'Access, Name =&gt; "hello");
+Sockets.Create_Socket (Socket, Sockets.IPv4, Sockets.Socket_Datagram);
+Sockets.Bind_Socket
+  (Socket, Sockets.Network_Endpoint (Sockets.Any_IPv4, 4_433));
+
+Routes.Serve_HTTP_3
+  (Application, Socket, Certificate_DER, Private_Key);</code></pre></figure>
+            <p>The maintained <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http3_application_server.adb"><code>http3_application_server</code></a> loads the identity from files and runs this shape. The current experimental adapter exclusively owns the socket, serves one peer per invocation, dispatches request streams synchronously, buffers a complete request before routing it, and serves at most five requests in the bounded connection profile. It is an application API, not yet a listener-level multi-client HTTP/3 server.</p>
           </section>
 
           <section id="body-policy"><span class="step-label">HTTP 05</span><h2>Select body behavior per route.</h2>
