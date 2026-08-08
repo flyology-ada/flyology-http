@@ -191,6 +191,7 @@ package body Flyology.HTTP.HTTP_3 is
          when Internal.Goaway_Received => Goaway_Received,
          when Internal.Headers_Received => Headers_Received,
          when Internal.Data_Received => Data_Received,
+         when Internal.Stream_Reset => Stream_Reset,
          when Internal.Stream_Ended => Stream_Ended);
 
    procedure Poll
@@ -215,6 +216,7 @@ package body Flyology.HTTP.HTTP_3 is
       Output.Identifier := Internal_Event.Identifier;
       Output.Headers := To_Public (Internal_Event.Headers);
       Output.Data_Length := Internal_Event.Data_Length;
+      Output.Application_Error := Internal_Event.Application_Error;
       if Internal_Event.Data_Length > 0 then
          Output.Data
            (1 .. Ada.Streams.Stream_Element_Offset
@@ -241,6 +243,31 @@ package body Flyology.HTTP.HTTP_3 is
       Internal.Open_Request (Impl (Item).Value, Transport, Stream, Result);
       Status := Public_Status (Result);
    end Open_Request;
+
+   procedure Cancel_Request
+     (Item      : in out Session;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Reason    : Request_Cancellation_Reason := Cancel_Processing;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
+      Status    : out Operation_Status)
+   is
+      Result : Internal.Operation_Status;
+      Error  : constant Application_Error_Code :=
+        (case Reason is
+            when Reject_Unprocessed => H3_Request_Rejected,
+            when Cancel_Processing => H3_Request_Cancelled);
+   begin
+      Packet := (others => <>);
+      if not Is_Initialized (Item) then
+         Status := Uninitialized;
+         return;
+      end if;
+      Internal.Build_Request_Cancellation
+        (Impl (Item).Value, Transport, Stream, Error, Now, Packet, Result);
+      Status := Public_Status (Result);
+   end Cancel_Request;
 
    procedure Send_Goaway
      (Item       : in out Session;

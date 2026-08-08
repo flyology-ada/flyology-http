@@ -65,6 +65,7 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Goaway_Received,
       Headers_Received,
       Data_Received,
+      Stream_Reset,
       Stream_Ended);
 
    subtype Event_Data_Length is Natural range 0 .. Max_Event_Data;
@@ -77,6 +78,7 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Data        : Ada.Streams.Stream_Element_Array (1 .. Max_Event_Data) :=
         (others => 0);
       Data_Length : Event_Data_Length := 0;
+      Application_Error : QUIC.Stream_Offset := 0;
    end record;
 
    procedure Poll
@@ -90,6 +92,15 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Transport : in out QUIC.Connection;
       Stream    : out QUIC.Stream_ID;
       Status    : out Operation_Status);
+
+   procedure Build_Request_Cancellation
+     (Item              : in out Connection;
+      Transport         : in out QUIC.Connection;
+      Stream            : QUIC.Stream_ID;
+      Application_Error : QUIC.Stream_Offset;
+      Now               : QUIC.Timestamp;
+      Packet            : out QUIC.Datagram;
+      Status            : out Operation_Status);
 
    procedure Build_Goaway
      (Item       : in out Connection;
@@ -153,6 +164,7 @@ private
       Request  : HTTP_3_Message_Policy.Request_State;
       Response : HTTP_3_Message_Policy.Response_State;
       Finished : Boolean := False;
+      Cancelled : Boolean := False;
    end record;
 
    type Send_Stream_Array is array (Slot_Index) of Send_Stream_Slot;

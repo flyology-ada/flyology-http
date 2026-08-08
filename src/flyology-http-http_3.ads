@@ -21,6 +21,14 @@ package Flyology.HTTP.HTTP_3 is
    --  Largest DATA payload surfaced by one event.
    Max_Event_Data : constant := 65_535;
 
+   --  HTTP/3 application error carried when an operation aborts a QUIC
+   --  stream.
+   subtype Application_Error_Code is QUIC.Stream_Offset;
+   --  A server did not process the request and permits transparent retry.
+   H3_Request_Rejected : constant Application_Error_Code := 16#10B#;
+   --  Request or response processing was cancelled after it could begin.
+   H3_Request_Cancelled : constant Application_Error_Code := 16#10C#;
+
    --  HTTP/3 endpoint behavior.
    --  @enum Client Opens request streams and receives responses
    --  @enum Server Receives request streams and sends responses
@@ -171,6 +179,7 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Goaway_Received Peer initiated graceful shutdown
    --  @enum Headers_Received A HEADERS field section was decoded
    --  @enum Data_Received A DATA frame payload was decoded
+   --  @enum Stream_Reset The peer abruptly terminated a request stream
    --  @enum Stream_Ended A complete request or response reached stream FIN
    type Event_Kind is
      (No_Event,
@@ -178,6 +187,7 @@ package Flyology.HTTP.HTTP_3 is
       Goaway_Received,
       Headers_Received,
       Data_Received,
+      Stream_Reset,
       Stream_Ended);
 
    --  Length of the DATA payload retained by an event.
@@ -190,6 +200,7 @@ package Flyology.HTTP.HTTP_3 is
    --  @field Headers Decoded field section for a HEADERS event
    --  @field Data Bounded payload storage for a DATA event
    --  @field Data_Length Number of meaningful octets in Data
+   --  @field Application_Error Peer error code for a Stream_Reset event
    type Event is record
       Kind        : Event_Kind := No_Event;
       Stream      : QUIC.Stream_ID := 0;
@@ -198,6 +209,7 @@ package Flyology.HTTP.HTTP_3 is
       Data        : Ada.Streams.Stream_Element_Array (1 .. Max_Event_Data) :=
         (others => 0);
       Data_Length : Event_Data_Length := 0;
+      Application_Error : Application_Error_Code := 0;
    end record;
 
    --  Decode at most one complete event from QUIC stream buffers.
@@ -220,6 +232,32 @@ package Flyology.HTTP.HTTP_3 is
      (Item      : in out Session;
       Transport : in out QUIC.Connection;
       Stream    : out QUIC.Stream_ID;
+      Status    : out Operation_Status);
+
+   --  Reason for abruptly terminating both directions of a request stream.
+   --  @enum Reject_Unprocessed Server did not process the request and permits
+   --    transparent retry
+   --  @enum Cancel_Processing Request or response processing could have begun
+   type Request_Cancellation_Reason is
+     (Reject_Unprocessed, Cancel_Processing);
+
+   --  Abruptly terminate both directions of a request stream. Clients use
+   --  Cancel_Processing; servers may select either reason based on whether
+   --  request processing began.
+   --  @param Item Initialized HTTP/3 session
+   --  @param Transport Connected QUIC connection
+   --  @param Stream Request stream identifier
+   --  @param Reason Retry-safe rejection or cancellation after processing
+   --  @param Now Monotonic microsecond timestamp
+   --  @param Packet Datagram to send when Status is Succeeded
+   --  @param Status Operation outcome
+   procedure Cancel_Request
+     (Item      : in out Session;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Reason    : Request_Cancellation_Reason := Cancel_Processing;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
       Status    : out Operation_Status);
 
    --  Send GOAWAY on the local control stream. Servers provide a client-

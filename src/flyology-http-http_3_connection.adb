@@ -7,6 +7,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
    use type Ada.Streams.Stream_Element_Offset;
    use type HTTP_3_Stream_Receive_Policy.Event_Kind;
    use type HTTP_3_Stream_Receive_Policy.Receive_Status;
+   use type HTTP_3_Stream_Receive_Policy.Stream_Kind;
    use type HTTP_3_Header_Policy.Validation_Status;
    use type HTTP_3_Message_Policy.Finish_Status;
    use type HTTP_3_Message_Policy.Request_Phase;
@@ -224,6 +225,37 @@ package body Flyology.HTTP.HTTP_3_Connection is
       ID     : QUIC.Stream_ID;
       Slot   : Optional_Slot;
       Finish : HTTP_3_Stream_Receive_Policy.Receive_Status;
+      Reset_Handled : Boolean;
+
+      procedure Handle_Reset
+        (ID     : QUIC.Stream_ID;
+         Slot   : Slot_Index;
+         Output : out Event;
+         Status : out Operation_Status)
+      is
+         Kind : constant HTTP_3_Stream_Receive_Policy.Stream_Kind :=
+           HTTP_3_Stream_Receive_Policy.Kind (Item.Streams (Slot).State);
+      begin
+         Output := (others => <>);
+         Item.Streams (Slot).Finished := True;
+         if Kind in
+           HTTP_3_Stream_Receive_Policy.Control_Stream |
+           HTTP_3_Stream_Receive_Policy.QPACK_Encoder_Stream |
+           HTTP_3_Stream_Receive_Policy.QPACK_Decoder_Stream
+         then
+            Status := Closed_Critical_Stream;
+         elsif Kind in
+           HTTP_3_Stream_Receive_Policy.Request_Stream |
+           HTTP_3_Stream_Receive_Policy.Response_Stream
+         then
+            Output.Kind := Stream_Reset;
+            Output.Stream := ID;
+            Output.Application_Error := QUIC.Reset_Error (Transport, ID);
+            Status := Succeeded;
+         else
+            Status := No_Event;
+         end if;
+      end Handle_Reset;
    begin
       Output := (others => <>);
       if not QUIC.Is_Connected (Transport) then
@@ -232,13 +264,37 @@ package body Flyology.HTTP.HTTP_3_Connection is
       end if;
 
       for Stream_Index in 1 .. QUIC.Stream_Count (Transport) loop
+         Reset_Handled := False;
          ID := QUIC.Stream_At (Transport, Stream_Index);
          Find_Or_Open (Item, ID, Slot, Status);
          if Status /= Succeeded then
             return;
          end if;
 
-         loop
+         if QUIC.Was_Reset (Transport, ID)
+           and then not Item.Streams (Slot).Finished
+           and then HTTP_3_Stream_Receive_Policy.Kind
+             (Item.Streams (Slot).State) /=
+               HTTP_3_Stream_Receive_Policy.Awaiting_Type
+         then
+            Handle_Reset (ID, Slot_Index (Slot), Output, Status);
+            Reset_Handled := True;
+            if Status /= No_Event or else Output.Kind /= No_Event then
+               return;
+            end if;
+         end if;
+
+         while not Reset_Handled loop
+            if QUIC.Was_Reset (Transport, ID)
+              and then not Item.Streams (Slot).Finished
+              and then HTTP_3_Stream_Receive_Policy.Kind
+                (Item.Streams (Slot).State) /=
+                  HTTP_3_Stream_Receive_Policy.Awaiting_Type
+            then
+               Handle_Reset (ID, Slot_Index (Slot), Output, Status);
+               Reset_Handled := True;
+               exit;
+            end if;
             Length := QUIC.Available_Length (Transport, ID);
             exit when Length = 0;
             if Length > QUIC.Stream_Offset (Max_Event_Data) then
@@ -283,6 +339,18 @@ package body Flyology.HTTP.HTTP_3_Connection is
                return;
             end if;
          end loop;
+
+         if Output.Kind /= No_Event
+           or else Status not in Succeeded | No_Event
+         then
+            return;
+         elsif QUIC.Was_Reset (Transport, ID)
+           and then not Item.Streams (Slot).Finished
+         then
+            --  A peer may reset an unidirectional stream before its type is
+            --  complete. Such a stream has no known critical role.
+            Item.Streams (Slot).Finished := True;
+         end if;
 
          if QUIC.Is_Complete (Transport, ID)
            and then not Item.Streams (Slot).Finished
@@ -371,6 +439,13 @@ package body Flyology.HTTP.HTTP_3_Connection is
       Status := Stream_Capacity_Exceeded;
    end Add_Send;
 
+   procedure Find_Or_Add_Message
+     (Item      : in out Connection;
+      Transport : QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Index     : out Optional_Slot;
+      Status    : out Operation_Status);
+
    procedure Open_Request
      (Item      : in out Connection;
       Transport : in out QUIC.Connection;
@@ -398,6 +473,53 @@ package body Flyology.HTTP.HTTP_3_Connection is
          end if;
       end if;
    end Open_Request;
+
+   procedure Build_Request_Cancellation
+     (Item              : in out Connection;
+      Transport         : in out QUIC.Connection;
+      Stream            : QUIC.Stream_ID;
+      Application_Error : QUIC.Stream_Offset;
+      Now               : QUIC.Timestamp;
+      Packet            : out QUIC.Datagram;
+      Status            : out Operation_Status)
+   is
+      Slot : Optional_Slot;
+      Sent : QUIC.Send_Status;
+   begin
+      Packet := (others => <>);
+      if not QUIC.Is_Connected (Transport) then
+         Status := Not_Connected;
+         return;
+      elsif not HTTP_3_Stream_Policy.Is_Request_Stream (Stream) then
+         Status := ID_Error;
+         return;
+      elsif Application_Error not in 16#10B# | 16#10C# then
+         Status := Transport_Error;
+         return;
+      elsif Item.Local_Role = Client
+        and then Application_Error = 16#10B#
+      then
+         Status := Wrong_Role;
+         return;
+      end if;
+
+      Find_Or_Add_Message (Item, Transport, Stream, Slot, Status);
+      if Status /= Succeeded then
+         return;
+      elsif Item.Sending (Slot).Cancelled then
+         Status := Frame_Unexpected;
+         return;
+      end if;
+
+      QUIC.Build_Stream_Abort_Datagram
+        (Transport, Stream, Application_Error,
+         Item.Sending (Slot).Offset, Now, Packet, Sent);
+      Status := Send_Status_For (Sent);
+      if Status = Succeeded then
+         Item.Sending (Slot).Finished := True;
+         Item.Sending (Slot).Cancelled := True;
+      end if;
+   end Build_Request_Cancellation;
 
    procedure Build_Goaway
      (Item       : in out Connection;

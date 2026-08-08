@@ -131,6 +131,53 @@ begin
          and then Client_Event.Kind = H3.Stream_Ended
          and then Client_Event.Stream = Request_Stream);
 
+      H3.Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      pragma Assert (Client_Status = H3.Succeeded);
+      H3.Cancel_Request
+        (Client, Client_Transport, Request_Stream,
+         Reason => H3.Cancel_Processing, Now => 4_100,
+         Packet => Request_Packet, Status => Client_Status);
+      pragma Assert (Client_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      H3.Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = H3.Succeeded
+         and then Server_Event.Kind = H3.Stream_Reset
+         and then Server_Event.Stream = Request_Stream
+         and then Server_Event.Application_Error =
+           H3.H3_Request_Cancelled);
+
+      H3.Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      pragma Assert (Client_Status = H3.Succeeded);
+      H3.Send_Headers
+        (Client, Client_Transport, Request_Stream, Request_Headers,
+         Fin => False, Now => 4_200, Packet => Request_Packet,
+         Status => Client_Status);
+      pragma Assert (Client_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      H3.Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = H3.Succeeded
+         and then Server_Event.Kind = H3.Headers_Received);
+      H3.Cancel_Request
+        (Server, Server_Transport, Request_Stream,
+         Reason => H3.Reject_Unprocessed, Now => 4_300,
+         Packet => Response_Packet, Status => Server_Status);
+      pragma Assert (Server_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Response_Packet, Client_Transport);
+      H3.Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = H3.Succeeded
+         and then Client_Event.Kind = H3.Stream_Reset
+         and then Client_Event.Stream = Request_Stream
+         and then Client_Event.Application_Error =
+           H3.H3_Request_Rejected);
+
       H3.Send_Goaway
         (Server, Server_Transport, Identifier => 4, Now => 5_000,
          Packet => Data_Packet, Status => Server_Status);

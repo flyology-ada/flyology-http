@@ -210,6 +210,55 @@ begin
         (Client, Client_Transport, Request_Stream, Client_Status);
       pragma Assert
         (Client_Status = Succeeded and then Request_Stream = 8);
+      Build_Request_Cancellation
+        (Client, Client_Transport, Request_Stream,
+         Application_Error => 16#10C#, Now => 4_700,
+         Packet => Request_Packet, Status => Client_Status);
+      pragma Assert (Client_Status = Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = Succeeded
+         and then Server_Event.Kind = Stream_Reset
+         and then Server_Event.Stream = Request_Stream
+         and then Server_Event.Application_Error = 16#10C#);
+
+      Request_Headers.Fields (1) :=
+        QPACK_Field_Section_Policy.Make_Field (":method", "GET");
+      Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded and then Request_Stream = 12);
+      Build_Headers
+        (Client, Client_Transport, Request_Stream, Request_Headers,
+         Fin => False, Now => 4_800, Packet => Request_Packet,
+         Status => Client_Status);
+      pragma Assert (Client_Status = Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = Succeeded
+         and then Server_Event.Kind = Headers_Received);
+      Build_Request_Cancellation
+        (Server, Server_Transport, Request_Stream,
+         Application_Error => 16#10B#, Now => 4_900,
+         Packet => Response_Packet, Status => Server_Status);
+      pragma Assert (Server_Status = Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Response_Packet, Client_Transport);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded
+         and then Client_Event.Kind = Stream_Reset
+         and then Client_Event.Stream = Request_Stream
+         and then Client_Event.Application_Error = 16#10B#);
+
+      Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded and then Request_Stream = 16);
       QUIC.Build_Stream_Datagram
         (Client_Transport, Request_Stream, 0, Fin => True,
          Data => Ada.Streams.Stream_Element_Array'(1, 2, 0),
