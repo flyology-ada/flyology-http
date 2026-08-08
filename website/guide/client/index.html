@@ -43,7 +43,7 @@
     <main id="main" class="page-shell">
       <header class="doc-hero">
         <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Client</li></ol><h1>Make bounded HTTP requests and WebSocket sessions.</h1></div>
-        <p class="doc-hero-copy">Configure one origin, keep HTTP exchange leases explicit, or own one bounded WebSocket session through its close handshake.</p>
+        <p class="doc-hero-copy">Configure one origin across HTTP/1.1, HTTP/2, and HTTP/3, keep exchange leases explicit, or own one bounded WebSocket session through its close handshake.</p>
       </header>
 
       <div class="docs-layout">
@@ -51,6 +51,7 @@
           <p class="toc-title">On this page</p>
           <ol>
             <li><a href="#client-setup">Configure a client</a></li>
+            <li><a href="#client-http3">Discover or require HTTP/3</a></li>
             <li><a href="#client-request">Build a request</a></li>
             <li><a href="#client-bodies">Stream request bodies</a></li>
             <li><a href="#client-response">Consume a response</a></li>
@@ -91,6 +92,52 @@ Client.Configure
               </dl>
             </div>
             <p><code>Parse_Origin</code> accepts only a scheme, host, and optional port. It rejects user information, query, fragment, and nontrivial paths; omitted ports become 80 or 443. When an application starts with a complete endpoint URL, the <a href="../iri/#http-client">URI, IRI, and URL guide</a> shows how to parse it once and derive this origin without hand-splitting it. The client never mixes origins or TLS state, and there is no public connection checkout operation. Concurrent callers may share the configured client; mutable request values and body sources still require ordinary application synchronization or per-call ownership.</p>
+          </section>
+
+          <section id="client-http3"><span class="step-label">CLIENT / H3</span><h2>Discover HTTP/3 without changing request code.</h2>
+            <p><code>Negotiate_HTTP_3</code> starts on authenticated TLS/TCP, offering <code>h2</code> and <code>http/1.1</code>. When a response carries a same-origin <code>Alt-Svc: h3=":port"</code> field, the client records that bounded UDP alternative and prefers HTTP/3 on later requests while retaining healthy TCP capacity. The request, response, deadline, cancellation, redirect, authentication, and body-reading APIs stay the same.</p>
+            <figure class="code-panel"><figcaption>learn HTTP/3 from the unified server</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">HTTP : aliased Client.Client (Capacity =&gt; 2);
+
+OpenSSL.Initialize_Client (Backend);
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("https://api.example.com"),
+   Backend'Access,
+   Client.Negotiate_HTTP_3,
+   HTTP_3_Certificate_DER =&gt; Pinned_Certificate_DER,
+   Pool =&gt;
+     (Max_Idle =&gt; 2,
+      Idle_Timeout =&gt; 30.0,
+      Max_Connection_Age =&gt; 300.0,
+      Max_Requests_Per_Connection =&gt; 0));
+
+--  The first response uses h2 or HTTP/1.1 and can discover H3.
+declare
+   First : Client.Response := Client.Execute (HTTP, Request);
+begin
+   Consume (Client.Read_All (First));
+end;
+
+--  A valid, unexpired alternative is preferred for later exchanges.
+declare
+   Second : Client.Response := Client.Execute (HTTP, Request);
+begin
+   pragma Assert
+     (Client.Negotiated_Protocol (Second) =
+        Flyology.HTTP.HTTP_3_Protocol);
+   Consume (Client.Read_All (Second));
+end;</code></pre></figure>
+            <p>The QUIC peer is authenticated against the exact certificate supplied as 1 through 4,096 DER bytes. This pin is separate from the TCP provider's certificate-chain and hostname verification. The pool retains healthy TCP and QUIC transports together: an available H3 transport is preferred, while a concurrent exchange uses retained HTTP/2 or HTTP/1.1 when the H3 lane is busy or connecting. One application request is never duplicated across protocols. Set client capacity and <code>Max_Idle</code> to at least two, as above, to keep both stacks warm while idle. A failed discovered H3 establishment clears the alternative and makes one TCP attempt within the original exchange deadline.</p>
+            <p>Address-family dual stack is independent of protocol selection. When DNS returns IPv4 and IPv6, each TCP or QUIC establishment races one bounded lane per family under the same filter, cancellation sources, and exchange deadline; the first complete TCP connect or QUIC handshake wins. Losing connected QUIC legs send an application close before releasing UDP. <code>ma=0</code> and <code>Alt-Svc: clear</code> remove a learned alternative; advertised lifetimes are capped at 31 days.</p>
+
+            <h3>Require QUIC directly</h3>
+            <p>Use <code>Require_HTTP_3</code> when the HTTPS origin's UDP port is already known to serve H3. This overload needs no TCP TLS provider and never falls back:</p>
+            <figure class="code-panel"><figcaption>direct HTTP/3</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("https://api.example.com"),
+   Client.Require_HTTP_3,
+   HTTP_3_Certificate_DER =&gt; Pinned_Certificate_DER);</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The current HTTP/3 client profile is deliberately narrow: each pooled QUIC connection is reused sequentially rather than multiplexing requests, retained request bodies are limited to 16 KiB, and streaming request sources plus <code>Expect: 100-continue</code> are rejected. HTTP/1.1 and HTTP/2 behavior is unchanged.</p></aside>
           </section>
 
           <section id="client-request"><span class="step-label">CLIENT 02</span><h2>Build validated request metadata.</h2>
@@ -239,7 +286,7 @@ Client_Auth.Set_Bearer (Request, Access_Token);
 
           <section id="client-pool"><span class="step-label">CLIENT 07</span><h2>Observe and stop the pool explicitly.</h2>
             <p><code>Execute</code> waits for an idle transport or a free creation slot inside the request deadline. An idempotent request may be retried once when a reused transport fails before any response byte arrives; the retry stays inside the same deadline. Empty and retained bodies can be replayed directly. A streamed body is eligible only through <code>Rewindable_Request_Body_Source</code>, whose nonblocking <code>Rewind</code> must restore exactly the same bytes and declared length. Non-idempotent and one-shot streamed requests are never replayed automatically.</p>
-            <p><code>Diagnostics</code> returns one coherent snapshot. Current counts distinguish pending transports, active exchanges, reusable and closing transports, and admission waiters. Cumulative counts report creations, reuses, closes, stale retries, and admission timeouts. Exchange and transport counts are separate because several HTTP/2 exchanges can share one transport.</p>
+            <p><code>Diagnostics</code> returns one coherent snapshot. Current counts distinguish pending transports, active exchanges, reusable and closing transports, and admission waiters. Cumulative counts report creations, reuses, closes, stale retries, and admission timeouts. Exchange and transport counts are separate because several HTTP/2 exchanges can share one transport; the current HTTP/3 profile leases one exchange at a time.</p>
             <figure class="code-panel"><figcaption>maintenance and terminal shutdown</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Snapshot : constant Client.Client_Diagnostics := Client.Diagnostics (HTTP);
 
 Client.Prune_Idle (HTTP);       -- active responses are unaffected
@@ -257,7 +304,7 @@ Client.Configure
    Client.Default_Pool_Configuration);</code></pre></figure>
             <p>For a complete HTTPS endpoint, derive both the normalized value passed to <code>Parse_Origin</code> and the request target as shown in the <a href="../iri/#http-client">URI, IRI, and URL guide</a>.</p>
             <p>Callers can distinguish pool shutdown (<code>Client_Closed</code>), resolution or address exhaustion (<code>Connection_Error</code>), source-contract failure (<code>Request_Body_Error</code>), oversized retained response data (<code>Response_Too_Large</code>), malformed protocol input (<code>Protocol_Error</code>), timeout, cancellation, established I/O failure, socket failure, and TLS failure. Source-defined exceptions propagate after the leased transport is discarded.</p>
-            <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p><strong>HTTP/1.1 remains the source-compatible default.</strong> An explicit configuration mode can prefer or require HTTP/2 over TLS, or use cleartext prior knowledge. The ordinary request, response, deadline, cancellation, pool, and shutdown API remains in use. See the <a href="../http2/">HTTP/2 guide</a> for complete setup examples and current limits.</p></aside>
+            <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p><strong>HTTP/1.1 remains the source-compatible default.</strong> Explicit modes can negotiate or require HTTP/2, discover or require HTTP/3, or use cleartext HTTP/2 prior knowledge. The ordinary request, response, deadline, cancellation, pool, and shutdown API remains in use. See the <a href="../http2/">HTTP/2 guide</a> and the <a href="#client-http3">HTTP/3 client setup</a> for protocol-specific limits.</p></aside>
             <p>The same API and outcome contracts are tested from native and lightweight tasks. Run <code>./scripts/http-client-conformance.sh</code> for deterministic request, response, parser, pooling, lifetime, cancellation, timeout, TLS, adapter, and lane-parity coverage. Address cases cover IPv4 and bracketed IPv6 literals, default and explicit ports, IPv6-to-IPv4 resolution fallback, and all-address exhaustion under one deadline. A test-only one-byte receive cap forces every response and chunk/trailer delimiter across distinct client receive calls; TLS cases distinguish an orderly <code>close_notify</code> from transport truncation while streaming fixed-length, chunked, and close-delimited bodies. The parser campaign includes 42 named RFC 9110/9112 response seeds plus 10,000 fixed-seed random or corpus-derived mutated inputs through the production parser oracle. For interactive use, <code>./showcases/run_http_client_cli.sh -v https://example.com/</code> builds and runs the maintained curl-like example with complete outbound and inbound headers on standard error.</p>
           </section>
 

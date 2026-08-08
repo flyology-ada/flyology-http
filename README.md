@@ -1,7 +1,7 @@
 # Flyology HTTP
 
 Flyology HTTP is an experimental HTTP/1.1 client and server library, with
-opt-in HTTP/2 client and application-server engines, for
+opt-in HTTP/2 and HTTP/3 client and application-server engines, for
 [Flyology](https://flyology.org/) tasks. Its
 synchronous Ada APIs work from native and lightweight tasks. The library
 includes bounded client pools, an origin-bound WebSocket client, streaming
@@ -98,6 +98,22 @@ Routes.Serve
    Token           => Stop'Access);
 ```
 
+For explicit dual-stack service, use the overload that takes an IPv4 endpoint
+followed by an IPv6 endpoint on the same concrete port. It binds TCP and UDP
+for both families concurrently and divides the total TCP and HTTP/3 capacities
+between them:
+
+```ada
+Routes.Serve
+  (State,
+   Sockets.Network_Endpoint (Configured_IPv4, 443),
+   Sockets.Network_Endpoint (Configured_IPv6, 443),
+   Backend,
+   Certificate_DER => Certificate_DER,
+   Private_Key     => Private_Key,
+   Token           => Stop'Access);
+```
+
 The unified server automatically adds `Alt-Svc: h3=":443"; ma=86400` to
 HTTP/1.1 and HTTP/2 responses. The advertised port follows the bound endpoint,
 and `Alt_Svc_Max_Age` configures the lifetime. HTTP/3 responses omit this
@@ -111,6 +127,53 @@ representations and runs the unified server. Lower-level
 `Serve_HTTP_3_Listener` and single-connection `Serve_HTTP_3` adapters remain
 available when an application owns the UDP listener itself.
 
+## HTTP/3 client
+
+The ordinary origin-bound client can learn the unified server's HTTP/3 port
+without changing request or response code. Configure an ALPN-capable TCP TLS
+provider together with the exact DER certificate expected from QUIC:
+
+```ada
+HTTP : aliased Client.Client (Capacity => 2);
+
+OpenSSL.Initialize_Client (Backend);
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("https://api.example.com"),
+   Backend'Access,
+   Client.Negotiate_HTTP_3,
+   HTTP_3_Certificate_DER => Pinned_Certificate_DER,
+   Pool =>
+     (Max_Idle => 2,
+      Idle_Timeout => 30.0,
+      Max_Connection_Age => 300.0,
+      Max_Requests_Per_Connection => 0));
+```
+
+The first exchange uses authenticated HTTP/2 or HTTP/1.1. A response containing
+a same-origin `Alt-Svc: h3=":port"` field records a bounded alternative while
+healthy TCP transports remain reusable. Later requests prefer HTTP/3 on UDP.
+When an H3 transport is already busy or connecting, concurrent requests can
+immediately use retained HTTP/2 or HTTP/1.1 capacity; the client never
+duplicates one application request across protocols. A failed H3 establishment
+clears the alternative and makes one TCP attempt inside the original exchange
+deadline. `Negotiated_Protocol` reports the protocol used by each response.
+Set pool capacity and `Max_Idle` to at least two to keep both protocol stacks
+warm while idle, as in the example.
+
+When DNS returns both families, the client runs one bounded establishment lane
+per family under the same filter, cancellation sources, and exchange deadline.
+The first complete TCP connect or QUIC handshake wins. A losing connected QUIC
+leg sends an application close before releasing UDP, so server admission is
+returned immediately.
+
+Use `Require_HTTP_3` with the certificate overload that has no TCP provider to
+send QUIC directly to the HTTPS origin's UDP port. Both modes authenticate the
+exact peer certificate supplied as 1 through 4,096 DER bytes. The current H3
+pool reuses each connection sequentially rather than multiplexing requests;
+retained request bodies are bounded to 16 KiB, and streaming request sources
+and `Expect: 100-continue` remain unavailable on H3.
+
 ## Scope
 
 - HTTP/1.0 response compatibility and HTTP/1.1 client and server messages.
@@ -121,7 +184,8 @@ available when an application owns the UDP listener itself.
   bounded request and response buffers, routing, middleware, SSE, and
   flow-controlled streaming bodies.
 - Origin-bound HTTP pools with one monotonic exchange deadline and
-  single-session WebSocket clients with monotonic operation deadlines.
+  single-session WebSocket clients with monotonic operation deadlines,
+  including direct or same-origin Alt-Svc-discovered HTTP/3 transports.
 - Fixed-length and chunked bodies with bounded streaming adapters.
 - Optional routing, middleware, native offload, SSE, and WebSocket facilities.
 - Provider-neutral TLS integration through Flyology I/O.
@@ -145,10 +209,10 @@ through the same `Routing.Router`. Server push is deliberately not exposed;
 the client disables it and applications should use ordinary routed responses.
 Extended CONNECT needs a stream-oriented tunnel API rather than the existing
 HTTP/1.1 connection-borrowing WebSocket API. On the client, borrowed streaming
-request sources and `Expect: 100-continue` remain HTTP/1.1-only. The library
-does not provide proxying or content decoding. HTTP/3 is integrated with
-routing and the application exchange on the server, but not with the
-higher-level HTTP client pool. The managed UDP adapter uses a bounded
+request sources and `Expect: 100-continue` remain HTTP/1.1-only. HTTP/3
+currently accepts retained request bodies through 16 KiB and reuses pooled
+connections sequentially. The library does not provide proxying or content
+decoding. The managed UDP adapter uses a bounded
 connection registry and fixed worker set, dispatches request streams
 synchronously, and buffers each complete request stream before entering the
 route handler. Each connection's bounded profile currently serves at most five

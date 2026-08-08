@@ -176,7 +176,20 @@ Routes.Serve
    Certificate_DER =&gt; Certificate_DER,
    Private_Key     =&gt; Private_Key,
    Token           =&gt; Stop'Access);</code></pre></figure>
-            <p><code>Serve</code> owns both listeners until <code>Stop.Request</code> is called. Register every route and middleware component before entering it. TCP connection handling and the fixed-capacity HTTP/3 worker set run concurrently, so mutable fields in the shared application context must provide their own synchronization.</p>
+            <p><code>Serve</code> owns both listeners until <code>Stop.Request</code> is called. TLS/TCP HTTP/1.1 and HTTP/2 remain live while UDP HTTP/3 serves the same frozen router; clients can use both protocol stacks at the same time. Register every route and middleware component before entering it. TCP connection handling and the fixed-capacity HTTP/3 worker set run concurrently, so mutable fields in the shared application context must provide their own synchronization.</p>
+
+            <h3>Bind IPv4 and IPv6 together.</h3>
+            <p>The two-endpoint overload owns IPv4 and IPv6 TCP and UDP listeners concurrently. Supply the IPv4 endpoint first and the IPv6 endpoint second, both on the same concrete port so one Alt-Svc authority works for either family. <code>TCP_Capacity</code> and <code>HTTP_3_Capacity</code> remain totals and are divided between the listeners; each total must be at least two.</p>
+            <figure class="code-panel"><figcaption>dual-stack unified server</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Routes.Serve
+  (Application,
+   Sockets.Network_Endpoint (Configured_IPv4, 443),
+   Sockets.Network_Endpoint (Configured_IPv6, 443),
+   Backend,
+   Certificate_DER =&gt; Certificate_DER,
+   Private_Key     =&gt; Private_Key,
+   TCP_Capacity    =&gt; 64,
+   HTTP_3_Capacity =&gt; 8,
+   Token           =&gt; Stop'Access);</code></pre></figure>
 
             <h3>Let HTTP/1.1 and HTTP/2 clients discover HTTP/3.</h3>
             <p>Every routed HTTP/1.1 and HTTP/2 response from the unified server automatically advertises the active UDP endpoint. On the standard HTTPS port the field is exactly:</p>
@@ -191,7 +204,7 @@ Routes.Serve
             <p>The maintained <a href="https://github.com/flyology-ada/flyology-http/blob/main/showcases/http3_application_server.adb"><code>http3_application_server</code></a> loads the PEM, DER, and raw-key representations and runs the unified shape. Its command line is:</p>
             <figure class="code-panel"><figcaption>unified showcase</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>./showcases/bin/http3_application_server \
   TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw 4433</code></pre></figure>
-            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The HTTP/3 profile is deliberately bounded.</strong> It currently buffers each complete request before routing it, serves at most five requests per QUIC connection, uses a static-table QPACK profile, and does not provide HTTP/3 server push or WebSockets. The higher-level HTTP client pool does not yet select HTTP/3.</p></aside>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The HTTP/3 profile is deliberately bounded.</strong> It currently buffers each complete request before routing it, serves at most five requests per QUIC connection, uses a static-table QPACK profile, and does not provide HTTP/3 server push or WebSockets. The standard client supports direct and Alt-Svc-discovered HTTP/3, currently with one sequential exchange per pooled QUIC connection.</p></aside>
           </section>
 
           <section id="body-policy"><span class="step-label">HTTP 05</span><h2>Select body behavior per route.</h2>
