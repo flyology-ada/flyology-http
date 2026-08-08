@@ -51,6 +51,24 @@ package body Flyology.QUIC.Application_Space is
    is
      (Stream_Table_Policy.Available_Length (Item.Streams, Stream_ID));
 
+   function Is_Complete
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Boolean
+   is
+     (Stream_Table_Policy.Is_Complete (Item.Streams, Stream_ID));
+
+   function Was_Reset
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Boolean
+   is
+     (Stream_Table_Policy.Was_Reset (Item.Streams, Stream_ID));
+
+   function Reset_Error
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Varint_Policy.Value_Type
+   is
+     (Stream_Table_Policy.Reset_Error (Item.Streams, Stream_ID));
+
    function Stream_Element
      (Item      : State;
       Stream_ID : Varint_Policy.Value_Type;

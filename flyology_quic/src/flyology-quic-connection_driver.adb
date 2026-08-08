@@ -39,6 +39,19 @@ package body Flyology.QUIC.Connection_Driver is
       return Application_Space.Stream_Offset
    is (Application_Space.Available_Length (Item.Application, Stream_ID));
 
+   function Is_Complete
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
+   is (Application_Space.Is_Complete (Item.Application, Stream_ID));
+
+   function Was_Reset
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
+   is (Application_Space.Was_Reset (Item.Application, Stream_ID));
+
+   function Reset_Error
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type)
+      return Varint_Policy.Value_Type
+   is (Application_Space.Reset_Error (Item.Application, Stream_ID));
+
    function Stream_Element
      (Item      : Connection;
       Stream_ID : Varint_Policy.Value_Type;

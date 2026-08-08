@@ -20,6 +20,8 @@ library project Flyology_QUIC is
          for Languages use ("Ada");
          for Source_Files use
            ("flyology-quic.ads",
+            "flyology-quic-connections.ads",
+            "flyology-quic-connections-io.ads",
             "flyology-quic-varint_policy.ads");
    end case;
 

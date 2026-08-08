@@ -166,6 +166,22 @@ private package Flyology.QUIC.Application_Space is
       Stream_ID : Varint_Policy.Value_Type) return Stream_Offset
    with Pre => Has_Stream (Item, Stream_ID);
 
+   function Is_Complete
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Boolean
+   with Pre => Has_Stream (Item, Stream_ID);
+
+   function Was_Reset
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Boolean
+   with Pre => Has_Stream (Item, Stream_ID);
+
+   function Reset_Error
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Varint_Policy.Value_Type
+   with Pre => Has_Stream (Item, Stream_ID)
+     and then Was_Reset (Item, Stream_ID);
+
    function Stream_Element
      (Item      : State;
       Stream_ID : Varint_Policy.Value_Type;

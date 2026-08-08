@@ -152,6 +152,20 @@ private package Flyology.QUIC.Connection_Driver is
       return Application_Space.Stream_Offset
    with Pre => Has_Stream (Item, Stream_ID);
 
+   function Is_Complete
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
+   with Pre => Has_Stream (Item, Stream_ID);
+
+   function Was_Reset
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
+   with Pre => Has_Stream (Item, Stream_ID);
+
+   function Reset_Error
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type)
+      return Varint_Policy.Value_Type
+   with Pre => Has_Stream (Item, Stream_ID)
+     and then Was_Reset (Item, Stream_ID);
+
    function Stream_Element
      (Item      : Connection;
       Stream_ID : Varint_Policy.Value_Type;

@@ -1,4 +1,5 @@
 with Flyology.IO.Sockets;
+with Flyology.QUIC.Connections;
 with Flyology.QUIC.Connection_IO;
 with Flyology.QUIC.Transport_Parameter_Policy;
 
@@ -6,6 +7,9 @@ procedure Flyology.QUIC.Connection_Driver.Smoke is
    use type Application_Space.Open_Status;
    use type Application_Space.Send_Status;
    use type Ada.Streams.Stream_Element;
+   use type Connections.Open_Status;
+   use type Connections.Operation_Status;
+   use type Connections.Send_Status;
    use type Transport_Parameter_Policy.Encode_Status;
    use type Varint_Policy.Value_Type;
 
@@ -40,6 +44,17 @@ procedure Flyology.QUIC.Connection_Driver.Smoke is
       Result.Data (1 .. Data'Length) := Data;
       return Result;
    end ID;
+
+   function Public_ID
+     (Data : Ada.Streams.Stream_Element_Array)
+      return Connections.Connection_ID
+   is
+      Result : Connections.Connection_ID;
+   begin
+      Result.Length := Natural (Data'Length);
+      Result.Data (1 .. Data'Length) := Data;
+      return Result;
+   end Public_ID;
 
    function Parameter
      (Value : Long_Header_Policy.Connection_ID)
@@ -235,4 +250,89 @@ begin
 
    Flyology.IO.Sockets.Close_Socket (Client_Socket);
    Flyology.IO.Sockets.Close_Socket (Server_Socket);
+
+   declare
+      Public_Client, Public_Server : Connections.Connection;
+      Client_Flight, Server_Flight, Finish : Connections.Datagram_Batch;
+      Client_Status, Server_Status : Connections.Operation_Status;
+      Public_Stream : Connections.Stream_ID;
+      Opened        : Connections.Open_Status;
+      Sent          : Connections.Send_Status;
+      Stream_Packet : Connections.Datagram;
+   begin
+      Connections.Initialize_Client
+        (Public_Client, ALPN,
+         Client_Encoded.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Client_Encoded.Length)),
+         Certificate, Original_ID, Public_ID (Original_ID),
+         Public_ID (Hex ("aabbccdd01020304")));
+      Connections.Initialize_Server
+        (Public_Server, ALPN,
+         Server_Encoded.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Server_Encoded.Length)),
+         Certificate, Connections.Ed25519_Private_Key (Private_Key),
+         Original_ID, Public_ID (Hex ("aabbccdd01020304")),
+         Public_ID (Hex ("1020304050607080")));
+
+      Connections.Start_Client
+        (Public_Client, Client_Flight, Client_Status);
+      pragma Assert
+        (Client_Status = Connections.Succeeded
+         and then Client_Flight.Count = 1);
+      Connections.Process_Datagram
+        (Public_Server,
+         Client_Flight.Items (1).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Client_Flight.Items (1).Length)),
+         Server_Flight, Server_Status);
+      pragma Assert
+        (Server_Status = Connections.Succeeded
+         and then Server_Flight.Count >= 2);
+
+      Finish := (others => <>);
+      for Index in 1 .. Server_Flight.Count loop
+         Connections.Process_Datagram
+           (Public_Client,
+            Server_Flight.Items (Index).Data
+              (1 .. Ada.Streams.Stream_Element_Offset
+                      (Server_Flight.Items (Index).Length)),
+            Client_Flight, Client_Status);
+         if Client_Flight.Count > 0 then
+            Finish := Client_Flight;
+         end if;
+      end loop;
+      pragma Assert
+        (Connections.Is_Connected (Public_Client)
+         and then Finish.Count = 1);
+      Connections.Process_Datagram
+        (Public_Server,
+         Finish.Items (1).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Finish.Items (1).Length)),
+         Server_Flight, Server_Status);
+      pragma Assert (Connections.Is_Connected (Public_Server));
+
+      Connections.Open_Stream
+        (Public_Client, Connections.Bidirectional, Public_Stream, Opened);
+      pragma Assert (Opened = Connections.Opened and then Public_Stream = 0);
+      Connections.Build_Stream_Datagram
+        (Public_Client, Public_Stream, 0, True, (16#68#, 16#33#), 100,
+         Stream_Packet, Sent);
+      pragma Assert (Sent = Connections.Sent);
+      Connections.Process_Datagram
+        (Public_Server,
+         Stream_Packet.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Stream_Packet.Length)),
+         Server_Flight, Server_Status, Now => 150);
+      pragma Assert
+        (Server_Status = Connections.Succeeded
+         and then Connections.Stream_Count (Public_Server) = 1
+         and then Connections.Stream_At (Public_Server, 1) = Public_Stream
+         and then Connections.Is_Complete (Public_Server, Public_Stream)
+         and then Connections.Element (Public_Server, Public_Stream, 0) =
+           16#68#);
+      Connections.Consume (Public_Server, Public_Stream, 2);
+      pragma Assert
+        (Connections.Available_Length (Public_Server, Public_Stream) = 0);
+   end;
 end Flyology.QUIC.Connection_Driver.Smoke;
