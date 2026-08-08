@@ -2,12 +2,17 @@ with Ada.Unchecked_Deallocation;
 with Flyology.QUIC.Application_Space;
 with Flyology.QUIC.Connection_Driver;
 with Flyology.QUIC.Crypto_OpenSSL;
+with Flyology.QUIC.Initial_Packet_Policy;
 with Flyology.QUIC.Long_Header_Policy;
 with Flyology.QUIC.Stream_ID_Policy;
+with Flyology.QUIC.Transport_Parameter_Policy;
 with System.Address_To_Access_Conversions;
 
 package body Flyology.QUIC.Connections is
    use type System.Address;
+   use type Initial_Packet_Policy.Parse_Status;
+   use type Transport_Parameter_Policy.Encode_Status;
+   use type Transport_Parameter_Policy.Endpoint_Role;
 
    type Connection_Impl is limited record
       Driver : Connection_Driver.Connection;
@@ -58,6 +63,59 @@ package body Flyology.QUIC.Connections is
       return Result;
    end Internal_ID;
 
+   function Public_ID
+     (Value : Long_Header_Policy.Connection_ID) return Connection_ID
+   is
+      Result : Connection_ID;
+   begin
+      Result.Length := Value.Length;
+      if Value.Length > 0 then
+         Result.Data (1 .. Ada.Streams.Stream_Element_Offset (Value.Length)) :=
+           Value.Data (1 .. Ada.Streams.Stream_Element_Offset (Value.Length));
+      end if;
+      return Result;
+   end Public_ID;
+
+   function Parameter
+     (Value : Connection_ID)
+      return Transport_Parameter_Policy.Connection_ID_Parameter
+   is
+      Result : Transport_Parameter_Policy.Connection_ID_Parameter;
+   begin
+      Result.Present := True;
+      Result.Length := Value.Length;
+      if Value.Length > 0 then
+         Result.Data (1 .. Ada.Streams.Stream_Element_Offset (Value.Length)) :=
+           Value.Data (1 .. Ada.Streams.Stream_Element_Offset (Value.Length));
+      end if;
+      return Result;
+   end Parameter;
+
+   function Encode_Parameters
+     (Settings        : Transport_Settings;
+      Sender          : Transport_Parameter_Policy.Endpoint_Role;
+      Initial_Source  : Connection_ID;
+      Original        : Connection_ID := (others => <>))
+      return Transport_Parameter_Policy.Encode_Result
+   is
+      Value : Transport_Parameter_Policy.Transport_Parameters;
+   begin
+      Value.Initial_Source_Connection_ID := Parameter (Initial_Source);
+      if Sender = Transport_Parameter_Policy.Server then
+         Value.Original_Destination_Connection_ID := Parameter (Original);
+      end if;
+      Value.Initial_Max_Data := (True, Settings.Max_Data);
+      Value.Initial_Max_Stream_Data_Bidi_Local :=
+        (True, Settings.Max_Stream_Data_Bidi_Local);
+      Value.Initial_Max_Stream_Data_Bidi_Remote :=
+        (True, Settings.Max_Stream_Data_Bidi_Remote);
+      Value.Initial_Max_Stream_Data_Uni :=
+        (True, Settings.Max_Stream_Data_Uni);
+      Value.Initial_Max_Streams_Bidi := (True, Settings.Max_Streams_Bidi);
+      Value.Initial_Max_Streams_Uni := (True, Settings.Max_Streams_Uni);
+      return Transport_Parameter_Policy.Encode (Value, Sender);
+   end Encode_Parameters;
+
    function Public_State
      (Value : Connection_Driver.Connection_State) return Connection_State
    is
@@ -94,6 +152,30 @@ package body Flyology.QUIC.Connections is
          Internal_ID (Source));
    end Initialize_Client;
 
+   procedure Initialize_Client
+     (Item                    : in out Connection;
+      ALPN                    : Ada.Streams.Stream_Element_Array;
+      Settings                : Transport_Settings;
+      Pinned_Certificate      : Ada.Streams.Stream_Element_Array;
+      Original_Destination_ID : Ada.Streams.Stream_Element_Array;
+      Destination             : Connection_ID;
+      Source                  : Connection_ID)
+   is
+      Encoded : constant Transport_Parameter_Policy.Encode_Result :=
+        Encode_Parameters
+          (Settings, Transport_Parameter_Policy.Client,
+           Initial_Source => Source);
+   begin
+      if Encoded.Status /= Transport_Parameter_Policy.Encoded then
+         raise Program_Error with "invalid QUIC client transport settings";
+      end if;
+      Initialize_Client
+        (Item, ALPN,
+         Encoded.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)),
+         Pinned_Certificate, Original_Destination_ID, Destination, Source);
+   end Initialize_Client;
+
    procedure Initialize_Server
      (Item                    : in out Connection;
       ALPN                    : Ada.Streams.Stream_Element_Array;
@@ -111,6 +193,48 @@ package body Flyology.QUIC.Connections is
          Original_Destination_ID, Internal_ID (Destination),
          Internal_ID (Source));
    end Initialize_Server;
+
+   procedure Initialize_Server_From_Initial
+     (Item            : in out Connection;
+      ALPN            : Ada.Streams.Stream_Element_Array;
+      Settings        : Transport_Settings;
+      Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Private_Key     : Ed25519_Private_Key;
+      Source          : Connection_ID;
+      First_Datagram  : Ada.Streams.Stream_Element_Array;
+      Status          : out Server_Initialize_Status)
+   is
+      Envelope : constant Initial_Packet_Policy.Parse_Result :=
+        Initial_Packet_Policy.Parse (First_Datagram);
+      Original, Peer : Connection_ID;
+   begin
+      if Envelope.Status /= Initial_Packet_Policy.Parsed then
+         Status := Invalid_Initial;
+         return;
+      end if;
+      Original := Public_ID (Envelope.Header.Destination);
+      Peer := Public_ID (Envelope.Header.Source);
+      declare
+         Encoded : constant Transport_Parameter_Policy.Encode_Result :=
+           Encode_Parameters
+             (Settings, Transport_Parameter_Policy.Server,
+              Initial_Source => Source, Original => Original);
+      begin
+         if Encoded.Status /= Transport_Parameter_Policy.Encoded then
+            Status := Invalid_Transport_Settings;
+            return;
+         end if;
+         Initialize_Server
+           (Item, ALPN,
+            Encoded.Data
+              (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)),
+            Certificate_DER, Private_Key,
+            Original.Data
+              (1 .. Ada.Streams.Stream_Element_Offset (Original.Length)),
+            Peer, Source);
+      end;
+      Status := Initialized;
+   end Initialize_Server_From_Initial;
 
    function Public_Status
      (Value : Connection_Driver.Operation_Status) return Operation_Status

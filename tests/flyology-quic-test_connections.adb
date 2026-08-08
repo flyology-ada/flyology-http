@@ -1,4 +1,3 @@
-with Flyology.QUIC.Initial_Packet_Policy;
 with Flyology.QUIC.Transport_Parameter_Policy;
 
 package body Flyology.QUIC.Test_Connections is
@@ -6,7 +5,6 @@ package body Flyology.QUIC.Test_Connections is
    package Parameters renames Flyology.QUIC.Transport_Parameter_Policy;
 
    use type Parameters.Encode_Status;
-   use type Initial_Packet_Policy.Parse_Status;
    use type QUIC.Operation_Status;
 
    function Nibble (Value : Character) return Natural is
@@ -79,97 +77,21 @@ package body Flyology.QUIC.Test_Connections is
      ID (Hex ("1020304050607080"));
 
    procedure Initialize_Client (Client : in out QUIC.Connection) is
-      Client_Parameters : Parameters.Transport_Parameters;
-      Client_Encoded    : Parameters.Encode_Result;
    begin
-      Client_Parameters.Initial_Source_Connection_ID := Parameter (Client_ID);
-      Client_Parameters.Initial_Max_Data := (Present => True, Value => 65_536);
-      Client_Parameters.Initial_Max_Stream_Data_Bidi_Local :=
-        (Present => True, Value => 16_384);
-      Client_Parameters.Initial_Max_Stream_Data_Bidi_Remote :=
-        (Present => True, Value => 16_384);
-      Client_Parameters.Initial_Max_Stream_Data_Uni :=
-        (Present => True, Value => 16_384);
-      Client_Parameters.Initial_Max_Streams_Bidi :=
-        (Present => True, Value => 8);
-      Client_Parameters.Initial_Max_Streams_Uni :=
-        (Present => True, Value => 8);
-      Client_Encoded := Parameters.Encode
-        (Client_Parameters, Parameters.Client);
-      if Client_Encoded.Status /= Parameters.Encoded then
-         raise Program_Error with "failed to encode QUIC client parameters";
-      end if;
       QUIC.Initialize_Client
-        (Client, ALPN,
-         Client_Encoded.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Client_Encoded.Length)),
+        (Client, ALPN, QUIC.Transport_Settings'(others => <>),
          Certificate, Original_ID, ID (Original_ID), Client_ID);
    end Initialize_Client;
 
    procedure Initialize_Server_From_Initial
      (Server : in out QUIC.Connection;
       Packet : Ada.Streams.Stream_Element_Array;
-      Status : out Server_Initialize_Status)
+      Status : out QUIC.Server_Initialize_Status)
    is
-      Envelope : constant Initial_Packet_Policy.Parse_Result :=
-        Initial_Packet_Policy.Parse (Packet);
-      Server_Parameters : Parameters.Transport_Parameters;
-      Server_Encoded    : Parameters.Encode_Result;
-      Original          : QUIC.Connection_ID;
-      Client_Source     : QUIC.Connection_ID;
    begin
-      if Envelope.Status /= Initial_Packet_Policy.Parsed then
-         Status := Not_A_V1_Initial;
-         return;
-      end if;
-
-      Original.Length := Envelope.Header.Destination.Length;
-      Client_Source.Length := Envelope.Header.Source.Length;
-      if Original.Length > 0 then
-         Original.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Original.Length)) :=
-             Envelope.Header.Destination.Data
-               (1 .. Ada.Streams.Stream_Element_Offset (Original.Length));
-      end if;
-      if Client_Source.Length > 0 then
-         Client_Source.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Client_Source.Length)) :=
-             Envelope.Header.Source.Data
-               (1 .. Ada.Streams.Stream_Element_Offset
-                       (Client_Source.Length));
-      end if;
-
-      Server_Parameters.Original_Destination_Connection_ID :=
-        Parameter (Original);
-      Server_Parameters.Initial_Source_Connection_ID :=
-        Parameter (Server_ID);
-      Server_Parameters.Initial_Max_Data := (Present => True, Value => 65_536);
-      Server_Parameters.Initial_Max_Stream_Data_Bidi_Local :=
-        (Present => True, Value => 16_384);
-      Server_Parameters.Initial_Max_Stream_Data_Bidi_Remote :=
-        (Present => True, Value => 16_384);
-      Server_Parameters.Initial_Max_Stream_Data_Uni :=
-        (Present => True, Value => 16_384);
-      Server_Parameters.Initial_Max_Streams_Bidi :=
-        (Present => True, Value => 8);
-      Server_Parameters.Initial_Max_Streams_Uni :=
-        (Present => True, Value => 8);
-      Server_Encoded := Parameters.Encode
-        (Server_Parameters, Parameters.Server);
-      if Server_Encoded.Status /= Parameters.Encoded then
-         Status := Parameter_Error;
-         return;
-      end if;
-
-      QUIC.Initialize_Server
-        (Server, ALPN,
-         Server_Encoded.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Server_Encoded.Length)),
-         Certificate, Private_Key,
-         Original.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Original.Length)),
-         Client_Source, Server_ID);
-      Status := Initialized;
+      QUIC.Initialize_Server_From_Initial
+        (Server, ALPN, QUIC.Transport_Settings'(others => <>), Certificate,
+         Private_Key, Server_ID, Packet, Status);
    end Initialize_Server_From_Initial;
 
    procedure Connect

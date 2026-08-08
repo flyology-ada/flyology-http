@@ -45,6 +45,22 @@ package Flyology.QUIC.Connections is
    --  Monotonic microsecond timestamp used by recovery accounting.
    subtype Timestamp is Interfaces.Unsigned_64 range 0 .. 2**63 - 1;
 
+   --  Initial flow-control and stream limits advertised to a peer.
+   --  @field Max_Data Connection-level receive credit
+   --  @field Max_Stream_Data_Bidi_Local Receive credit on local bidi streams
+   --  @field Max_Stream_Data_Bidi_Remote Receive credit on peer bidi streams
+   --  @field Max_Stream_Data_Uni Receive credit on peer unidirectional streams
+   --  @field Max_Streams_Bidi Maximum peer-created bidirectional streams
+   --  @field Max_Streams_Uni Maximum peer-created unidirectional streams
+   type Transport_Settings is record
+      Max_Data                    : Stream_Offset := 65_536;
+      Max_Stream_Data_Bidi_Local  : Stream_Offset := 16_384;
+      Max_Stream_Data_Bidi_Remote : Stream_Offset := 16_384;
+      Max_Stream_Data_Uni         : Stream_Offset := 16_384;
+      Max_Streams_Bidi            : Stream_Offset := 8;
+      Max_Streams_Uni             : Stream_Offset := 8;
+   end record;
+
    --  One UDP payload and the used prefix of its storage.
    --  @field Data Datagram octets
    --  @field Length Number of octets in Data to transmit
@@ -119,6 +135,27 @@ package Flyology.QUIC.Connections is
      and then Pinned_Certificate'Length in 1 .. 4_096
      and then Original_Destination_ID'Length <= Max_Connection_ID_Length;
 
+   --  Configure a client and encode its transport settings internally.
+   --  @param Item Fresh connection
+   --  @param ALPN Application protocol identifier, such as h3
+   --  @param Settings Initial flow-control and stream limits
+   --  @param Pinned_Certificate Expected peer certificate in DER form
+   --  @param Original_Destination_ID Initial destination identifier octets
+   --  @param Destination Initial destination connection identifier
+   --  @param Source Client source connection identifier
+   procedure Initialize_Client
+     (Item                    : in out Connection;
+      ALPN                    : Ada.Streams.Stream_Element_Array;
+      Settings                : Transport_Settings;
+      Pinned_Certificate      : Ada.Streams.Stream_Element_Array;
+      Original_Destination_ID : Ada.Streams.Stream_Element_Array;
+      Destination             : Connection_ID;
+      Source                  : Connection_ID)
+   with Pre => State (Item) = Uninitialized
+     and then ALPN'Length in 1 .. 255
+     and then Pinned_Certificate'Length in 1 .. 4_096
+     and then Original_Destination_ID'Length <= Max_Connection_ID_Length;
+
    --  Configure a server connection with an Ed25519 certificate identity.
    --  @param Item Fresh connection
    --  @param ALPN Application protocol identifier, such as h3
@@ -142,6 +179,37 @@ package Flyology.QUIC.Connections is
      and then Transport_Parameters'Length <= 512
      and then Certificate_DER'Length in 1 .. 4_096
      and then Original_Destination_ID'Length <= Max_Connection_ID_Length;
+
+   --  Outcome of deriving server connection state from a first datagram.
+   --  @enum Initialized The v1 Initial was accepted as server configuration
+   --  @enum Invalid_Initial The first packet is not a complete QUIC v1 Initial
+   --  @enum Invalid_Transport_Settings Settings could not be encoded
+   type Server_Initialize_Status is
+     (Initialized, Invalid_Initial, Invalid_Transport_Settings);
+
+   --  Configure a server from connection identifiers in a peer Initial.
+   --  The caller still passes First_Datagram to Process_Datagram afterward.
+   --  @param Item Fresh connection
+   --  @param ALPN Application protocol identifier, such as h3
+   --  @param Settings Initial flow-control and stream limits
+   --  @param Certificate_DER Server certificate in DER form
+   --  @param Private_Key Ed25519 private key corresponding to the certificate
+   --  @param Source Server source connection identifier
+   --  @param First_Datagram UDP payload whose first packet is a v1 Initial
+   --  @param Status Configuration outcome
+   procedure Initialize_Server_From_Initial
+     (Item            : in out Connection;
+      ALPN            : Ada.Streams.Stream_Element_Array;
+      Settings        : Transport_Settings;
+      Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Private_Key     : Ed25519_Private_Key;
+      Source          : Connection_ID;
+      First_Datagram  : Ada.Streams.Stream_Element_Array;
+      Status          : out Server_Initialize_Status)
+   with Pre => State (Item) = Uninitialized
+     and then ALPN'Length in 1 .. 255
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then First_Datagram'Length <= Max_Datagram_Length;
 
    --  Outcome of a packet-driven connection transition.
    --  @enum Succeeded Input was accepted

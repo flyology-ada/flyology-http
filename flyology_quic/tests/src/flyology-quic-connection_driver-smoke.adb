@@ -10,6 +10,7 @@ procedure Flyology.QUIC.Connection_Driver.Smoke is
    use type Connections.Open_Status;
    use type Connections.Operation_Status;
    use type Connections.Send_Status;
+   use type Connections.Server_Initialize_Status;
    use type Transport_Parameter_Policy.Encode_Status;
    use type Varint_Policy.Value_Type;
 
@@ -263,30 +264,31 @@ begin
       Client_Flight, Server_Flight, Finish : Connections.Datagram_Batch;
       Coalesced : Connections.Datagram;
       Client_Status, Server_Status : Connections.Operation_Status;
+      Server_Initialized : Connections.Server_Initialize_Status;
       Public_Stream : Connections.Stream_ID;
       Opened        : Connections.Open_Status;
       Sent          : Connections.Send_Status;
       Stream_Packet : Connections.Datagram;
    begin
       Connections.Initialize_Client
-        (Public_Client, ALPN,
-         Client_Encoded.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Client_Encoded.Length)),
+        (Public_Client, ALPN, Connections.Transport_Settings'(others => <>),
          Certificate, Original_ID, Public_ID (Original_ID),
          Public_ID (Hex ("aabbccdd01020304")));
-      Connections.Initialize_Server
-        (Public_Server, ALPN,
-         Server_Encoded.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Server_Encoded.Length)),
-         Certificate, Connections.Ed25519_Private_Key (Private_Key),
-         Original_ID, Public_ID (Hex ("aabbccdd01020304")),
-         Public_ID (Hex ("1020304050607080")));
 
       Connections.Start_Client
         (Public_Client, Client_Flight, Client_Status);
       pragma Assert
         (Client_Status = Connections.Succeeded
          and then Client_Flight.Count = 1);
+      Connections.Initialize_Server_From_Initial
+        (Public_Server, ALPN, Connections.Transport_Settings'(others => <>),
+         Certificate, Connections.Ed25519_Private_Key (Private_Key),
+         Public_ID (Hex ("1020304050607080")),
+         Client_Flight.Items (1).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Client_Flight.Items (1).Length)),
+         Server_Initialized);
+      pragma Assert (Server_Initialized = Connections.Initialized);
       Connections.Process_Datagram
         (Public_Server,
          Client_Flight.Items (1).Data

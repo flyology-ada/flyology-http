@@ -17,8 +17,8 @@ procedure HTTP3_Interop_Server is
    use type Ada.Streams.Stream_Element_Offset;
    use type H3.Event_Kind;
    use type H3.Operation_Status;
-   use type Fixtures.Server_Initialize_Status;
    use type QUIC.Operation_Status;
+   use type QUIC.Server_Initialize_Status;
 
    Port : constant Sockets.Port :=
      (if Ada.Command_Line.Argument_Count = 0 then 4_434
@@ -74,14 +74,14 @@ begin
       raise Program_Error with "empty QUIC Initial";
    end if;
    declare
-      Initialized : Fixtures.Server_Initialize_Status;
+      Initialized : QUIC.Server_Initialize_Status;
    begin
       Fixtures.Initialize_Server_From_Initial
         (Transport, Packet (Packet'First .. Last), Initialized);
-      if Initialized /= Fixtures.Initialized then
+      if Initialized /= QUIC.Initialized then
          raise Program_Error with
            "failed to initialize QUIC oracle server: "
-           & Fixtures.Server_Initialize_Status'Image (Initialized);
+           & QUIC.Server_Initialize_Status'Image (Initialized);
       end if;
    end;
    QUIC.Process_Datagram
