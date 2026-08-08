@@ -74,7 +74,7 @@ server_pid=$!
 ready=false
 attempt=0
 while [ "$attempt" -lt 50 ]; do
-  if grep -q 'Ada HTTP/3 oracle listening' "$server_log"; then
+  if grep -q 'Ada HTTP/3 routed server listening' "$server_log"; then
     ready=true
     break
   fi

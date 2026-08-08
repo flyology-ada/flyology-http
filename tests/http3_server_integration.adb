@@ -1,0 +1,237 @@
+with Ada.Streams;
+with Ada.Strings.Unbounded;
+with Flyology.HTTP;
+with Flyology.HTTP.HTTP_3;
+with Flyology.HTTP.Server;
+with Flyology.HTTP.Server.Applications;
+with Flyology.HTTP.Server.Routing;
+with Flyology.IO.Sockets;
+with Flyology.QUIC.Connections;
+with Flyology.QUIC.Connections.IO;
+with Flyology.QUIC.Test_Connections;
+
+procedure HTTP3_Server_Integration is
+   package App renames Flyology.HTTP.Server.Applications;
+   package H3 renames Flyology.HTTP.HTTP_3;
+   package QUIC renames Flyology.QUIC.Connections;
+   package QUIC_IO renames Flyology.QUIC.Connections.IO;
+   package Sockets renames Flyology.IO.Sockets;
+   package Fixtures renames Flyology.QUIC.Test_Connections;
+
+   use Ada.Strings.Unbounded;
+   use type H3.Event_Kind;
+   use type H3.Operation_Status;
+   use type QUIC.Operation_Status;
+   use type Flyology.HTTP.Protocol;
+
+   type Context is limited null record;
+   package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+   Routes : Routing.Router
+     (Capacity => 1, Slashes => Routing.Strict_Slashes);
+   State : Context;
+   Listener : aliased Sockets.Socket_Type;
+   Address : Sockets.Endpoint;
+
+   protected Outcome is
+      procedure Fail;
+      function Passed return Boolean;
+   private
+      Failed : Boolean := False;
+   end Outcome;
+
+   protected body Outcome is
+      procedure Fail is
+      begin
+         Failed := True;
+      end Fail;
+
+      function Passed return Boolean is (not Failed);
+   end Outcome;
+
+   procedure Observe
+     (Application : in out Context;
+      X           : in out App.Exchange;
+      Next        : in out Routing.Components.Next_Handler) is
+   begin
+      X.Add_Header ("X-Middleware", "visited");
+      Next.Call (Application, X);
+   end Observe;
+
+   procedure Hello (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      pragma Assert (X.Request_Protocol = Flyology.HTTP.HTTP_3_Protocol);
+      pragma Assert (X.Request_Method = "POST");
+      pragma Assert (X.Parameter ("name") = "Ada");
+      pragma Assert
+        (Flyology.HTTP.Server.Content (X.Request_Value) = "payload");
+      X.Begin_Stream (200, "text/plain");
+      X.Write_Chunk ("hello ");
+      X.Write_Chunk (X.Parameter ("name"));
+      X.End_Stream;
+   end Hello;
+begin
+   Routes.Add_Middleware (Observe'Access);
+   Routes.Post
+     ("/hello/{name}", Hello'Access, Name => "hello",
+      Policy =>
+        (Routing.Default_Route_Policy with delta
+           Body_Handling => App.Buffer_Body,
+           Max_Body      => 64));
+
+   Sockets.Create_Socket (Listener, Sockets.IPv4, Sockets.Socket_Datagram);
+   Sockets.Bind_Socket
+     (Listener,
+      Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Sockets.Any_Port));
+   Address := Sockets.Get_Socket_Name (Listener);
+
+   declare
+      task type Server_Task_Type;
+      for Server_Task_Type'Storage_Size use 16 * 1_024 * 1_024;
+      Server_Task : Server_Task_Type;
+
+      task body Server_Task_Type is
+      begin
+         begin
+            Routes.Serve_HTTP_3
+              (State, Listener,
+               Fixtures.Server_Certificate,
+               Fixtures.Server_Private_Key,
+               Timeout => 10.0,
+               Handshake_Timeout => 10.0,
+               Max_Connection_Age => 20.0,
+               Max_Requests => 1);
+         exception
+            when others => Outcome.Fail;
+         end;
+      end Server_Task_Type;
+
+      Socket : Sockets.Socket_Type;
+      Transport : QUIC.Connection;
+      Session : H3.Session;
+      Flight : QUIC.Datagram_Batch;
+      QUIC_Status : QUIC.Operation_Status;
+      H3_Status : H3.Operation_Status;
+   begin
+      Fixtures.Initialize_Client (Transport);
+      Sockets.Create_Socket (Socket, Sockets.IPv4, Sockets.Socket_Datagram);
+      Sockets.Connect_Socket (Socket, Address);
+      QUIC.Start_Client (Transport, Flight, QUIC_Status);
+      pragma Assert (QUIC_Status = QUIC.Succeeded);
+      QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+
+      for Attempt in 1 .. 8 loop
+         exit when QUIC.Is_Connected (Transport);
+         QUIC_IO.Receive
+           (Socket, Transport, Flight, QUIC_Status, Timeout => 10.0);
+         pragma Assert
+           (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
+         QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+      end loop;
+      pragma Assert (QUIC.Is_Connected (Transport));
+
+      H3.Initialize (Session, H3.Client);
+      declare
+         Control : QUIC.Datagram;
+      begin
+         H3.Start
+           (Session, Transport, Now => 1_000,
+            Packet => Control, Status => H3_Status);
+         pragma Assert (H3_Status = H3.Succeeded);
+         QUIC_IO.Send (Socket, Control, Timeout => 10.0);
+      end;
+
+      declare
+         Headers : H3.Header_Block;
+         Stream : QUIC.Stream_ID;
+         Packet : QUIC.Datagram;
+      begin
+         H3.Append (Headers, H3.Make_Field (":method", "POST"));
+         H3.Append (Headers, H3.Make_Field (":scheme", "https"));
+         H3.Append (Headers, H3.Make_Field (":path", "/hello/Ada"));
+         H3.Append (Headers, H3.Make_Field (":authority", "localhost"));
+         H3.Append (Headers, H3.Make_Field ("content-length", "7"));
+         H3.Open_Request (Session, Transport, Stream, H3_Status);
+         pragma Assert (H3_Status = H3.Succeeded);
+         H3.Send_Headers
+           (Session, Transport, Stream, Headers, Fin => False,
+            Now => 2_000, Packet => Packet, Status => H3_Status);
+         pragma Assert (H3_Status = H3.Succeeded);
+         QUIC_IO.Send (Socket, Packet, Timeout => 10.0);
+         declare
+            Payload : constant Ada.Streams.Stream_Element_Array :=
+              (1 => Character'Pos ('p'), 2 => Character'Pos ('a'),
+               3 => Character'Pos ('y'), 4 => Character'Pos ('l'),
+               5 => Character'Pos ('o'), 6 => Character'Pos ('a'),
+               7 => Character'Pos ('d'));
+         begin
+            H3.Send_Data
+              (Session, Transport, Stream, Payload, Fin => True,
+               Now => 2_001, Packet => Packet, Status => H3_Status);
+            pragma Assert (H3_Status = H3.Succeeded);
+            QUIC_IO.Send (Socket, Packet, Timeout => 10.0);
+         end;
+      end;
+
+      declare
+         Event : H3.Event;
+         Status_Seen : Boolean := False;
+         Middleware_Seen : Boolean := False;
+         Ended : Boolean := False;
+         Payload : Unbounded_String;
+      begin
+         for Attempt in 1 .. 16 loop
+            QUIC_IO.Receive
+              (Socket, Transport, Flight, QUIC_Status, Timeout => 10.0);
+            pragma Assert
+              (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
+            QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+            loop
+               H3.Poll (Session, Transport, Event, H3_Status);
+               exit when H3_Status = H3.No_Event;
+               pragma Assert (H3_Status = H3.Succeeded);
+               if Event.Kind = H3.Headers_Received then
+                  for Index in 1 .. H3.Header_Count (Event.Headers) loop
+                     declare
+                        Field : constant H3.Header_Field :=
+                          H3.Field_At (Event.Headers, Index);
+                     begin
+                        if H3.Field_Name (Field) = ":status"
+                          and then H3.Field_Value (Field) = "200"
+                        then
+                           Status_Seen := True;
+                        elsif H3.Field_Name (Field) = "x-middleware"
+                          and then H3.Field_Value (Field) = "visited"
+                        then
+                           Middleware_Seen := True;
+                        end if;
+                     end;
+                  end loop;
+               elsif Event.Kind = H3.Data_Received then
+                  for Index in 1 .. Event.Data_Length loop
+                     Append
+                       (Payload,
+                        Character'Val
+                          (Event.Data
+                             (Ada.Streams.Stream_Element_Offset (Index))));
+                  end loop;
+               elsif Event.Kind = H3.Stream_Ended then
+                  Ended := True;
+               end if;
+            end loop;
+            exit when Ended;
+         end loop;
+         pragma Assert (Status_Seen);
+         pragma Assert (Middleware_Seen);
+         pragma Assert (To_String (Payload) = "hello Ada");
+         pragma Assert (Ended);
+      end;
+      Sockets.Close_Socket (Socket);
+   end;
+
+   pragma Assert (Outcome.Passed);
+   if Sockets.Is_Open (Listener) then
+      Sockets.Close_Socket (Listener);
+   end if;
+end HTTP3_Server_Integration;

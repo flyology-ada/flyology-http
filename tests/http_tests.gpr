@@ -41,6 +41,7 @@ project HTTP_Tests is
       "http3_interop_client.adb",
       "http3_interop_server.adb",
       "http3_public_smoke.adb",
+      "http3_server_integration.adb",
       "flyology-http-http_3_frame_policy-smoke.adb",
       "flyology-http-http_3_header_policy-smoke.adb",
       "flyology-http-http_3_message_policy-smoke.adb",

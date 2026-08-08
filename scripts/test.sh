@@ -125,6 +125,7 @@ flyology-http-http_2_settings-smoke
 flyology-http-http_3_control_policy-smoke
 flyology-http-http_3_connection-smoke
 http3_public_smoke
+http3_server_integration
 flyology-http-http_3_frame_policy-smoke
 flyology-http-http_3_header_policy-smoke
 flyology-http-http_3_message_policy-smoke

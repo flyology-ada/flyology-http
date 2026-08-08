@@ -76,6 +76,15 @@ package body Flyology.QUIC.Test_Connections is
    Server_ID : constant QUIC.Connection_ID :=
      ID (Hex ("1020304050607080"));
 
+   function Server_Certificate return Ada.Streams.Stream_Element_Array is
+     (Certificate);
+
+   function Server_Private_Key return QUIC.Ed25519_Private_Key is
+     (Private_Key);
+
+   function Server_Connection_ID return QUIC.Connection_ID is
+     (Server_ID);
+
    procedure Initialize_Client (Client : in out QUIC.Connection) is
    begin
       QUIC.Initialize_Client

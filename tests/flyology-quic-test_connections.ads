@@ -2,6 +2,14 @@ with Ada.Streams;
 with Flyology.QUIC.Connections;
 
 package Flyology.QUIC.Test_Connections is
+   function Server_Certificate return Ada.Streams.Stream_Element_Array;
+
+   function Server_Private_Key
+      return Flyology.QUIC.Connections.Ed25519_Private_Key;
+
+   function Server_Connection_ID
+      return Flyology.QUIC.Connections.Connection_ID;
+
    procedure Initialize_Client
      (Client : in out Flyology.QUIC.Connections.Connection);
 
