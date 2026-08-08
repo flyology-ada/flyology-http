@@ -2,6 +2,9 @@ package body Flyology.HTTP.HTTP_3_Header_Policy
   with SPARK_Mode => On
 is
    use QPACK_Field_Section_Policy;
+   use type Flyology.QUIC.Varint_Policy.Value_Type;
+
+   subtype Content_Length_Type is Flyology.QUIC.Varint_Policy.Value_Type;
 
    function Is_Pseudo (Name : String) return Boolean is
      (Name'Length > 0 and then Name (Name'First) = ':');
@@ -114,6 +117,34 @@ is
       return Valid;
    end Syntax_Status;
 
+   procedure Read_Content_Length
+     (Value  : String;
+      Result : in out Validation_Result)
+   is
+      Digit : Content_Length_Type;
+   begin
+      if Result.Has_Content_Length or else Value'Length = 0 then
+         Result.Status := Invalid_Content_Length;
+         return;
+      end if;
+      for Item of Value loop
+         if Item not in '0' .. '9' then
+            Result.Status := Invalid_Content_Length;
+            return;
+         end if;
+         Digit := Content_Length_Type
+           (Character'Pos (Item) - Character'Pos ('0'));
+         if Result.Content_Length >
+           (Content_Length_Type'Last - Digit) / 10
+         then
+            Result.Status := Invalid_Content_Length;
+            return;
+         end if;
+         Result.Content_Length := 10 * Result.Content_Length + Digit;
+      end loop;
+      Result.Has_Content_Length := True;
+   end Read_Content_Length;
+
    function Contains (Value : String; Needle : Character) return Boolean is
    begin
       for Item of Value loop
@@ -192,6 +223,11 @@ is
                   Host_Index := Number;
                   if Value'Length = 0 then
                      Result.Status := Invalid_Authority;
+                     return Result;
+                  end if;
+               elsif Name = "content-length" then
+                  Read_Content_Length (Value, Result);
+                  if Result.Status /= Valid then
                      return Result;
                   end if;
                end if;
@@ -334,6 +370,11 @@ is
                if Status /= Valid then
                   Result.Status := Status;
                   return Result;
+               elsif Name = "content-length" then
+                  Read_Content_Length (Value, Result);
+                  if Result.Status /= Valid then
+                     return Result;
+                  end if;
                end if;
             end if;
          end;
@@ -379,6 +420,10 @@ is
          Status := Syntax_Status (Block.Fields (Number));
          if Status /= Valid then
             Result.Status := Status;
+            return Result;
+         end if;
+         if Field_Name (Block.Fields (Number)) = "content-length" then
+            Result.Status := Invalid_Content_Length;
             return Result;
          end if;
          declare

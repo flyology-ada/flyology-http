@@ -1,4 +1,5 @@
 with Flyology.HTTP.QPACK_Field_Section_Policy;
+with Flyology.QUIC.Varint_Policy;
 
 --  Internal, proved HTTP/3 header-section semantic validation.
 --
@@ -29,6 +30,7 @@ is
       Invalid_Connect,
       Missing_Status,
       Invalid_Status,
+      Invalid_Content_Length,
       Prohibited_Field,
       Invalid_TE);
 
@@ -37,6 +39,8 @@ is
       Is_Connect    : Boolean := False;
       Response_Code : Natural range 0 .. 599 := 0;
       Is_Interim    : Boolean := False;
+      Has_Content_Length : Boolean := False;
+      Content_Length : Flyology.QUIC.Varint_Policy.Value_Type := 0;
    end record;
 
    function Validate_Request

@@ -1,5 +1,6 @@
 procedure Flyology.HTTP.HTTP_3_Header_Policy.Smoke is
    use QPACK_Field_Section_Policy;
+   use type Flyology.QUIC.Varint_Policy.Value_Type;
 
    Fields : Header_Block;
    Result : Validation_Result;
@@ -12,6 +13,29 @@ begin
    Fields.Fields (5) := Make_Field ("te", "trailers");
    Result := Validate_Request (Fields);
    pragma Assert (Result.Status = Valid and then not Result.Is_Connect);
+
+   Fields.Count := 5;
+   Fields.Fields (5) := Make_Field ("content-length", "42");
+   Result := Validate_Request (Fields);
+   pragma Assert
+     (Result.Status = Valid
+      and then Result.Has_Content_Length
+      and then Result.Content_Length = 42);
+
+   Fields.Count := 6;
+   Fields.Fields (6) := Make_Field ("content-length", "42");
+   pragma Assert
+     (Validate_Request (Fields).Status = Invalid_Content_Length);
+
+   Fields.Count := 5;
+   Fields.Fields (5) := Make_Field ("content-length", "4x");
+   pragma Assert
+     (Validate_Request (Fields).Status = Invalid_Content_Length);
+
+   Fields.Fields (5) :=
+     Make_Field ("content-length", "4611686018427387904");
+   pragma Assert
+     (Validate_Request (Fields).Status = Invalid_Content_Length);
 
    Fields.Count := 2;
    Fields.Fields (1) := Make_Field (":method", "CONNECT");
@@ -78,6 +102,13 @@ begin
      (Result.Status = Valid and then Result.Response_Code = 200
       and then not Result.Is_Interim);
 
+   Fields.Fields (2) := Make_Field ("content-length", "5");
+   Result := Validate_Response (Fields);
+   pragma Assert
+     (Result.Status = Valid
+      and then Result.Has_Content_Length
+      and then Result.Content_Length = 5);
+
    Fields.Count := 1;
    Fields.Fields (1) := Make_Field (":status", "101");
    pragma Assert (Validate_Response (Fields).Status = Invalid_Status);
@@ -101,6 +132,10 @@ begin
 
    Fields.Fields (1) := Make_Field ("x-obs", "a" & Character'Val (128));
    pragma Assert (Validate_Trailers (Fields).Status = Valid);
+
+   Fields.Fields (1) := Make_Field ("content-length", "0");
+   pragma Assert
+     (Validate_Trailers (Fields).Status = Invalid_Content_Length);
 
    Fields.Count := 1;
    Fields.Fields (1) := Make_Field (":status", "200");
