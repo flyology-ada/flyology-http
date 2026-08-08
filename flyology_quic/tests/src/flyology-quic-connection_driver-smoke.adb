@@ -399,10 +399,13 @@ begin
          and then Probes.Count = 2
          and then Connections.Recovery_Deadline (Public_Client) =
            Deadline + 2_048_000);
+      --  Drop Stream_Packet. The PTO probe must carry the retained STREAM
+      --  frame rather than only proving reachability with PING.
       Connections.Process_Datagram
         (Public_Server,
-         Stream_Packet.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Stream_Packet.Length)),
+         Probes.Items (1).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Probes.Items (1).Length)),
          Server_Flight, Server_Status, Now => 150);
       pragma Assert
         (Server_Status = Connections.Succeeded

@@ -18,6 +18,7 @@ package body Flyology.QUIC.Application_Space is
    use type Recovery_Policy.Send_Status;
    use type Sent_Packet_Policy.Apply_Status;
    use type Sent_Packet_Policy.Event_Kind;
+   use type Sent_Packet_Policy.Packet_Number;
    use type Sent_Packet_Policy.Record_Status;
    use type Stream_Frame_Policy.Encode_Status;
    use type Stream_ID_Policy.Endpoint_Role;
@@ -121,9 +122,13 @@ package body Flyology.QUIC.Application_Space is
    function PTO_Count (Item : State) return Recovery_Policy.PTO_Count_Type is
      (Recovery_Policy.PTO_Count (Item.Recovery));
 
+   function Has_Retransmittable_Frame (Item : State) return Boolean;
+
    function Has_Recovery_Timeout (Item : State) return Boolean is
      (Item.Has_Latest_ACK_Eliciting
-      and then Sent_Packet_Policy.Retained (Item.Sent) > 0);
+      and then
+        (Sent_Packet_Policy.Retained (Item.Sent) > 0
+         or else Has_Retransmittable_Frame (Item)));
 
    function Recovery_Deadline
      (Item              : State;
@@ -151,6 +156,113 @@ package body Flyology.QUIC.Application_Space is
    begin
       Recovery_Policy.On_Probe_Timeout (Item.Recovery);
    end On_Probe_Timeout;
+
+   function Free_Retransmittable_Frame (Item : State) return Natural is
+   begin
+      for Index in Retransmittable_Index loop
+         if not Item.Retransmittable (Index).Occupied then
+            return Index;
+         end if;
+      end loop;
+      return 0;
+   end Free_Retransmittable_Frame;
+
+   function Has_Retransmittable_Frame (Item : State) return Boolean is
+   begin
+      for Index in Retransmittable_Index loop
+         if Item.Retransmittable (Index).Occupied then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Has_Retransmittable_Frame;
+
+   function Free_Packet_Frame_Mapping (Item : State) return Natural is
+   begin
+      for Index in Retransmittable_Index loop
+         if not Item.Packet_Frames (Index).Valid then
+            return Index;
+         end if;
+      end loop;
+      return 0;
+   end Free_Packet_Frame_Mapping;
+
+   function Frame_For_Probe (Item : State) return Natural is
+      First_Occupied : Natural := 0;
+   begin
+      for Index in Retransmittable_Index loop
+         if Item.Retransmittable (Index).Occupied then
+            if Item.Retransmittable (Index).Needs_Retransmission then
+               return Index;
+            elsif First_Occupied = 0 then
+               First_Occupied := Index;
+            end if;
+         end if;
+      end loop;
+      return First_Occupied;
+   end Frame_For_Probe;
+
+   procedure Map_Packet_To_Frame
+     (Item   : in out State;
+      Number : Packet_Number;
+      Frame  : Retransmittable_Index)
+   is
+      Mapping : constant Natural := Free_Packet_Frame_Mapping (Item);
+   begin
+      pragma Assert (Mapping in Retransmittable_Index);
+      Item.Packet_Frames (Mapping) :=
+        (Valid => True, Number => Number, Frame => Frame);
+   end Map_Packet_To_Frame;
+
+   procedure Retain_New_Frame
+     (Item   : in out State;
+      Number : Packet_Number;
+      Frame  : Ada.Streams.Stream_Element_Array)
+   is
+      Index : constant Natural := Free_Retransmittable_Frame (Item);
+   begin
+      pragma Assert (Index in Retransmittable_Index);
+      pragma Assert (Frame'Length <= Max_Retransmittable_Length);
+      Item.Retransmittable (Index) := (others => <>);
+      Item.Retransmittable (Index).Occupied := True;
+      Item.Retransmittable (Index).Length := Natural (Frame'Length);
+      if Frame'Length > 0 then
+         Item.Retransmittable (Index).Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Frame'Length)) := Frame;
+      end if;
+      Map_Packet_To_Frame (Item, Number, Retransmittable_Index (Index));
+   end Retain_New_Frame;
+
+   procedure Resolve_Retransmittable_Frame
+     (Item         : in out State;
+      Number       : Packet_Number;
+      Acknowledged : Boolean)
+   is
+      Frame : Natural := 0;
+   begin
+      for Index in Retransmittable_Index loop
+         if Item.Packet_Frames (Index).Valid
+           and then Item.Packet_Frames (Index).Number = Number
+         then
+            Frame := Item.Packet_Frames (Index).Frame;
+            Item.Packet_Frames (Index).Valid := False;
+         end if;
+      end loop;
+      if Frame = 0 then
+         return;
+      elsif Acknowledged then
+         for Index in Retransmittable_Index loop
+            if Item.Packet_Frames (Index).Valid
+              and then Item.Packet_Frames (Index).Frame = Frame
+            then
+               Item.Packet_Frames (Index).Valid := False;
+            end if;
+         end loop;
+         Item.Retransmittable (Frame) := (others => <>);
+      else
+         Item.Retransmittable (Frame).Needs_Retransmission := True;
+      end if;
+   end Resolve_Retransmittable_Frame;
 
    procedure Initialize
      (Item        : in out State;
@@ -184,6 +296,8 @@ package body Flyology.QUIC.Application_Space is
       Item.Peer_Uni := Value_Or_Zero (Peer.Initial_Max_Streams_Uni);
       Sent_Packet_Policy.Reset (Item.Sent);
       Recovery_Policy.Reset (Item.Recovery);
+      Item.Retransmittable := (others => (others => <>));
+      Item.Packet_Frames := (others => (others => <>));
       Item.Has_Latest_ACK_Eliciting := False;
       Item.Latest_ACK_Eliciting := 0;
       Item.Initialized := True;
@@ -261,6 +375,11 @@ package body Flyology.QUIC.Application_Space is
       then
          Result.Status := Recovery_Capacity_Exceeded;
          return;
+      elsif Free_Retransmittable_Frame (Item) = 0
+        or else Free_Packet_Frame_Mapping (Item) = 0
+      then
+         Result.Status := Recovery_Capacity_Exceeded;
+         return;
       elsif not Recovery_Policy.Can_Send
         (Item.Recovery,
          Sent_Packet_Policy.Packet_Byte_Count (Max_Datagram_Length))
@@ -324,6 +443,10 @@ package body Flyology.QUIC.Application_Space is
       end if;
       Item.Has_Latest_ACK_Eliciting := True;
       Item.Latest_ACK_Eliciting := Now;
+      Retain_New_Frame
+        (Item, Built.Number,
+         Frame.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)));
       Result.Status := Sent;
    end Build_Stream_Packet;
 
@@ -378,6 +501,7 @@ package body Flyology.QUIC.Application_Space is
       Frame_Type : Ada.Streams.Stream_Element;
       Now    : Timestamp;
       Permit_Probe : Boolean;
+      Retain_Frame : Boolean;
       Packet : out Ada.Streams.Stream_Element_Array;
       Result : out Send_Result)
    is
@@ -392,6 +516,13 @@ package body Flyology.QUIC.Application_Space is
       Result := (others => <>);
       if Sent_Packet_Policy.Retained (Item.Sent) =
         Sent_Packet_Policy.Max_Sent_Packets
+      then
+         Result.Status := Recovery_Capacity_Exceeded;
+         return;
+      elsif Retain_Frame
+        and then
+          (Free_Retransmittable_Frame (Item) = 0
+           or else Free_Packet_Frame_Mapping (Item) = 0)
       then
          Result.Status := Recovery_Capacity_Exceeded;
          return;
@@ -435,6 +566,9 @@ package body Flyology.QUIC.Application_Space is
       if Account_Status = Recovery_Policy.Accounted then
          Item.Has_Latest_ACK_Eliciting := True;
          Item.Latest_ACK_Eliciting := Now;
+         if Retain_Frame then
+            Retain_New_Frame (Item, Built.Number, Plaintext);
+         end if;
          Result.Status := Sent;
       else
          Result.Status := Internal_State_Error;
@@ -449,6 +583,7 @@ package body Flyology.QUIC.Application_Space is
    begin
       Build_Tracked_Control_Packet
         (Item, Frame_Type => 16#1E#, Now => Now, Permit_Probe => False,
+         Retain_Frame => True,
          Packet => Packet, Result => Result);
    end Build_Handshake_Done_Packet;
 
@@ -457,10 +592,71 @@ package body Flyology.QUIC.Application_Space is
       Now    : Timestamp;
       Packet : out Ada.Streams.Stream_Element_Array;
       Result : out Send_Result) is
+      Frame_Index    : constant Natural := Frame_For_Probe (Item);
+      Built          : Application_Connection.Build_Result;
+      Record_Status  : Sent_Packet_Policy.Record_Status;
+      Account_Status : Recovery_Policy.Send_Status;
+      Sent_Packet    : Sent_Packet_Policy.Sent_Packet;
    begin
-      Build_Tracked_Control_Packet
-        (Item, Frame_Type => 16#01#, Now => Now, Permit_Probe => True,
-         Packet => Packet, Result => Result);
+      if Frame_Index = 0 then
+         Build_Tracked_Control_Packet
+           (Item, Frame_Type => 16#01#, Now => Now, Permit_Probe => True,
+            Retain_Frame => False, Packet => Packet, Result => Result);
+         return;
+      elsif Sent_Packet_Policy.Retained (Item.Sent) =
+        Sent_Packet_Policy.Max_Sent_Packets
+        or else Free_Packet_Frame_Mapping (Item) = 0
+      then
+         Packet := (others => 0);
+         Result := (others => <>);
+         Result.Status := Recovery_Capacity_Exceeded;
+         return;
+      end if;
+
+      Packet := (others => 0);
+      Result := (others => <>);
+      Application_Connection.Build_One_RTT
+        (Item.Packets,
+         Item.Retransmittable (Frame_Index).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Item.Retransmittable (Frame_Index).Length)),
+         Packet, Built);
+      Result.Number := Built.Number;
+      if Built.Status /= Application_Connection.Built then
+         Result.Status := Send_Status_For (Built.Status);
+         return;
+      elsif Built.Packet_Length > Max_Datagram_Length then
+         Result.Status := Packet_Too_Large;
+         return;
+      end if;
+
+      Result.Packet_Length := Built.Packet_Length;
+      Sent_Packet :=
+        (Number        => Built.Number,
+         Sent_At       => Now,
+         Bytes         => Sent_Packet_Policy.Packet_Byte_Count
+           (Built.Packet_Length),
+         ACK_Eliciting => True,
+         In_Flight     => True);
+      Sent_Packet_Policy.Record_Sent
+        (Item.Sent, Sent_Packet, Record_Status);
+      if Record_Status /= Sent_Packet_Policy.Recorded then
+         Result.Status := Internal_State_Error;
+         return;
+      end if;
+      Recovery_Policy.On_Packet_Sent
+        (Item.Recovery, Sent_Packet, Permit_Probe => True,
+         Status => Account_Status);
+      if Account_Status /= Recovery_Policy.Accounted then
+         Result.Status := Internal_State_Error;
+         return;
+      end if;
+      Map_Packet_To_Frame
+        (Item, Built.Number, Retransmittable_Index (Frame_Index));
+      Item.Retransmittable (Frame_Index).Needs_Retransmission := False;
+      Item.Has_Latest_ACK_Eliciting := True;
+      Item.Latest_ACK_Eliciting := Now;
+      Result.Status := Sent;
    end Build_Probe_Packet;
 
    function Decoded_ACK_Delay
@@ -631,6 +827,10 @@ package body Flyology.QUIC.Application_Space is
             Sampled := False;
             ACKed_Ack_Eliciting := False;
             for Index in 1 .. Applied.Count loop
+               Resolve_Retransmittable_Frame
+                 (Item, Applied.Events (Index).Packet.Number,
+                  Applied.Events (Index).Kind =
+                    Sent_Packet_Policy.Acknowledged);
                if Applied.Events (Index).Kind =
                  Sent_Packet_Policy.Acknowledged
                  and then Applied.Events (Index).Packet.ACK_Eliciting

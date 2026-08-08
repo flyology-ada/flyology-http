@@ -21,6 +21,7 @@ private package Flyology.QUIC.Application_Space is
 
    Max_Datagram_Length : constant := 1_200;
    Max_Stream_Payload  : constant := 1_100;
+   Max_Retransmittable_Length : constant := Max_Stream_Payload + 25;
 
    subtype Packet_Number is Sent_Packet_Policy.Packet_Number;
    subtype Timestamp is Sent_Packet_Policy.Timestamp;
@@ -235,6 +236,29 @@ private package Flyology.QUIC.Application_Space is
    procedure On_Probe_Timeout (Item : in out State);
 
 private
+   Max_Retransmittable_Frames : constant :=
+     Sent_Packet_Policy.Max_Sent_Packets;
+   subtype Retransmittable_Index is Positive range
+     1 .. Max_Retransmittable_Frames;
+
+   type Retransmittable_Frame is record
+      Occupied             : Boolean := False;
+      Needs_Retransmission : Boolean := False;
+      Length               : Natural range 0 .. Max_Retransmittable_Length := 0;
+      Data                 : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Retransmittable_Length) := (others => 0);
+   end record;
+   type Retransmittable_Table is array (Retransmittable_Index) of
+     Retransmittable_Frame;
+
+   type Packet_Frame_Mapping is record
+      Valid  : Boolean := False;
+      Number : Packet_Number := 0;
+      Frame  : Retransmittable_Index := Retransmittable_Index'First;
+   end record;
+   type Packet_Frame_Table is array (Retransmittable_Index) of
+     Packet_Frame_Mapping;
+
    type State is limited record
       Packets     : Application_Connection.Connection;
       Streams     : Stream_Table_Policy.Stream_Table;
@@ -244,6 +268,8 @@ private
       Peer_Uni    : Varint_Policy.Value_Type := 0;
       Sent        : Sent_Packet_Policy.Ledger;
       Recovery    : Recovery_Policy.State;
+      Retransmittable : Retransmittable_Table;
+      Packet_Frames   : Packet_Frame_Table;
       Has_Latest_ACK_Eliciting : Boolean := False;
       Latest_ACK_Eliciting     : Timestamp := 0;
       Initialized : Boolean := False;

@@ -286,7 +286,9 @@ package Flyology.QUIC.Connections is
    function Recovery_Deadline (Item : Connection) return Timestamp
    with Pre => Has_Recovery_Timeout (Item);
 
-   --  Process an application-space PTO and produce bounded PING probes.
+   --  Process an application-space PTO and produce bounded probes. A probe
+   --  retransmits retained STREAM or control data when available and otherwise
+   --  carries PING.
    --  @param Item Connected endpoint
    --  @param Now Current monotonic microsecond timestamp
    --  @param Output Probe datagrams when Status is Probes_Ready

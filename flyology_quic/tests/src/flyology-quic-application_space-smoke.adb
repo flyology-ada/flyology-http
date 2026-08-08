@@ -159,11 +159,15 @@ begin
    Build_Handshake_Done_Packet
      (Server, Now => 203, Packet => Packet, Result => Sent_Data);
    pragma Assert (Sent_Data.Status = Sent);
+   --  Drop the original HANDSHAKE_DONE and recover it from a PTO probe.
+   Build_Probe_Packet
+     (Server, Now => 204, Packet => Packet, Result => Sent_Data);
+   pragma Assert (Sent_Data.Status = Sent);
    Process_Packet
      (Client,
       Packet
         (1 .. Ada.Streams.Stream_Element_Offset (Sent_Data.Packet_Length)),
-      Now => 204, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
+      Now => 205, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
       Handshake_Confirmed => False, Result => Received);
    pragma Assert
      (Received.Status = Processed
@@ -171,13 +175,13 @@ begin
       and then Received.Handshake_Done);
 
    Build_Handshake_Done_Packet
-     (Client, Now => 205, Packet => Packet, Result => Sent_Data);
+     (Client, Now => 206, Packet => Packet, Result => Sent_Data);
    pragma Assert (Sent_Data.Status = Sent);
    Process_Packet
      (Server,
       Packet
         (1 .. Ada.Streams.Stream_Element_Offset (Sent_Data.Packet_Length)),
-      Now => 206, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
+      Now => 207, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
       Handshake_Confirmed => True, Result => Received);
    pragma Assert (Received.Status = Unexpected_Handshake_Done);
 
@@ -187,7 +191,7 @@ begin
    Process_Packet
      (Client,
       Packet (1 .. Ada.Streams.Stream_Element_Offset (Built.Packet_Length)),
-      Now => 207, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
+      Now => 208, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
       Handshake_Confirmed => True, Result => Received);
    pragma Assert (Received.Status = Processed);
 
@@ -200,4 +204,65 @@ begin
       Result => Sent_Data);
    pragma Assert
      (Sent_Data.Status = Sent and then Committed_Data (Client) = 3);
+
+   --  Time-threshold loss may empty the sent-packet ledger. Retained frames
+   --  must keep recovery armed until a retransmitted copy is acknowledged.
+   declare
+      Loss_Client, Loss_Server : State;
+      Loss_Packet : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
+      Loss_Sent     : Send_Result;
+      Loss_Received : Process_Result;
+      Loss_ID       : Varint_Policy.Value_Type;
+      Loss_Opened   : Open_Status;
+   begin
+      Initialize
+        (Loss_Client, Client_Keys, Server_Keys, Server_ID, Client_ID,
+         Stream_ID_Policy.Client, Client_Peer);
+      Initialize
+        (Loss_Server, Server_Keys, Client_Keys, Client_ID, Server_ID,
+         Stream_ID_Policy.Server, Server_Peer);
+      Open_Stream
+        (Loss_Client, Stream_ID_Policy.Bidirectional, Loss_ID, Loss_Opened);
+      pragma Assert
+        (Loss_Opened = Stream_ID_Policy.Opened and then Loss_ID = 0);
+
+      for Attempt in Natural range 0 .. 3 loop
+         Build_Stream_Packet
+           (Loss_Client, Stream_ID => Loss_ID, Offset => 0, Fin => True,
+            Data => (16#48#, 16#33#), Now => Timestamp (100 + Attempt),
+            Packet => Loss_Packet, Result => Loss_Sent);
+         pragma Assert (Loss_Sent.Status = Sent);
+      end loop;
+      Process_Packet
+        (Loss_Server,
+         Loss_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Loss_Sent.Packet_Length)),
+         Now => 200, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Loss_Received);
+      pragma Assert (Loss_Received.Status = Processed);
+      Build_ACK_Packet
+        (Loss_Server, ACK_Delay => 0, Now => 201,
+         Packet => Loss_Packet, Result => Loss_Sent);
+      pragma Assert (Loss_Sent.Status = Sent);
+      Process_Packet
+        (Loss_Client,
+         Loss_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Loss_Sent.Packet_Length)),
+         Now => 2_000_000, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Loss_Received);
+      pragma Assert
+        (Loss_Received.Status = Processed
+         and then Loss_Received.Resolved_Count = 4
+         and then Retained_Packets (Loss_Client) = 0
+         and then Has_Recovery_Timeout (Loss_Client));
+      Build_Probe_Packet
+        (Loss_Client, Now => 2_000_001,
+         Packet => Loss_Packet, Result => Loss_Sent);
+      pragma Assert (Loss_Sent.Status = Sent);
+   end;
 end Flyology.QUIC.Application_Space.Smoke;
