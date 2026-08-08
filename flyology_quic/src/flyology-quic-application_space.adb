@@ -34,6 +34,17 @@ package body Flyology.QUIC.Application_Space is
    is
      (Stream_Table_Policy.Has_Stream (Item.Streams, Stream_ID));
 
+   function Stream_Count
+     (Item : State) return Stream_Table_Policy.Stream_Count_Type
+   is
+     (Stream_Table_Policy.Stream_Count (Item.Streams));
+
+   function Stream_At
+     (Item  : State;
+      Index : Positive) return Varint_Policy.Value_Type
+   is
+     (Stream_Table_Policy.Stream_At (Item.Streams, Index));
+
    function Available_Length
      (Item      : State;
       Stream_ID : Varint_Policy.Value_Type) return Stream_Offset

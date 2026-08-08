@@ -27,6 +27,13 @@ package body Flyology.QUIC.Connection_Driver is
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
    is (Application_Space.Has_Stream (Item.Application, Stream_ID));
 
+   function Stream_Count (Item : Connection) return Natural is
+     (Natural (Application_Space.Stream_Count (Item.Application)));
+
+   function Stream_At
+     (Item : Connection; Index : Positive) return Varint_Policy.Value_Type
+   is (Application_Space.Stream_At (Item.Application, Index));
+
    function Available_Length
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type)
       return Application_Space.Stream_Offset

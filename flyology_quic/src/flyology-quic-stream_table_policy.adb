@@ -49,6 +49,23 @@ is
    function Stream_Count (Item : Stream_Table) return Stream_Count_Type is
      (Item.Count);
 
+   function Stream_At
+     (Item  : Stream_Table;
+      Index : Positive) return Varint_Policy.Value_Type
+   is
+      Seen : Stream_Count_Type := 0;
+   begin
+      for Slot in Slot_Index loop
+         if Item.Slots (Slot).Occupied then
+            Seen := Seen + 1;
+            if Seen = Index then
+               return Item.Slots (Slot).ID;
+            end if;
+         end if;
+      end loop;
+      return 0;
+   end Stream_At;
+
    function Has_Stream
      (Item      : Stream_Table;
       Stream_ID : Varint_Policy.Value_Type) return Boolean

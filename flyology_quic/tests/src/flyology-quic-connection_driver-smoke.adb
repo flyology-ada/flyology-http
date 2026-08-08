@@ -216,6 +216,8 @@ begin
          Now => 150, Timeout => 1.0);
       pragma Assert
         (Server_Result.Status = Succeeded
+         and then Stream_Count (Server) = 1
+         and then Stream_At (Server, 1) = Stream_ID
          and then Has_Stream (Server, Stream_ID)
          and then Available_Length (Server, Stream_ID) = 2
          and then Stream_Element (Server, Stream_ID, 0) = 16#68#

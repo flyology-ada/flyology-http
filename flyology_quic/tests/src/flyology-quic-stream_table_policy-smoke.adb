@@ -26,8 +26,10 @@ begin
    Process_Plaintext
      (Item, Hex ("010a00036162630e0402017a"), Result);
    pragma Assert
-     (Result.Status = Processed and then Result.Frame_Count = 3
+      (Result.Status = Processed and then Result.Frame_Count = 3
       and then Stream_Count (Item) = 2
+      and then Stream_At (Item, 1) = 0
+      and then Stream_At (Item, 2) = 4
       and then Available_Length (Item, 0) = 3
       and then Available_Length (Item, 4) = 0);
 

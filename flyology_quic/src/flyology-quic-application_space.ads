@@ -153,6 +153,14 @@ private package Flyology.QUIC.Application_Space is
      (Item      : State;
       Stream_ID : Varint_Policy.Value_Type) return Boolean;
 
+   function Stream_Count
+     (Item : State) return Stream_Table_Policy.Stream_Count_Type;
+
+   function Stream_At
+     (Item  : State;
+      Index : Positive) return Varint_Policy.Value_Type
+   with Pre => Index <= Stream_Count (Item);
+
    function Available_Length
      (Item      : State;
       Stream_ID : Varint_Policy.Value_Type) return Stream_Offset

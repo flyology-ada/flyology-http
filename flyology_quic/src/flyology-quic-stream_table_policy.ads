@@ -33,6 +33,13 @@ is
    function Stream_Count (Item : Stream_Table) return Stream_Count_Type
    with Global => null;
 
+   function Stream_At
+     (Item  : Stream_Table;
+      Index : Positive) return Varint_Policy.Value_Type
+   with
+     Global => null,
+     Pre => Index <= Stream_Count (Item);
+
    function Has_Stream
      (Item      : Stream_Table;
       Stream_ID : Varint_Policy.Value_Type) return Boolean
