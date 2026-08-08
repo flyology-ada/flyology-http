@@ -32,6 +32,7 @@ for test in \
   flyology-quic-recovery_policy-smoke \
   flyology-quic-sent_packet_policy-smoke \
   flyology-quic-stream_frame_policy-smoke \
+  flyology-quic-stream_id_policy-smoke \
   flyology-quic-stream_reassembly_policy-smoke \
   flyology-quic-stream_table_policy-smoke \
   flyology-quic-tls_authentication_policy-smoke \
