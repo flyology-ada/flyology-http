@@ -29,6 +29,9 @@ begin
      (Field_Name (Parsed.Block.Fields (5)) = "x-test"
       and then Field_Value (Parsed.Block.Fields (5)) = "ok");
 
+   --  RFC 9204 Appendix B.1, Stream 0: literal field line with a static
+   --  name reference. Keep this byte sequence verbatim as a published
+   --  decoder oracle rather than regenerating it through our encoder.
    Parsed :=
      Decode
        ((16#00#, 16#00#, 16#51#, 16#0B#,
@@ -37,8 +40,16 @@ begin
    pragma Assert
      (Parsed.Status = Decoded
       and then Parsed.Block.Count = 1
+      and then Parsed.Consumed = 15
       and then Field_Name (Parsed.Block.Fields (1)) = ":path"
       and then Field_Value (Parsed.Block.Fields (1)) = "/index.html");
+
+   --  RFC 9204 Appendix B.2 is a published dynamic-table example. The
+   --  bounded static-only profile must reject its nonzero Required Insert
+   --  Count explicitly, rather than interpreting it as a static section.
+   pragma Assert
+     (Decode ((16#03#, 16#81#, 16#10#, 16#11#)).Status =
+        Unsupported_Dynamic);
 
    pragma Assert (Decode ((16#01#, 16#00#)).Status = Unsupported_Dynamic);
    pragma Assert (Decode ((16#00#, 16#00#, 16#80#)).Status = Unsupported_Dynamic);
