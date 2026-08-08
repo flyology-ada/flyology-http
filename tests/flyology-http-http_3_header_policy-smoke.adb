@@ -90,6 +90,18 @@ begin
    Fields.Fields (1) := Make_Field ("connection", "close");
    pragma Assert (Validate_Trailers (Fields).Status = Prohibited_Field);
 
+   Fields.Fields (1) := Make_Field ("x-control", "a" & Character'Val (1));
+   pragma Assert (Validate_Trailers (Fields).Status = Invalid_Value);
+
+   Fields.Fields (1) := Make_Field ("x-control", "a" & Character'Val (127));
+   pragma Assert (Validate_Trailers (Fields).Status = Invalid_Value);
+
+   Fields.Fields (1) := Make_Field ("x-tab", "a" & ASCII.HT & "b");
+   pragma Assert (Validate_Trailers (Fields).Status = Valid);
+
+   Fields.Fields (1) := Make_Field ("x-obs", "a" & Character'Val (128));
+   pragma Assert (Validate_Trailers (Fields).Status = Valid);
+
    Fields.Count := 1;
    Fields.Fields (1) := Make_Field (":status", "200");
    pragma Assert (Validate_Trailers (Fields).Status = Pseudo_In_Trailers);

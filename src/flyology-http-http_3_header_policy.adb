@@ -71,7 +71,9 @@ is
    function Valid_Value (Value : String) return Boolean is
    begin
       for Item of Value loop
-         if Item = Character'Val (0) or else Item in ASCII.CR | ASCII.LF then
+         if (Character'Pos (Item) < 32 and then Item /= ASCII.HT)
+           or else Item = Character'Val (127)
+         then
             return False;
          end if;
       end loop;
