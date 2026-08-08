@@ -25,16 +25,8 @@ procedure Flyology.QUIC.Application_Space.Smoke is
      ID ((16#AA#, 16#BB#, 16#CC#, 16#DD#));
    Server_ID : constant Long_Header_Policy.Connection_ID :=
      ID ((16#10#, 16#20#, 16#30#, 16#40#));
-   Client_Peer : constant Peer_Limits :=
-     (Data =>
-        (Connection => 2, Bidi_Local => 2, Bidi_Remote => 2,
-         Unidirectional => 2),
-      Streams_Bidi => 1, Streams_Uni => 1);
-   Server_Peer : constant Peer_Limits :=
-     (Data =>
-        (Connection => 100, Bidi_Local => 100, Bidi_Remote => 100,
-         Unidirectional => 100),
-      Streams_Bidi => 4, Streams_Uni => 4);
+   Client_Peer : Transport_Parameter_Policy.Transport_Parameters;
+   Server_Peer : Transport_Parameter_Policy.Transport_Parameters;
    Client     : State;
    Server     : State;
    Packet     : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
@@ -46,6 +38,25 @@ procedure Flyology.QUIC.Application_Space.Smoke is
      (16#10#, 10, 16#11#, 0, 10, 16#12#, 2);
    Built      : Application_Connection.Build_Result;
 begin
+   Client_Peer.Initial_Max_Data := (Present => True, Value => 2);
+   Client_Peer.Initial_Max_Stream_Data_Bidi_Local :=
+     (Present => True, Value => 2);
+   Client_Peer.Initial_Max_Stream_Data_Bidi_Remote :=
+     (Present => True, Value => 2);
+   Client_Peer.Initial_Max_Stream_Data_Uni :=
+     (Present => True, Value => 2);
+   Client_Peer.Initial_Max_Streams_Bidi := (Present => True, Value => 1);
+   Client_Peer.Initial_Max_Streams_Uni := (Present => True, Value => 1);
+   Server_Peer.Initial_Max_Data := (Present => True, Value => 100);
+   Server_Peer.Initial_Max_Stream_Data_Bidi_Local :=
+     (Present => True, Value => 100);
+   Server_Peer.Initial_Max_Stream_Data_Bidi_Remote :=
+     (Present => True, Value => 100);
+   Server_Peer.Initial_Max_Stream_Data_Uni :=
+     (Present => True, Value => 100);
+   Server_Peer.Initial_Max_Streams_Bidi := (Present => True, Value => 4);
+   Server_Peer.Initial_Max_Streams_Uni := (Present => True, Value => 4);
+
    Initialize
      (Client, Client_Keys, Server_Keys, Server_ID, Client_ID,
       Stream_ID_Policy.Client, Client_Peer);

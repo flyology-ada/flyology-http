@@ -7,6 +7,7 @@ with Flyology.QUIC.Sent_Packet_Policy;
 with Flyology.QUIC.Stream_ID_Policy;
 with Flyology.QUIC.Stream_Table_Policy;
 with Flyology.QUIC.TLS_Key_Schedule;
+with Flyology.QUIC.Transport_Parameter_Policy;
 with Flyology.QUIC.Varint_Policy;
 
 --  Internal composition of the QUIC application packet-number space.
@@ -26,12 +27,6 @@ private package Flyology.QUIC.Application_Space is
    subtype Stream_Offset is Stream_Table_Policy.Stream_Offset;
    subtype Stream_Index is Stream_Table_Policy.Stream_Index;
 
-   type Peer_Limits is record
-      Data         : Flow_Control_Policy.Send_Limits;
-      Streams_Bidi : Varint_Policy.Value_Type := 0;
-      Streams_Uni  : Varint_Policy.Value_Type := 0;
-   end record;
-
    type State is limited private;
 
    function Is_Initialized (Item : State) return Boolean;
@@ -43,7 +38,7 @@ private package Flyology.QUIC.Application_Space is
       Destination : Long_Header_Policy.Connection_ID;
       Local_ID    : Long_Header_Policy.Connection_ID;
       Role        : Stream_ID_Policy.Endpoint_Role;
-      Peer        : Peer_Limits)
+      Peer        : Transport_Parameter_Policy.Transport_Parameters)
    with
      Pre => not Is_Initialized (Item)
        and then Destination.Length <=

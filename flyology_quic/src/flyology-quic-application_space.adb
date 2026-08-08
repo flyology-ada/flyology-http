@@ -111,15 +111,29 @@ package body Flyology.QUIC.Application_Space is
       Destination : Long_Header_Policy.Connection_ID;
       Local_ID    : Long_Header_Policy.Connection_ID;
       Role        : Stream_ID_Policy.Endpoint_Role;
-      Peer        : Peer_Limits) is
+      Peer        : Transport_Parameter_Policy.Transport_Parameters)
+   is
+      function Value_Or_Zero
+        (Parameter : Transport_Parameter_Policy.Integer_Parameter)
+         return Varint_Policy.Value_Type
+      is (if Parameter.Present then Parameter.Value else 0);
+
+      Limits : constant Flow_Control_Policy.Send_Limits :=
+        (Connection => Value_Or_Zero (Peer.Initial_Max_Data),
+         Bidi_Local =>
+           Value_Or_Zero (Peer.Initial_Max_Stream_Data_Bidi_Local),
+         Bidi_Remote =>
+           Value_Or_Zero (Peer.Initial_Max_Stream_Data_Bidi_Remote),
+         Unidirectional =>
+           Value_Or_Zero (Peer.Initial_Max_Stream_Data_Uni));
    begin
       Application_Connection.Initialize
         (Item.Packets, Sending, Receiving, Destination, Local_ID);
       Stream_Table_Policy.Reset (Item.Streams);
       Stream_ID_Policy.Reset (Item.Allocator, Role);
-      Flow_Control_Policy.Reset (Item.Flow, Role, Peer.Data);
-      Item.Peer_Bidi := Peer.Streams_Bidi;
-      Item.Peer_Uni := Peer.Streams_Uni;
+      Flow_Control_Policy.Reset (Item.Flow, Role, Limits);
+      Item.Peer_Bidi := Value_Or_Zero (Peer.Initial_Max_Streams_Bidi);
+      Item.Peer_Uni := Value_Or_Zero (Peer.Initial_Max_Streams_Uni);
       Sent_Packet_Policy.Reset (Item.Sent);
       Recovery_Policy.Reset (Item.Recovery);
       Item.Initialized := True;
