@@ -180,6 +180,12 @@ private package Flyology.QUIC.Connection_Driver is
       Status    : out Application_Space.Send_Status)
    with Pre => Is_Connected (Item);
 
+   procedure Build_Application_Close_Datagram
+     (Item   : in out Connection;
+      Packet : out Datagram;
+      Status : out Application_Space.Send_Status)
+   with Pre => Is_Connected (Item);
+
    function Has_Stream
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean;
 

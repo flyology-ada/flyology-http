@@ -11,6 +11,7 @@ procedure Flyology.QUIC.Connection_Driver.Smoke is
    use type Application_Connection.Build_Status;
    use type Ada.Streams.Stream_Element;
    use type Connections.Open_Status;
+   use type Connections.Connection_State;
    use type Connections.Operation_Status;
    use type Connections.Send_Status;
    use type Connections.Server_Initialize_Status;
@@ -481,5 +482,18 @@ begin
          and then Connections.Was_Reset (Public_Server, Public_Stream)
          and then Connections.Reset_Error
            (Public_Server, Public_Stream) = 16#10C#);
+      Connections.Build_Application_Close_Datagram
+        (Public_Client, Packet => Stream_Packet, Status => Sent);
+      pragma Assert (Sent = Connections.Sent);
+      Connections.Process_Datagram
+        (Public_Server,
+         Stream_Packet.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Stream_Packet.Length)),
+         Server_Flight, Server_Status, Now => 204);
+      pragma Assert
+        (Server_Status = Connections.Connection_Closed
+         and then Connections.State (Public_Server) = Connections.Peer_Closed
+         and then Connections.Peer_Close_Is_Application (Public_Server)
+         and then Connections.Peer_Close_Error (Public_Server) = 0);
    end;
 end Flyology.QUIC.Connection_Driver.Smoke;

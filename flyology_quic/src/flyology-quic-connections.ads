@@ -465,6 +465,17 @@ package Flyology.QUIC.Connections is
       Status    : out Send_Status)
    with Pre => Is_Connected (Item);
 
+   --  Build a protected application CONNECTION_CLOSE carrying application
+   --  error zero and an empty reason phrase.
+   --  @param Item Connected endpoint
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   procedure Build_Application_Close_Datagram
+     (Item   : in out Connection;
+      Packet : out Datagram;
+      Status : out Send_Status)
+   with Pre => Is_Connected (Item);
+
    --  Return the number of peer streams retained by the connection.
    --  @param Item Connection to inspect
    --  @return Number of retained streams

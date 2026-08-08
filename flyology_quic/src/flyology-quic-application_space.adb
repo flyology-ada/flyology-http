@@ -658,6 +658,30 @@ package body Flyology.QUIC.Application_Space is
          Packet => Packet, Result => Result);
    end Build_Handshake_Done_Packet;
 
+   procedure Build_Application_Close_Packet
+     (Item   : in out State;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result)
+   is
+      Plaintext : constant Ada.Streams.Stream_Element_Array :=
+        (16#1D#, 0, 0);
+      Built : Application_Connection.Build_Result;
+   begin
+      --  APPLICATION_CLOSE, application error zero, and an empty reason are
+      --  each represented by a one-byte QUIC variable integer. Closing is
+      --  deliberately not recovery-tracked or congestion-gated: it must
+      --  remain buildable when the ordinary sent-packet table is full.
+      Packet := (others => 0);
+      Result := (others => <>);
+      Application_Connection.Build_One_RTT
+        (Item.Packets, Plaintext, Packet, Built);
+      Result.Number := Built.Number;
+      Result.Packet_Length := Built.Packet_Length;
+      Result.Status :=
+        (if Built.Status = Application_Connection.Built
+         then Sent else Send_Status_For (Built.Status));
+   end Build_Application_Close_Packet;
+
    procedure Build_Probe_Packet
      (Item   : in out State;
       Now    : Timestamp;

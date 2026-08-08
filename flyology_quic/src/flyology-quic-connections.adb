@@ -538,6 +538,20 @@ package body Flyology.QUIC.Connections is
       Status := Public_Status (Internal_Status);
    end Build_ACK_Datagram;
 
+   procedure Build_Application_Close_Datagram
+     (Item   : in out Connection;
+      Packet : out Datagram;
+      Status : out Send_Status)
+   is
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      Connection_Driver.Build_Application_Close_Datagram
+        (Impl (Item).Driver, Internal_Packet, Internal_Status);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Application_Close_Datagram;
+
    function Stream_Count (Item : Connection) return Natural is
      (Connection_Driver.Stream_Count (Impl (Item).Driver));
 

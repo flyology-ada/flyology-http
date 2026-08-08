@@ -162,6 +162,22 @@ package body Flyology.QUIC.Connection_Driver is
       end if;
    end Build_ACK_Datagram;
 
+   procedure Build_Application_Close_Datagram
+     (Item   : in out Connection;
+      Packet : out Datagram;
+      Status : out Application_Space.Send_Status)
+   is
+      Built : Application_Space.Send_Result;
+   begin
+      Packet := (others => <>);
+      Application_Space.Build_Application_Close_Packet
+        (Item.Application, Packet.Data, Built);
+      Status := Built.Status;
+      if Built.Status = Application_Space.Sent then
+         Packet.Length := Built.Packet_Length;
+      end if;
+   end Build_Application_Close_Datagram;
+
    procedure Clear (Output : out Datagram_Batch) is
    begin
       Output := (others => <>);

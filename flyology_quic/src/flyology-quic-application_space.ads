@@ -128,6 +128,14 @@ private package Flyology.QUIC.Application_Space is
      Pre => Is_Initialized (Item)
        and then Packet'Length >= Max_Datagram_Length;
 
+   procedure Build_Application_Close_Packet
+     (Item   : in out State;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result)
+   with
+     Pre => Is_Initialized (Item)
+       and then Packet'Length >= Max_Datagram_Length;
+
    procedure Build_Probe_Packet
      (Item   : in out State;
       Now    : Timestamp;
