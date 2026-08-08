@@ -19,7 +19,21 @@ begin
      (Bytes_In_Flight (Item) = 0
       and then Congestion_Window (Item) = 12_000
       and then not Has_RTT_Sample (Item)
-      and then Loss_Delay (Item) = 374_625);
+      and then Loss_Delay (Item) = 374_625
+      and then PTO_Count (Item) = 0
+      and then Probe_Timeout (Item, 25_000, False) = 999_000
+      and then Probe_Timeout (Item, 25_000, True) = 1_024_000);
+
+   On_Probe_Timeout (Item);
+   pragma Assert
+     (PTO_Count (Item) = 1
+      and then Probe_Timeout (Item, 25_000, True) = 2_048_000);
+   for Count in 2 .. Max_PTO_Count + 2 loop
+      On_Probe_Timeout (Item);
+   end loop;
+   pragma Assert (PTO_Count (Item) = Max_PTO_Count);
+   On_ACK_Received (Item);
+   pragma Assert (PTO_Count (Item) = 0);
 
    for Number in Sent_Packet_Policy.Packet_Number range 0 .. 9 loop
       On_Packet_Sent

@@ -157,6 +157,12 @@ private package Flyology.QUIC.Application_Space is
    function Congestion_Window (Item : State) return Recovery_Policy.Byte_Count;
    function Has_RTT_Sample (Item : State) return Boolean;
    function Smoothed_RTT (Item : State) return Recovery_Policy.Duration;
+   function PTO_Count (Item : State) return Recovery_Policy.PTO_Count_Type;
+   function Probe_Timeout
+     (Item              : State;
+      Maximum_ACK_Delay : Recovery_Policy.Duration)
+      return Recovery_Policy.Duration;
+   procedure On_Probe_Timeout (Item : in out State);
 
 private
    type State is limited record

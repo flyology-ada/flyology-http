@@ -45,6 +45,11 @@ begin
       and then Retained_Packets (Client) = 1
       and then Bytes_In_Flight (Client) =
         Recovery_Policy.Byte_Count (Sent_Data.Packet_Length));
+   pragma Assert (Probe_Timeout (Client, 25_000) = 1_024_000);
+   On_Probe_Timeout (Client);
+   pragma Assert
+     (PTO_Count (Client) = 1
+      and then Probe_Timeout (Client, 25_000) = 2_048_000);
    Process_Packet
      (Server,
       Packet
@@ -81,6 +86,7 @@ begin
       and then Received.Resolved_Count = 1
       and then Retained_Packets (Client) = 0
       and then Bytes_In_Flight (Client) = 0
+      and then PTO_Count (Client) = 0
       and then Has_RTT_Sample (Client)
       and then Smoothed_RTT (Client) = 100);
 

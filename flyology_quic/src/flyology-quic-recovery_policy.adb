@@ -12,6 +12,18 @@ is
       else Left + Right)
    with Global => null;
 
+   function Saturating_Add_Duration
+     (Left  : Duration;
+      Right : Duration) return Duration
+   is
+     (if Right > Duration'Last - Left then Duration'Last else Left + Right)
+   with Global => null;
+
+   function Saturating_Double (Value : Duration) return Duration
+   is
+     (if Value > Duration'Last / 2 then Duration'Last else Value * 2)
+   with Global => null;
+
    function Bytes_In_Flight (Item : State) return Byte_Count is
      (Item.Flight);
 
@@ -45,6 +57,42 @@ is
       end if;
    end Loss_Delay;
 
+   function PTO_Count (Item : State) return PTO_Count_Type is
+     (Item.Probe_Count);
+
+   function Probe_Timeout
+     (Item              : State;
+      Maximum_ACK_Delay : Duration;
+      Include_ACK_Delay : Boolean) return Duration
+   is
+      Variation : constant Duration :=
+        (if Item.Variance > Duration'Last / 4 then
+            Duration'Last
+         else Item.Variance * 4);
+      Result : Duration := Saturating_Add_Duration
+        (Item.Smoothed, Duration'Max (Variation, Timer_Granularity));
+   begin
+      if Include_ACK_Delay then
+         Result := Saturating_Add_Duration (Result, Maximum_ACK_Delay);
+      end if;
+      for Count in 1 .. Item.Probe_Count loop
+         Result := Saturating_Double (Result);
+      end loop;
+      return Result;
+   end Probe_Timeout;
+
+   procedure On_Probe_Timeout (Item : in out State) is
+   begin
+      if Item.Probe_Count < Max_PTO_Count then
+         Item.Probe_Count := Item.Probe_Count + 1;
+      end if;
+   end On_Probe_Timeout;
+
+   procedure On_ACK_Received (Item : in out State) is
+   begin
+      Item.Probe_Count := 0;
+   end On_ACK_Received;
+
    function Can_Send
      (Item  : State;
       Bytes : Sent_Packet_Policy.Packet_Byte_Count) return Boolean
@@ -67,7 +115,8 @@ is
          Window           => Initial_Congestion_Window,
          Slow_Start_Limit => Byte_Count'Last,
          Has_Recovery     => False,
-         Recovery_Start   => 0);
+         Recovery_Start   => 0,
+         Probe_Count      => 0);
    end Reset;
 
    procedure On_Packet_Sent

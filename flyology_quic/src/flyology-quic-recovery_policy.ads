@@ -21,6 +21,9 @@ is
    Initial_Congestion_Window  : constant Byte_Count := 12_000;
    Minimum_Congestion_Window  : constant Byte_Count := 2_400;
 
+   Max_PTO_Count : constant := 16;
+   subtype PTO_Count_Type is Natural range 0 .. Max_PTO_Count;
+
    type Send_Status is (Accounted, Congestion_Blocked);
    type State is private;
 
@@ -30,7 +33,8 @@ is
      Post =>
        Bytes_In_Flight (Item) = 0
        and then Congestion_Window (Item) = Initial_Congestion_Window
-       and then not Has_RTT_Sample (Item);
+       and then not Has_RTT_Sample (Item)
+       and then PTO_Count (Item) = 0;
 
    function Bytes_In_Flight (Item : State) return Byte_Count
    with Global => null;
@@ -59,6 +63,27 @@ is
    with
      Global => null,
      Post => Loss_Delay'Result >= Timer_Granularity;
+
+   function PTO_Count (Item : State) return PTO_Count_Type
+   with Global => null;
+
+   function Probe_Timeout
+     (Item              : State;
+      Maximum_ACK_Delay : Duration;
+      Include_ACK_Delay : Boolean) return Duration
+   with
+     Global => null,
+     Post => Probe_Timeout'Result >= Timer_Granularity;
+
+   procedure On_Probe_Timeout (Item : in out State)
+   with
+     Global => null,
+     Post => PTO_Count (Item) >= PTO_Count (Item'Old);
+
+   procedure On_ACK_Received (Item : in out State)
+   with
+     Global => null,
+     Post => PTO_Count (Item) = 0;
 
    function Can_Send
      (Item  : State;
@@ -110,5 +135,6 @@ private
       Slow_Start_Limit : Byte_Count := Byte_Count'Last;
       Has_Recovery     : Boolean := False;
       Recovery_Start   : Sent_Packet_Policy.Timestamp := 0;
+      Probe_Count      : PTO_Count_Type := 0;
    end record;
 end Flyology.QUIC.Recovery_Policy;

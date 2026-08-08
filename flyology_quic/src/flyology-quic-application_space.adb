@@ -67,6 +67,22 @@ package body Flyology.QUIC.Application_Space is
    function Smoothed_RTT (Item : State) return Recovery_Policy.Duration is
      (Recovery_Policy.Smoothed_RTT (Item.Recovery));
 
+   function PTO_Count (Item : State) return Recovery_Policy.PTO_Count_Type is
+     (Recovery_Policy.PTO_Count (Item.Recovery));
+
+   function Probe_Timeout
+     (Item              : State;
+      Maximum_ACK_Delay : Recovery_Policy.Duration)
+      return Recovery_Policy.Duration
+   is
+     (Recovery_Policy.Probe_Timeout
+        (Item.Recovery, Maximum_ACK_Delay, Include_ACK_Delay => True));
+
+   procedure On_Probe_Timeout (Item : in out State) is
+   begin
+      Recovery_Policy.On_Probe_Timeout (Item.Recovery);
+   end On_Probe_Timeout;
+
    procedure Initialize
      (Item        : in out State;
       Sending     : TLS_Key_Schedule.QUIC_Traffic_Keys;
@@ -289,6 +305,7 @@ package body Flyology.QUIC.Application_Space is
       Ranges    : ACK_Range_Policy.Decode_Result;
       Applied   : Sent_Packet_Policy.Apply_Result;
       Sampled   : Boolean;
+      ACKed_Ack_Eliciting : Boolean;
    begin
       Result := (others => <>);
       Application_Connection.Process_One_RTT
@@ -344,7 +361,14 @@ package body Flyology.QUIC.Application_Space is
                return;
             end if;
             Sampled := False;
+            ACKed_Ack_Eliciting := False;
             for Index in 1 .. Applied.Count loop
+               if Applied.Events (Index).Kind =
+                 Sent_Packet_Policy.Acknowledged
+                 and then Applied.Events (Index).Packet.ACK_Eliciting
+               then
+                  ACKed_Ack_Eliciting := True;
+               end if;
                if not Sampled
                  and then Applied.Events (Index).Kind =
                    Sent_Packet_Policy.Acknowledged
@@ -362,6 +386,9 @@ package body Flyology.QUIC.Application_Space is
                   Sampled := True;
                end if;
             end loop;
+            if ACKed_Ack_Eliciting then
+               Recovery_Policy.On_ACK_Received (Item.Recovery);
+            end if;
             Recovery_Policy.On_Packets_Resolved
               (Item.Recovery, Applied.Events, Applied.Count, Now,
                Application_Limited => False);
