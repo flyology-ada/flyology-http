@@ -172,6 +172,9 @@ private package Flyology.QUIC.Application_Space is
       Resolved_Count  : Natural := 0;
       ACK_Eliciting   : Boolean := False;
       Handshake_Done  : Boolean := False;
+      Peer_Closed     : Boolean := False;
+      Application_Close : Boolean := False;
+      Close_Error     : Varint_Policy.Value_Type := 0;
    end record;
 
    procedure Process_Packet

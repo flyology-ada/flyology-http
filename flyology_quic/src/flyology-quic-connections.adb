@@ -127,6 +127,7 @@ package body Flyology.QUIC.Connections is
          when Connection_Driver.Server_Initial => Server_Initial,
          when Connection_Driver.Server_Handshake => Server_Handshake,
          when Connection_Driver.Connected => Connected,
+         when Connection_Driver.Peer_Closed => Peer_Closed,
          when Connection_Driver.Failed => Failed);
 
    function State (Item : Connection) return Connection_State is
@@ -140,6 +141,12 @@ package body Flyology.QUIC.Connections is
    function Handshake_Confirmed (Item : Connection) return Boolean is
      (Item.Backend /= System.Null_Address
       and then Connection_Driver.Handshake_Confirmed (Impl (Item).Driver));
+
+   function Peer_Close_Is_Application (Item : Connection) return Boolean is
+     (Connection_Driver.Peer_Close_Is_Application (Impl (Item).Driver));
+
+   function Peer_Close_Error (Item : Connection) return Stream_Offset is
+     (Connection_Driver.Peer_Close_Error (Impl (Item).Driver));
 
    procedure Initialize_Client
      (Item                    : in out Connection;
@@ -263,6 +270,7 @@ package body Flyology.QUIC.Connections is
          when Connection_Driver.Unsupported_Packet => Unsupported_Packet,
          when Connection_Driver.Packet_Error => Packet_Error,
          when Connection_Driver.TLS_Error => TLS_Error,
+         when Connection_Driver.Connection_Closed => Connection_Closed,
          when Connection_Driver.Output_Capacity_Exceeded =>
            Output_Capacity_Exceeded);
 

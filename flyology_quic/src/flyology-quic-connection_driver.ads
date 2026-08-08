@@ -40,6 +40,7 @@ private package Flyology.QUIC.Connection_Driver is
       Server_Initial,
       Server_Handshake,
       Connected,
+      Peer_Closed,
       Failed);
 
    type Connection is limited private;
@@ -47,6 +48,11 @@ private package Flyology.QUIC.Connection_Driver is
    function State (Item : Connection) return Connection_State;
    function Is_Connected (Item : Connection) return Boolean;
    function Handshake_Confirmed (Item : Connection) return Boolean;
+   function Peer_Close_Is_Application (Item : Connection) return Boolean
+   with Pre => State (Item) = Peer_Closed;
+   function Peer_Close_Error
+     (Item : Connection) return Varint_Policy.Value_Type
+   with Pre => State (Item) = Peer_Closed;
 
    procedure Initialize_Client
      (Item                    : in out Connection;
@@ -97,6 +103,7 @@ private package Flyology.QUIC.Connection_Driver is
       Unsupported_Packet,
       Packet_Error,
       TLS_Error,
+      Connection_Closed,
       Output_Capacity_Exceeded);
 
    type Operation_Result is record
@@ -232,5 +239,7 @@ private
       Local_ID              : Long_Header_Policy.Connection_ID;
       Peer_ID               : Long_Header_Policy.Connection_ID;
       Local_Parameters      : Transport_Parameter_Policy.Transport_Parameters;
+      Close_Is_Application  : Boolean := False;
+      Close_Error           : Varint_Policy.Value_Type := 0;
    end record;
 end Flyology.QUIC.Connection_Driver;

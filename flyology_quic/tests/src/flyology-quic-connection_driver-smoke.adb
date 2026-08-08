@@ -1,11 +1,14 @@
 with Flyology.IO.Sockets;
+with Flyology.QUIC.Application_Connection;
 with Flyology.QUIC.Connections;
 with Flyology.QUIC.Connection_IO;
+with Flyology.QUIC.TLS_Key_Schedule;
 with Flyology.QUIC.Transport_Parameter_Policy;
 
 procedure Flyology.QUIC.Connection_Driver.Smoke is
    use type Application_Space.Open_Status;
    use type Application_Space.Send_Status;
+   use type Application_Connection.Build_Status;
    use type Ada.Streams.Stream_Element;
    use type Connections.Open_Status;
    use type Connections.Operation_Status;
@@ -270,6 +273,40 @@ begin
         (Client_Socket, Client, Client_Output, Client_Result,
          Now => 200, Timeout => 1.0);
       pragma Assert (Client_Result.Status = Succeeded);
+   end;
+
+   declare
+      Sending, Receiving : TLS_Key_Schedule.QUIC_Traffic_Keys;
+      Close_Sender : Application_Connection.Connection;
+      Close_Data : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
+      Close_Built : Application_Connection.Build_Result;
+   begin
+      TLS_Session.Get_Application_Keys
+        (Server.TLS, Sending, Receiving);
+      Application_Connection.Initialize
+        (Close_Sender, Sending, Receiving, Server.Peer_ID, Server.Local_ID);
+      --  Advance beyond application packets already sent by the real server.
+      for Number in 0 .. 5 loop
+         Application_Connection.Build_One_RTT
+           (Close_Sender, (16#1D#, 11, 0), Close_Data, Close_Built);
+         pragma Assert
+           (Close_Built.Status = Application_Connection.Built
+            and then Natural (Close_Built.Number) = Number);
+      end loop;
+      Process_Datagram
+        (Client,
+         Close_Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Close_Built.Packet_Length)),
+         Client_Output, Client_Result, Now => 250);
+      pragma Assert
+        (Client_Result.Status = Connection_Closed
+         and then State (Client) = Peer_Closed
+         and then not Is_Connected (Client)
+         and then Peer_Close_Is_Application (Client)
+         and then Peer_Close_Error (Client) = 11
+         and then Client_Output.Count = 0);
    end;
 
    Flyology.IO.Sockets.Close_Socket (Client_Socket);

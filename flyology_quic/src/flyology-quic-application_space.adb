@@ -886,6 +886,14 @@ package body Flyology.QUIC.Application_Space is
                return;
             end if;
             Result.Handshake_Done := True;
+         elsif Frame.Kind = Application_Frame_Policy.Transport_Close then
+            Result.Peer_Closed := True;
+            Result.Application_Close := False;
+            Result.Close_Error := Frame.Base.Close_Error_Code;
+         elsif Frame.Kind = Application_Frame_Policy.Application_Close then
+            Result.Peer_Closed := True;
+            Result.Application_Close := True;
+            Result.Close_Error := Frame.Application_Error;
          elsif Frame.Kind = Application_Frame_Policy.Stream then
             Receive_Flow_Control_Policy.Reserve_Stream
               (Candidate_Receive, Frame.Stream_ID,

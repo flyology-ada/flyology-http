@@ -90,6 +90,7 @@ package Flyology.QUIC.Connections is
    --  @enum Server_Initial The server is awaiting a client Initial
    --  @enum Server_Handshake The server is awaiting the client Finished
    --  @enum Connected Application traffic keys are active
+   --  @enum Peer_Closed The peer sent a valid CONNECTION_CLOSE frame
    --  @enum Failed A terminal protocol or TLS error occurred
    type Connection_State is
      (Uninitialized,
@@ -98,6 +99,7 @@ package Flyology.QUIC.Connections is
       Server_Initial,
       Server_Handshake,
       Connected,
+      Peer_Closed,
       Failed);
 
    --  Owning, noncopyable QUIC connection state.
@@ -119,6 +121,18 @@ package Flyology.QUIC.Connections is
    --  @param Item Connection to inspect
    --  @return True after role-specific handshake confirmation
    function Handshake_Confirmed (Item : Connection) return Boolean;
+
+   --  Report whether the peer used an application CONNECTION_CLOSE frame.
+   --  @param Item Peer-closed connection
+   --  @return True for application close and False for transport close
+   function Peer_Close_Is_Application (Item : Connection) return Boolean
+   with Pre => State (Item) = Peer_Closed;
+
+   --  Return the error code carried by the peer CONNECTION_CLOSE frame.
+   --  @param Item Peer-closed connection
+   --  @return Application or transport error code selected by the peer
+   function Peer_Close_Error (Item : Connection) return Stream_Offset
+   with Pre => State (Item) = Peer_Closed;
 
    --  Configure a client connection with pinned-certificate authentication.
    --  @param Item Fresh connection
@@ -225,6 +239,7 @@ package Flyology.QUIC.Connections is
    --  @enum Unsupported_Packet The packet form is not implemented
    --  @enum Packet_Error The packet failed parsing or authentication
    --  @enum TLS_Error The TLS handshake rejected its input
+   --  @enum Connection_Closed The peer sent a valid CONNECTION_CLOSE frame
    --  @enum Output_Capacity_Exceeded The bounded output flight is too large
    type Operation_Status is
      (Succeeded,
@@ -233,6 +248,7 @@ package Flyology.QUIC.Connections is
       Unsupported_Packet,
       Packet_Error,
       TLS_Error,
+      Connection_Closed,
       Output_Capacity_Exceeded);
 
    --  Build the client's first protected Initial flight.

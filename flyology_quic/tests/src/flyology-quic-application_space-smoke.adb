@@ -377,5 +377,39 @@ begin
       --  The valid leading byte is rolled back when HANDSHAKE_DONE is illegal.
       Check_Rejected
         ((16#0A#, 0, 1, 16#AA#, 16#1E#), Unexpected_Handshake_Done);
+
+      Application_Connection.Build_One_RTT
+        (Attack_Sender, (16#1C#, 10, 0, 0),
+         Attack_Packet, Attack_Built);
+      Process_Packet
+        (Attack_Server,
+         Attack_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Attack_Built.Packet_Length)),
+         Now => 500, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Attack_Received);
+      pragma Assert
+        (Attack_Received.Status = Processed
+         and then Attack_Received.Peer_Closed
+         and then not Attack_Received.Application_Close
+         and then Attack_Received.Close_Error = 10);
+
+      Application_Connection.Build_One_RTT
+        (Attack_Sender, (16#1D#, 11, 0),
+         Attack_Packet, Attack_Built);
+      Process_Packet
+        (Attack_Server,
+         Attack_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Attack_Built.Packet_Length)),
+         Now => 501, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Attack_Received);
+      pragma Assert
+        (Attack_Received.Status = Processed
+         and then Attack_Received.Peer_Closed
+         and then Attack_Received.Application_Close
+         and then Attack_Received.Close_Error = 11);
    end;
 end Flyology.QUIC.Application_Space.Smoke;

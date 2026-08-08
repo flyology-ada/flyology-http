@@ -30,6 +30,13 @@ package body Flyology.QUIC.Connection_Driver is
    function Handshake_Confirmed (Item : Connection) return Boolean is
      (Item.Is_Handshake_Confirmed);
 
+   function Peer_Close_Is_Application (Item : Connection) return Boolean is
+     (Item.Close_Is_Application);
+
+   function Peer_Close_Error
+     (Item : Connection) return Varint_Policy.Value_Type is
+     (Item.Close_Error);
+
    function Has_Recovery_Timeout (Item : Connection) return Boolean is
      (Item.Current = Connected
       and then Application_Space.Has_Recovery_Timeout (Item.Application));
@@ -687,7 +694,14 @@ package body Flyology.QUIC.Connection_Driver is
                   Result.Status := Packet_Error;
                elsif Application_Result.Status = Application_Space.Processed
                then
-                  if Application_Result.Handshake_Done then
+                  if Application_Result.Peer_Closed then
+                     Item.Close_Is_Application :=
+                       Application_Result.Application_Close;
+                     Item.Close_Error := Application_Result.Close_Error;
+                     Item.Current := Peer_Closed;
+                     Result.Status := Connection_Closed;
+                     return;
+                  elsif Application_Result.Handshake_Done then
                      Item.Is_Handshake_Confirmed := True;
                   end if;
                   if Application_Result.ACK_Eliciting then
