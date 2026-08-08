@@ -113,6 +113,13 @@ package Flyology.QUIC.Connections is
    --  @return True when 1-RTT traffic can be exchanged
    function Is_Connected (Item : Connection) return Boolean;
 
+   --  Report whether the TLS handshake has QUIC-level confirmation.
+   --  Servers confirm after accepting client Finished; clients confirm only
+   --  after receiving HANDSHAKE_DONE.
+   --  @param Item Connection to inspect
+   --  @return True after role-specific handshake confirmation
+   function Handshake_Confirmed (Item : Connection) return Boolean;
+
    --  Configure a client connection with pinned-certificate authentication.
    --  @param Item Fresh connection
    --  @param ALPN Application protocol identifier, such as h3

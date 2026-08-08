@@ -20,6 +20,7 @@ package body Flyology.QUIC.Application_Space is
    use type Sent_Packet_Policy.Event_Kind;
    use type Sent_Packet_Policy.Record_Status;
    use type Stream_Frame_Policy.Encode_Status;
+   use type Stream_ID_Policy.Endpoint_Role;
    use type Stream_ID_Policy.Stream_Count;
    use type Stream_ID_Policy.Stream_Direction;
    use type Stream_ID_Policy.Open_Status;
@@ -350,6 +351,67 @@ package body Flyology.QUIC.Application_Space is
          else Internal_State_Error);
    end Build_ACK_Packet;
 
+   procedure Build_Handshake_Done_Packet
+     (Item   : in out State;
+      Now    : Timestamp;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result)
+   is
+      Plaintext : constant Ada.Streams.Stream_Element_Array :=
+        (1 => 16#1E#, 2 .. 3 => 0);
+      Built          : Application_Connection.Build_Result;
+      Record_Status  : Sent_Packet_Policy.Record_Status;
+      Account_Status : Recovery_Policy.Send_Status;
+      Sent_Packet    : Sent_Packet_Policy.Sent_Packet;
+   begin
+      Packet := (others => 0);
+      Result := (others => <>);
+      if Sent_Packet_Policy.Retained (Item.Sent) =
+        Sent_Packet_Policy.Max_Sent_Packets
+      then
+         Result.Status := Recovery_Capacity_Exceeded;
+         return;
+      elsif not Recovery_Policy.Can_Send
+        (Item.Recovery,
+         Sent_Packet_Policy.Packet_Byte_Count (Max_Datagram_Length))
+      then
+         Result.Status := Congestion_Blocked;
+         return;
+      end if;
+
+      Application_Connection.Build_One_RTT
+        (Item.Packets, Plaintext, Packet, Built);
+      Result.Number := Built.Number;
+      if Built.Status /= Application_Connection.Built then
+         Result.Status := Send_Status_For (Built.Status);
+         return;
+      elsif Built.Packet_Length > Max_Datagram_Length then
+         Result.Status := Packet_Too_Large;
+         return;
+      end if;
+
+      Result.Packet_Length := Built.Packet_Length;
+      Sent_Packet :=
+        (Number        => Built.Number,
+         Sent_At       => Now,
+         Bytes         => Sent_Packet_Policy.Packet_Byte_Count
+           (Built.Packet_Length),
+         ACK_Eliciting => True,
+         In_Flight     => True);
+      Sent_Packet_Policy.Record_Sent
+        (Item.Sent, Sent_Packet, Record_Status);
+      if Record_Status /= Sent_Packet_Policy.Recorded then
+         Result.Status := Internal_State_Error;
+         return;
+      end if;
+      Recovery_Policy.On_Packet_Sent
+        (Item.Recovery, Sent_Packet, Permit_Probe => False,
+         Status => Account_Status);
+      Result.Status :=
+        (if Account_Status = Recovery_Policy.Accounted
+         then Sent else Internal_State_Error);
+   end Build_Handshake_Done_Packet;
+
    function Decoded_ACK_Delay
      (Wire_Value : Varint_Policy.Value_Type;
       Exponent   : ACK_Delay_Exponent) return Recovery_Policy.Duration
@@ -458,7 +520,15 @@ package body Flyology.QUIC.Application_Space is
          then
             Result.ACK_Eliciting := True;
          end if;
-         if Frame.Kind = Application_Frame_Policy.Max_Data then
+         if Frame.Kind = Application_Frame_Policy.Handshake_Done then
+            if Stream_ID_Policy.Local_Role (Item.Allocator) =
+              Stream_ID_Policy.Server
+            then
+               Result.Status := Unexpected_Handshake_Done;
+               return;
+            end if;
+            Result.Handshake_Done := True;
+         elsif Frame.Kind = Application_Frame_Policy.Max_Data then
             Flow_Control_Policy.Raise_Connection_Limit
               (Item.Flow, Frame.Maximum);
          elsif Frame.Kind = Application_Frame_Policy.Max_Stream_Data then

@@ -45,6 +45,7 @@ private package Flyology.QUIC.Connection_Driver is
 
    function State (Item : Connection) return Connection_State;
    function Is_Connected (Item : Connection) return Boolean;
+   function Handshake_Confirmed (Item : Connection) return Boolean;
 
    procedure Initialize_Client
      (Item                    : in out Connection;
@@ -190,6 +191,7 @@ private
       Application           : Application_Space.State;
       Handshake_Initialized : Boolean := False;
       Application_Initialized : Boolean := False;
+      Is_Handshake_Confirmed : Boolean := False;
       Is_Client             : Boolean := True;
       Peer_ACK_Exponent     : Application_Space.ACK_Delay_Exponent := 3;
       Peer_Max_ACK_Delay    : Recovery_Policy.Duration := 25_000;

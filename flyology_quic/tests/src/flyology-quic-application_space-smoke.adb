@@ -151,13 +151,38 @@ begin
      (Sent_Data.Status = Stream_Flow_Blocked
       and then Committed_Data (Client) = 2);
 
+   Build_Handshake_Done_Packet
+     (Server, Now => 203, Packet => Packet, Result => Sent_Data);
+   pragma Assert (Sent_Data.Status = Sent);
+   Process_Packet
+     (Client,
+      Packet
+        (1 .. Ada.Streams.Stream_Element_Offset (Sent_Data.Packet_Length)),
+      Now => 204, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
+      Handshake_Confirmed => False, Result => Received);
+   pragma Assert
+     (Received.Status = Processed
+      and then Received.ACK_Eliciting
+      and then Received.Handshake_Done);
+
+   Build_Handshake_Done_Packet
+     (Client, Now => 205, Packet => Packet, Result => Sent_Data);
+   pragma Assert (Sent_Data.Status = Sent);
+   Process_Packet
+     (Server,
+      Packet
+        (1 .. Ada.Streams.Stream_Element_Offset (Sent_Data.Packet_Length)),
+      Now => 206, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
+      Handshake_Confirmed => True, Result => Received);
+   pragma Assert (Received.Status = Unexpected_Handshake_Done);
+
    Application_Connection.Build_One_RTT
      (Server.Packets, Control, Packet, Built);
    pragma Assert (Built.Status = Application_Connection.Built);
    Process_Packet
      (Client,
       Packet (1 .. Ada.Streams.Stream_Element_Offset (Built.Packet_Length)),
-      Now => 203, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
+      Now => 207, ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
       Handshake_Confirmed => True, Result => Received);
    pragma Assert (Received.Status = Processed);
 
@@ -166,7 +191,7 @@ begin
      (Opened = Stream_ID_Policy.Opened and then Opened_ID = 4);
    Build_Stream_Packet
      (Client, Stream_ID => 0, Offset => 2, Fin => True,
-      Data => (1 => 16#21#), Now => 204, Packet => Packet,
+      Data => (1 => 16#21#), Now => 208, Packet => Packet,
       Result => Sent_Data);
    pragma Assert
      (Sent_Data.Status = Sent and then Committed_Data (Client) = 3);

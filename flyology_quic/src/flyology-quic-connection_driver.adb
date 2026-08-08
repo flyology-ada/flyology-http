@@ -27,6 +27,9 @@ package body Flyology.QUIC.Connection_Driver is
    function Is_Connected (Item : Connection) return Boolean is
      (Item.Current = Connected);
 
+   function Handshake_Confirmed (Item : Connection) return Boolean is
+     (Item.Is_Handshake_Confirmed);
+
    function Has_Stream
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
    is (Application_Space.Has_Stream (Item.Application, Stream_ID));
@@ -293,6 +296,7 @@ package body Flyology.QUIC.Connection_Driver is
         (Item.Initial, Initial_Connection.Client, Original_Destination_ID,
          Destination, Source);
       Item.Is_Client := True;
+      Item.Is_Handshake_Confirmed := False;
       Item.Local_ID := Source;
       Item.Peer_ID := Destination;
       Item.Current := Client_Initial;
@@ -314,6 +318,7 @@ package body Flyology.QUIC.Connection_Driver is
         (Item.Initial, Initial_Connection.Server, Original_Destination_ID,
          Destination, Source);
       Item.Is_Client := False;
+      Item.Is_Handshake_Confirmed := False;
       Item.Local_ID := Source;
       Item.Peer_ID := Destination;
       Item.Current := Server_Initial;
@@ -482,7 +487,8 @@ package body Flyology.QUIC.Connection_Driver is
      (Item   : in out Connection;
       Packet : Ada.Streams.Stream_Element_Array;
       Output : in out Datagram_Batch;
-      Result : in out Operation_Result)
+      Result : in out Operation_Result;
+      Now    : Application_Space.Timestamp)
    is
       Processed : Handshake_Space.Process_Result;
       Length : Natural;
@@ -553,6 +559,9 @@ package body Flyology.QUIC.Connection_Driver is
             Finished : Ada.Streams.Stream_Element_Array
               (1 .. Ada.Streams.Stream_Element_Offset (Length));
             TLS_Result : TLS_Session.Operation_Result;
+            Packet_Out : Ada.Streams.Stream_Element_Array
+              (1 .. Max_Datagram_Length);
+            Built : Application_Space.Send_Result;
          begin
             Copy_Handshake (Item.Handshake, Length, Finished);
             TLS_Session.Accept_Client_Finished
@@ -564,6 +573,18 @@ package body Flyology.QUIC.Connection_Driver is
                return;
             end if;
             Initialize_Application (Item);
+            Application_Space.Build_Handshake_Done_Packet
+              (Item.Application, Now, Packet_Out, Built);
+            if Built.Status /= Application_Space.Sent then
+               Item.Current := Failed;
+               Result.Status := Packet_Error;
+               return;
+            elsif not Append (Output, Packet_Out, Built.Packet_Length) then
+               Item.Current := Failed;
+               Result.Status := Output_Capacity_Exceeded;
+               return;
+            end if;
+            Item.Is_Handshake_Confirmed := True;
             Item.Current := Connected;
             Result.Status := Succeeded;
          end;
@@ -620,7 +641,7 @@ package body Flyology.QUIC.Connection_Driver is
                        + Ada.Streams.Stream_Element_Offset (Cursor)
                      .. Packet'Last),
                   Now, Item.Peer_ACK_Exponent, Item.Peer_Max_ACK_Delay,
-                  Handshake_Confirmed => True,
+                  Handshake_Confirmed => Item.Is_Handshake_Confirmed,
                   Result => Application_Result);
                if Application_Result.Status not in
                  Application_Space.Processed | Application_Space.Duplicate
@@ -628,26 +649,32 @@ package body Flyology.QUIC.Connection_Driver is
                then
                   Result.Status := Packet_Error;
                elsif Application_Result.Status = Application_Space.Processed
-                 and then Application_Result.ACK_Eliciting
                then
-                  declare
-                     ACK_Packet : Ada.Streams.Stream_Element_Array
-                       (1 .. Max_Datagram_Length);
-                     ACK_Result : Application_Space.Send_Result;
-                  begin
-                     Application_Space.Build_ACK_Packet
-                       (Item.Application, ACK_Delay => 0, Now => Now,
-                        Packet => ACK_Packet, Result => ACK_Result);
-                     if ACK_Result.Status /= Application_Space.Sent then
-                        Result.Status := Packet_Error;
-                     elsif not Append
-                       (Output, ACK_Packet, ACK_Result.Packet_Length)
-                     then
-                        Result.Status := Output_Capacity_Exceeded;
-                     else
-                        Result.Status := Succeeded;
-                     end if;
-                  end;
+                  if Application_Result.Handshake_Done then
+                     Item.Is_Handshake_Confirmed := True;
+                  end if;
+                  if Application_Result.ACK_Eliciting then
+                     declare
+                        ACK_Packet : Ada.Streams.Stream_Element_Array
+                          (1 .. Max_Datagram_Length);
+                        ACK_Result : Application_Space.Send_Result;
+                     begin
+                        Application_Space.Build_ACK_Packet
+                          (Item.Application, ACK_Delay => 0, Now => Now,
+                           Packet => ACK_Packet, Result => ACK_Result);
+                        if ACK_Result.Status /= Application_Space.Sent then
+                           Result.Status := Packet_Error;
+                        elsif not Append
+                          (Output, ACK_Packet, ACK_Result.Packet_Length)
+                        then
+                           Result.Status := Output_Capacity_Exceeded;
+                        else
+                           Result.Status := Succeeded;
+                        end if;
+                     end;
+                  else
+                     Result.Status := Succeeded;
+                  end if;
                else
                   Result.Status := Succeeded;
                end if;
@@ -701,7 +728,7 @@ package body Flyology.QUIC.Connection_Driver is
                           .. Remaining'First
                                + Ada.Streams.Stream_Element_Offset
                                    (Envelope.Consumed - 1)),
-                     Output, Result);
+                     Output, Result, Now);
                   if Result.Status not in Succeeded | Waiting_For_More then
                      return;
                   end if;

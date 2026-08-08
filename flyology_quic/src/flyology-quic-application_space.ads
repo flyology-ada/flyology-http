@@ -103,6 +103,15 @@ private package Flyology.QUIC.Application_Space is
      Pre => Is_Initialized (Item)
        and then Packet'Length >= Max_Datagram_Length;
 
+   procedure Build_Handshake_Done_Packet
+     (Item   : in out State;
+      Now    : Timestamp;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result)
+   with
+     Pre => Is_Initialized (Item)
+       and then Packet'Length >= Max_Datagram_Length;
+
    subtype ACK_Delay_Exponent is Natural range 0 .. 20;
 
    type Process_Status is
@@ -119,6 +128,7 @@ private package Flyology.QUIC.Application_Space is
       Frame_Value_Too_Large,
       Invalid_ACK_Range,
       Invalid_Connection_ID,
+      Unexpected_Handshake_Done,
       ACK_Range_Capacity_Exceeded,
       Acknowledges_Unsent_Packet,
       Invalid_Stream_Limit,
@@ -135,6 +145,7 @@ private package Flyology.QUIC.Application_Space is
       Frame_Count     : Natural := 0;
       Resolved_Count  : Natural := 0;
       ACK_Eliciting   : Boolean := False;
+      Handshake_Done  : Boolean := False;
    end record;
 
    procedure Process_Packet

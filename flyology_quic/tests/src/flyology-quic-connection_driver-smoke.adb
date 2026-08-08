@@ -201,7 +201,8 @@ begin
       end if;
    end loop;
    pragma Assert
-     (Is_Connected (Client) and then Reply.Count = 1
+     (Is_Connected (Client) and then not Handshake_Confirmed (Client)
+      and then Reply.Count = 1
       and then Client_Result.Status = Succeeded);
 
    Connection_IO.Send (Client_Socket, Reply, Timeout => 1.0);
@@ -209,7 +210,22 @@ begin
      (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);
    pragma Assert
      (Server_Result.Status = Succeeded and then Is_Connected (Server)
-      and then Server_Output.Count = 0);
+      and then Handshake_Confirmed (Server)
+      and then Server_Output.Count = 1);
+
+   Connection_IO.Send (Server_Socket, Server_Output, Timeout => 1.0);
+   Connection_IO.Receive
+     (Client_Socket, Client, Client_Output, Client_Result,
+      Timeout => 1.0);
+   pragma Assert
+     (Client_Result.Status = Succeeded and then Handshake_Confirmed (Client)
+      and then Client_Output.Count = 1);
+
+   Connection_IO.Send (Client_Socket, Client_Output, Timeout => 1.0);
+   Connection_IO.Receive
+     (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);
+   pragma Assert
+     (Server_Result.Status = Succeeded and then Server_Output.Count = 0);
 
    Connection_IO.Send (Client_Socket, Reply, Timeout => 1.0);
    Connection_IO.Receive
@@ -321,6 +337,7 @@ begin
          Finish, Client_Status);
       pragma Assert
         (Connections.Is_Connected (Public_Client)
+         and then not Connections.Handshake_Confirmed (Public_Client)
          and then Finish.Count = 1);
       Connections.Process_Datagram
         (Public_Server,
@@ -328,7 +345,29 @@ begin
            (1 .. Ada.Streams.Stream_Element_Offset
                    (Finish.Items (1).Length)),
          Server_Flight, Server_Status);
-      pragma Assert (Connections.Is_Connected (Public_Server));
+      pragma Assert
+        (Connections.Is_Connected (Public_Server)
+         and then Connections.Handshake_Confirmed (Public_Server)
+         and then Server_Flight.Count = 1);
+      Connections.Process_Datagram
+        (Public_Client,
+         Server_Flight.Items (1).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Server_Flight.Items (1).Length)),
+         Client_Flight, Client_Status);
+      pragma Assert
+        (Client_Status = Connections.Succeeded
+         and then Connections.Handshake_Confirmed (Public_Client)
+         and then Client_Flight.Count = 1);
+      Connections.Process_Datagram
+        (Public_Server,
+         Client_Flight.Items (1).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Client_Flight.Items (1).Length)),
+         Server_Flight, Server_Status);
+      pragma Assert
+        (Server_Status = Connections.Succeeded
+         and then Server_Flight.Count = 0);
 
       Connections.Open_Stream
         (Public_Client, Connections.Bidirectional, Public_Stream, Opened);

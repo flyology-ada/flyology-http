@@ -136,6 +136,10 @@ package body Flyology.QUIC.Connections is
      (Item.Backend /= System.Null_Address
       and then Connection_Driver.Is_Connected (Impl (Item).Driver));
 
+   function Handshake_Confirmed (Item : Connection) return Boolean is
+     (Item.Backend /= System.Null_Address
+      and then Connection_Driver.Handshake_Confirmed (Impl (Item).Driver));
+
    procedure Initialize_Client
      (Item                    : in out Connection;
       ALPN                    : Ada.Streams.Stream_Element_Array;
