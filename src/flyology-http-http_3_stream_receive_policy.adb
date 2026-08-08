@@ -322,7 +322,10 @@ is
 
       if Stream.Stream_Type = Request_Stream then
          Request := HTTP_3_Message_Policy.On_Request_Frame
-           (Stream.Request_State, Frame.Frame_Type, Header);
+           (Stream.Request_State, Frame.Frame_Type, Header,
+            Validation.Has_Content_Length,
+            Validation.Content_Length,
+            Data_Length => Varint_Policy.Value_Type (Frame.Payload_Length));
          if Request.Status = HTTP_3_Message_Policy.Accepted then
             Stream.Request_State := Request.State;
          end if;

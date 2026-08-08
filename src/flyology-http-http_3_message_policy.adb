@@ -18,7 +18,11 @@ is
    function On_Request_Frame
      (State      : Request_State;
       Frame_Type : Varint_Policy.Value_Type;
-      Headers    : Header_Kind := Not_Headers) return Request_Update
+      Headers    : Header_Kind := Not_Headers;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : Varint_Policy.Value_Type := 0;
+      Data_Length        : Varint_Policy.Value_Type := 0)
+      return Request_Update
    is
       Result : Request_Update := (Status => Accepted, State => State);
    begin
@@ -27,6 +31,8 @@ is
             when Expecting_Request =>
                if Headers = Request_Headers then
                   Result.State.Phase := Request_Open;
+                  Result.State.Has_Content_Length := Has_Content_Length;
+                  Result.State.Content_Length := Content_Length;
                else
                   Result.Status := Message_Error;
                end if;
@@ -44,6 +50,17 @@ is
       elsif Frame_Type = HTTP_3_Frame_Policy.Data_Frame then
          if State.Phase /= Request_Open then
             Result.Status := Frame_Unexpected;
+         elsif Data_Length >
+           Varint_Policy.Value_Type'Last - State.Content_Received
+         then
+            Result.Status := Message_Error;
+         elsif State.Has_Content_Length
+           and then State.Content_Received + Data_Length > State.Content_Length
+         then
+            Result.Status := Message_Error;
+         else
+            Result.State.Content_Received :=
+              State.Content_Received + Data_Length;
          end if;
       elsif Is_Known_Frame (Frame_Type) then
          Result.Status := Frame_Unexpected;
@@ -93,6 +110,9 @@ is
 
    function Finish_Request (State : Request_State) return Finish_Status is
      (if State.Phase = Expecting_Request
+        or else
+          (State.Has_Content_Length
+           and then State.Content_Received /= State.Content_Length)
       then Message_Incomplete
       else Message_Complete);
 

@@ -513,7 +513,9 @@ package body Flyology.HTTP.HTTP_3_Connection is
          end if;
          Request := HTTP_3_Message_Policy.On_Request_Frame
            (Item.Sending (Slot).Request,
-            HTTP_3_Frame_Policy.Headers_Frame, Header);
+            HTTP_3_Frame_Policy.Headers_Frame, Header,
+            Validation.Has_Content_Length,
+            Validation.Content_Length);
          if Validation.Status /= HTTP_3_Header_Policy.Valid then
             Status := Header_Error;
             return;
@@ -619,7 +621,8 @@ package body Flyology.HTTP.HTTP_3_Connection is
 
       if Item.Sending (Slot).Kind = Request_Message then
          Request := HTTP_3_Message_Policy.On_Request_Frame
-           (Item.Sending (Slot).Request, HTTP_3_Frame_Policy.Data_Frame);
+           (Item.Sending (Slot).Request, HTTP_3_Frame_Policy.Data_Frame,
+            Data_Length => QUIC.Stream_Offset (Data'Length));
          if Request.Status /= HTTP_3_Message_Policy.Accepted
            or else
              (Fin and then HTTP_3_Message_Policy.Finish_Request

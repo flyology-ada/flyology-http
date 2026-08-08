@@ -46,6 +46,29 @@ begin
      (On_Request_Frame (Request, HTTP_3_Frame_Policy.Settings_Frame).Status =
         Frame_Unexpected);
 
+   declare
+      Sized : Request_State;
+   begin
+      R_Update := On_Request_Frame
+        (Sized, HTTP_3_Frame_Policy.Headers_Frame, Request_Headers,
+         Has_Content_Length => True, Content_Length => 3);
+      Sized := R_Update.State;
+      R_Update := On_Request_Frame
+        (Sized, HTTP_3_Frame_Policy.Data_Frame, Data_Length => 2);
+      pragma Assert (R_Update.Status = Accepted);
+      Sized := R_Update.State;
+      pragma Assert (Finish_Request (Sized) = Message_Incomplete);
+      pragma Assert
+        (On_Request_Frame
+           (Sized, HTTP_3_Frame_Policy.Data_Frame, Data_Length => 2).Status =
+             Message_Error);
+      R_Update := On_Request_Frame
+        (Sized, HTTP_3_Frame_Policy.Data_Frame, Data_Length => 1);
+      pragma Assert
+        (R_Update.Status = Accepted
+         and then Finish_Request (R_Update.State) = Message_Complete);
+   end;
+
    S_Update :=
      On_Response_Frame
        (Response,

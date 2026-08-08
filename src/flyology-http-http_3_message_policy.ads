@@ -23,7 +23,10 @@ is
    type Request_Phase is (Expecting_Request, Request_Open, Request_Trailers);
 
    type Request_State is record
-      Phase : Request_Phase := Expecting_Request;
+      Phase              : Request_Phase := Expecting_Request;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : Varint_Policy.Value_Type := 0;
+      Content_Received   : Varint_Policy.Value_Type := 0;
    end record;
 
    type Request_Update is record
@@ -34,7 +37,11 @@ is
    function On_Request_Frame
      (State      : Request_State;
       Frame_Type : Varint_Policy.Value_Type;
-      Headers    : Header_Kind := Not_Headers) return Request_Update
+      Headers    : Header_Kind := Not_Headers;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : Varint_Policy.Value_Type := 0;
+      Data_Length        : Varint_Policy.Value_Type := 0)
+      return Request_Update
    with Global => null;
 
    type Response_Phase is
