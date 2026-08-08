@@ -412,7 +412,11 @@ is
       Control_Status : HTTP_3_Control_Policy.Operation_Status;
    begin
       case Stream.Stream_Type is
-         when Awaiting_Type | Awaiting_Push_ID =>
+         when Awaiting_Type =>
+            --  RFC 9114 permits a unidirectional stream to close or reset
+            --  before its stream-type prefix arrives.
+            Status := Consumed;
+         when Awaiting_Push_ID =>
             Status := Stream_Creation_Error;
          when Control_Stream =>
             HTTP_3_Control_Policy.Peer_Stream_Closed

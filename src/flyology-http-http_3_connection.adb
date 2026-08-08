@@ -269,10 +269,19 @@ package body Flyology.HTTP.HTTP_3_Connection is
             Status := Status_For (Finish);
             if Status /= Succeeded then
                return;
+            elsif HTTP_3_Stream_Receive_Policy.Kind
+              (Item.Streams (Slot).State) not in
+                HTTP_3_Stream_Receive_Policy.Request_Stream |
+                HTTP_3_Stream_Receive_Policy.Response_Stream
+            then
+               --  Completion of non-message streams is transport bookkeeping,
+               --  not an HTTP request or response event.
+               null;
+            else
+               Output.Kind := Stream_Ended;
+               Output.Stream := ID;
+               return;
             end if;
-            Output.Kind := Stream_Ended;
-            Output.Stream := ID;
-            return;
          end if;
       end loop;
       Status := No_Event;

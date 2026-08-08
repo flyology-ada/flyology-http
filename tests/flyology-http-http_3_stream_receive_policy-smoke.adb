@@ -9,6 +9,16 @@ procedure Flyology.HTTP.HTTP_3_Stream_Receive_Policy.Smoke is
    Result     : Receive_Result;
    Status     : Receive_Status;
 begin
+   declare
+      Untyped : Stream_State;
+   begin
+      Open (Untyped, 7, HTTP_3_Stream_Policy.Client, Status);
+      pragma Assert
+        (Status = Consumed and then Kind (Untyped) = Awaiting_Type);
+      Finish (Connection, Untyped, Status);
+      pragma Assert (Status = Consumed);
+   end;
+
    Open (Stream, 3, HTTP_3_Stream_Policy.Client, Status);
    pragma Assert
      (Status = Consumed and then Kind (Stream) = Awaiting_Type);

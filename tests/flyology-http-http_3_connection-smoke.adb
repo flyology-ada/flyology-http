@@ -2,6 +2,8 @@ with Flyology.QUIC.Test_Connections;
 
 procedure Flyology.HTTP.HTTP_3_Connection.Smoke is
    use type Ada.Streams.Stream_Element;
+   use type QUIC.Open_Status;
+   use type QUIC.Send_Status;
    use type QUIC.Stream_ID;
 
    Client_Transport, Server_Transport : QUIC.Connection;
@@ -42,6 +44,27 @@ begin
       and then Client_Event.Kind = Settings_Received
       and then Client_Event.Stream = 3
       and then Has_Peer_Settings (Client));
+
+   declare
+      Empty_Stream : QUIC.Stream_ID;
+      Empty_Packet : QUIC.Datagram;
+      Opened       : QUIC.Open_Status;
+      Sent         : QUIC.Send_Status;
+   begin
+      QUIC.Open_Stream
+        (Server_Transport, QUIC.Unidirectional, Empty_Stream, Opened);
+      pragma Assert (Opened = QUIC.Opened and then Empty_Stream = 7);
+      QUIC.Build_Stream_Datagram
+        (Server_Transport, Empty_Stream, 0, Fin => True,
+         Data => Ada.Streams.Stream_Element_Array'(1 .. 0 => 0),
+         Now => 1_500, Packet => Empty_Packet, Status => Sent);
+      pragma Assert (Sent = QUIC.Sent);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Empty_Packet, Client_Transport);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = No_Event and then Client_Event.Kind = No_Event);
+   end;
 
    declare
       Request_Headers  : QPACK_Field_Section_Policy.Header_Block;
