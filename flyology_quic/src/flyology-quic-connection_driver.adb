@@ -1,5 +1,7 @@
 with Flyology.QUIC.Crypto_Reassembly_Policy;
+with Flyology.QUIC.Handshake_Packet_Policy;
 with Flyology.QUIC.Initial_Connection;
+with Flyology.QUIC.Initial_Packet_Policy;
 with Flyology.QUIC.Stream_ID_Policy;
 with Flyology.QUIC.TLS_Key_Schedule;
 with Flyology.QUIC.Transport_Parameter_Policy;
@@ -12,8 +14,10 @@ package body Flyology.QUIC.Connection_Driver is
    use type Application_Space.Send_Status;
    use type Handshake_Space.Build_Status;
    use type Handshake_Space.Process_Status;
+   use type Handshake_Packet_Policy.Parse_Status;
    use type Initial_Space.Build_Status;
    use type Initial_Space.Process_Status;
+   use type Initial_Packet_Policy.Parse_Status;
    use type Recovery_Policy.Duration;
    use type TLS_Session.Operation_Status;
 
@@ -564,30 +568,100 @@ package body Flyology.QUIC.Connection_Driver is
       Now    : Application_Space.Timestamp := 0)
    is
       Application_Result : Application_Space.Process_Result;
+      Cursor              : Natural := 0;
+      Total               : constant Natural := Natural (Packet'Length);
    begin
       Clear (Output);
       Result := (others => <>);
       if Packet'Length = 0 then
          Result.Status := Unsupported_Packet;
-      elsif (Packet (Packet'First) and 16#80#) = 0 then
-         if Item.Current /= Connected then
-            Result.Status := Unsupported_Packet;
-            return;
-         end if;
-         Application_Space.Process_Packet
-           (Item.Application, Packet, Now, Item.Peer_ACK_Exponent,
-            Item.Peer_Max_ACK_Delay, Handshake_Confirmed => True,
-            Result => Application_Result);
-         Result.Status :=
-           (if Application_Result.Status in Application_Space.Processed
-              | Application_Space.Duplicate | Application_Space.Too_Old
-            then Succeeded else Packet_Error);
-      elsif (Packet (Packet'First) and 16#30#) = 16#00# then
-         Process_Initial_Packet (Item, Packet, Output, Result);
-      elsif (Packet (Packet'First) and 16#30#) = 16#20# then
-         Process_Handshake_Packet (Item, Packet, Output, Result);
-      else
-         Result.Status := Unsupported_Packet;
+         return;
       end if;
+
+      while Cursor < Total loop
+         declare
+            First : constant Ada.Streams.Stream_Element :=
+              Packet
+                (Packet'First + Ada.Streams.Stream_Element_Offset (Cursor));
+         begin
+            if (First and 16#80#) = 0 then
+               if Item.Current /= Connected then
+                  Result.Status := Unsupported_Packet;
+                  return;
+               end if;
+               Application_Space.Process_Packet
+                 (Item.Application,
+                  Packet
+                    (Packet'First
+                       + Ada.Streams.Stream_Element_Offset (Cursor)
+                     .. Packet'Last),
+                  Now, Item.Peer_ACK_Exponent, Item.Peer_Max_ACK_Delay,
+                  Handshake_Confirmed => True,
+                  Result => Application_Result);
+               Result.Status :=
+                 (if Application_Result.Status in Application_Space.Processed
+                    | Application_Space.Duplicate | Application_Space.Too_Old
+                  then Succeeded else Packet_Error);
+               return;
+            elsif (First and 16#30#) = 16#00# then
+               declare
+                  Remaining : constant Ada.Streams.Stream_Element_Array :=
+                    Packet
+                      (Packet'First
+                         + Ada.Streams.Stream_Element_Offset (Cursor)
+                       .. Packet'Last);
+                  Envelope : constant Initial_Packet_Policy.Parse_Result :=
+                    Initial_Packet_Policy.Parse (Remaining);
+               begin
+                  if Envelope.Status /= Initial_Packet_Policy.Parsed then
+                     Result.Status := Packet_Error;
+                     return;
+                  end if;
+                  Process_Initial_Packet
+                    (Item,
+                     Remaining
+                       (Remaining'First
+                          .. Remaining'First
+                               + Ada.Streams.Stream_Element_Offset
+                                   (Envelope.Consumed - 1)),
+                     Output, Result);
+                  if Result.Status not in Succeeded | Waiting_For_More then
+                     return;
+                  end if;
+                  Cursor := Cursor + Envelope.Consumed;
+               end;
+            elsif (First and 16#30#) = 16#20# then
+               declare
+                  Remaining : constant Ada.Streams.Stream_Element_Array :=
+                    Packet
+                      (Packet'First
+                         + Ada.Streams.Stream_Element_Offset (Cursor)
+                       .. Packet'Last);
+                  Envelope : constant Handshake_Packet_Policy.Parse_Result :=
+                    Handshake_Packet_Policy.Parse (Remaining);
+               begin
+                  if Envelope.Status /= Handshake_Packet_Policy.Parsed then
+                     Result.Status := Packet_Error;
+                     return;
+                  end if;
+                  Process_Handshake_Packet
+                    (Item,
+                     Remaining
+                       (Remaining'First
+                          .. Remaining'First
+                               + Ada.Streams.Stream_Element_Offset
+                                   (Envelope.Consumed - 1)),
+                     Output, Result);
+                  if Result.Status not in Succeeded | Waiting_For_More then
+                     return;
+                  end if;
+                  Cursor := Cursor + Envelope.Consumed;
+               end;
+            else
+               Result.Status := Unsupported_Packet;
+               return;
+            end if;
+         end;
+      end loop;
    end Process_Datagram;
 end Flyology.QUIC.Connection_Driver;

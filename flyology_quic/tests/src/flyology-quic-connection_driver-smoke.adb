@@ -254,6 +254,7 @@ begin
    declare
       Public_Client, Public_Server : Connections.Connection;
       Client_Flight, Server_Flight, Finish : Connections.Datagram_Batch;
+      Coalesced : Connections.Datagram;
       Client_Status, Server_Status : Connections.Operation_Status;
       Public_Stream : Connections.Stream_ID;
       Opened        : Connections.Open_Status;
@@ -289,18 +290,26 @@ begin
         (Server_Status = Connections.Succeeded
          and then Server_Flight.Count >= 2);
 
-      Finish := (others => <>);
+      Coalesced := (others => <>);
       for Index in 1 .. Server_Flight.Count loop
-         Connections.Process_Datagram
-           (Public_Client,
-            Server_Flight.Items (Index).Data
-              (1 .. Ada.Streams.Stream_Element_Offset
-                      (Server_Flight.Items (Index).Length)),
-            Client_Flight, Client_Status);
-         if Client_Flight.Count > 0 then
-            Finish := Client_Flight;
-         end if;
+         pragma Assert
+           (Coalesced.Length + Server_Flight.Items (Index).Length <=
+              Connections.Max_Datagram_Length);
+         Coalesced.Data
+           (Ada.Streams.Stream_Element_Offset (Coalesced.Length + 1)
+              .. Ada.Streams.Stream_Element_Offset
+                   (Coalesced.Length + Server_Flight.Items (Index).Length)) :=
+             Server_Flight.Items (Index).Data
+               (1 .. Ada.Streams.Stream_Element_Offset
+                       (Server_Flight.Items (Index).Length));
+         Coalesced.Length :=
+           Coalesced.Length + Server_Flight.Items (Index).Length;
       end loop;
+      Connections.Process_Datagram
+        (Public_Client,
+         Coalesced.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Coalesced.Length)),
+         Finish, Client_Status);
       pragma Assert
         (Connections.Is_Connected (Public_Client)
          and then Finish.Count = 1);
