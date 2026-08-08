@@ -222,7 +222,7 @@ begin
       Stream_ID : Varint_Policy.Value_Type;
       Opened    : Application_Space.Open_Status;
       Sent      : Application_Space.Send_Status;
-      Stream_Packet, ACK_Packet : Datagram;
+      Stream_Packet : Datagram;
    begin
       Open_Stream
         (Client, Stream_ID_Policy.Bidirectional, Stream_ID, Opened);
@@ -239,17 +239,14 @@ begin
          Now => 150, Timeout => 1.0);
       pragma Assert
         (Server_Result.Status = Succeeded
+         and then Server_Output.Count = 1
          and then Stream_Count (Server) = 1
          and then Stream_At (Server, 1) = Stream_ID
          and then Has_Stream (Server, Stream_ID)
          and then Available_Length (Server, Stream_ID) = 2
          and then Stream_Element (Server, Stream_ID, 0) = 16#68#
          and then Stream_Element (Server, Stream_ID, 1) = 16#33#);
-      Build_ACK_Datagram
-        (Server, ACK_Delay => 0, Now => 160,
-         Packet => ACK_Packet, Status => Sent);
-      pragma Assert (Sent = Application_Space.Sent);
-      Connection_IO.Send (Server_Socket, ACK_Packet, Timeout => 1.0);
+      Connection_IO.Send (Server_Socket, Server_Output, Timeout => 1.0);
       Connection_IO.Receive
         (Client_Socket, Client, Client_Output, Client_Result,
          Now => 200, Timeout => 1.0);
@@ -347,11 +344,21 @@ begin
          Server_Flight, Server_Status, Now => 150);
       pragma Assert
         (Server_Status = Connections.Succeeded
+         and then Server_Flight.Count = 1
          and then Connections.Stream_Count (Public_Server) = 1
          and then Connections.Stream_At (Public_Server, 1) = Public_Stream
          and then Connections.Is_Complete (Public_Server, Public_Stream)
          and then Connections.Element (Public_Server, Public_Stream, 0) =
            16#68#);
+      Connections.Process_Datagram
+        (Public_Client,
+         Server_Flight.Items (1).Data
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Server_Flight.Items (1).Length)),
+         Client_Flight, Client_Status, Now => 200);
+      pragma Assert
+        (Client_Status = Connections.Succeeded
+         and then Client_Flight.Count = 0);
       Connections.Consume (Public_Server, Public_Stream, 2);
       pragma Assert
         (Connections.Available_Length (Public_Server, Public_Stream) = 0);

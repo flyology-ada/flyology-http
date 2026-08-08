@@ -238,7 +238,8 @@ package Flyology.QUIC.Connections is
       Status : out Operation_Status)
    with Pre => State (Item) = Client_Initial;
 
-   --  Process one UDP payload and return any immediate response flight.
+   --  Process one UDP payload and return any immediate response flight,
+   --  including an ACK for newly accepted ACK-eliciting application data.
    --  @param Item Initialized connection
    --  @param Packet Complete UDP payload
    --  @param Output Datagrams to transmit in response

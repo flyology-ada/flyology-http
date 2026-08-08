@@ -622,10 +622,35 @@ package body Flyology.QUIC.Connection_Driver is
                   Now, Item.Peer_ACK_Exponent, Item.Peer_Max_ACK_Delay,
                   Handshake_Confirmed => True,
                   Result => Application_Result);
-               Result.Status :=
-                 (if Application_Result.Status in Application_Space.Processed
-                    | Application_Space.Duplicate | Application_Space.Too_Old
-                  then Succeeded else Packet_Error);
+               if Application_Result.Status not in
+                 Application_Space.Processed | Application_Space.Duplicate
+                   | Application_Space.Too_Old
+               then
+                  Result.Status := Packet_Error;
+               elsif Application_Result.Status = Application_Space.Processed
+                 and then Application_Result.ACK_Eliciting
+               then
+                  declare
+                     ACK_Packet : Ada.Streams.Stream_Element_Array
+                       (1 .. Max_Datagram_Length);
+                     ACK_Result : Application_Space.Send_Result;
+                  begin
+                     Application_Space.Build_ACK_Packet
+                       (Item.Application, ACK_Delay => 0, Now => Now,
+                        Packet => ACK_Packet, Result => ACK_Result);
+                     if ACK_Result.Status /= Application_Space.Sent then
+                        Result.Status := Packet_Error;
+                     elsif not Append
+                       (Output, ACK_Packet, ACK_Result.Packet_Length)
+                     then
+                        Result.Status := Output_Capacity_Exceeded;
+                     else
+                        Result.Status := Succeeded;
+                     end if;
+                  end;
+               else
+                  Result.Status := Succeeded;
+               end if;
                return;
             elsif (First and 16#30#) = 16#00# then
                declare
