@@ -1,10 +1,12 @@
 with Ada.Streams;
+with Flyology.QUIC.ACK_Frame_Policy;
 with Flyology.QUIC.Connection_State_Policy;
 with Flyology.QUIC.Crypto_OpenSSL;
 with Flyology.QUIC.Long_Header_Policy;
 with Flyology.QUIC.One_RTT_Receiver;
 with Flyology.QUIC.One_RTT_Sender;
 with Flyology.QUIC.TLS_Key_Schedule;
+with Flyology.QUIC.Varint_Policy;
 
 --  Internal connection state for the QUIC application packet-number space.
 --
@@ -89,6 +91,12 @@ private package Flyology.QUIC.Application_Connection is
      Post =>
        (if Result.Status /= Processed then
            Plaintext = (Plaintext'Range => 0));
+
+   function Encode_ACK
+     (Item      : Connection;
+      ACK_Delay : Varint_Policy.Value_Type)
+      return ACK_Frame_Policy.Encode_Result
+   with Pre => Is_Initialized (Item);
 private
    type Connection is limited record
       Backend     : Crypto_OpenSSL.Provider;
