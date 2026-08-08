@@ -1,0 +1,107 @@
+with Ada.Streams;
+with Flyology.HTTP.HTTP_3;
+with Flyology.QUIC.Connections;
+with Flyology.QUIC.Test_Connections;
+
+procedure HTTP3_Public_Smoke is
+   package H3 renames Flyology.HTTP.HTTP_3;
+   package QUIC renames Flyology.QUIC.Connections;
+
+   use type Ada.Streams.Stream_Element;
+   use type H3.Event_Kind;
+   use type H3.Operation_Status;
+
+   Client_Transport, Server_Transport : QUIC.Connection;
+   Client, Server : H3.Session;
+   Client_Control, Server_Control : QUIC.Datagram;
+   Client_Event, Server_Event : H3.Event;
+   Client_Status, Server_Status : H3.Operation_Status;
+begin
+   Flyology.QUIC.Test_Connections.Connect
+     (Client_Transport, Server_Transport);
+   H3.Initialize (Client, H3.Client);
+   H3.Initialize (Server, H3.Server);
+
+   H3.Start
+     (Client, Client_Transport, Now => 1_000,
+      Packet => Client_Control, Status => Client_Status);
+   H3.Start
+     (Server, Server_Transport, Now => 1_000,
+      Packet => Server_Control, Status => Server_Status);
+   pragma Assert
+     (Client_Status = H3.Succeeded and then Server_Status = H3.Succeeded);
+
+   Flyology.QUIC.Test_Connections.Deliver
+     (Client_Control, Server_Transport);
+   Flyology.QUIC.Test_Connections.Deliver
+     (Server_Control, Client_Transport);
+   H3.Poll (Server, Server_Transport, Server_Event, Server_Status);
+   H3.Poll (Client, Client_Transport, Client_Event, Client_Status);
+   pragma Assert
+     (Server_Status = H3.Succeeded
+      and then Server_Event.Kind = H3.Settings_Received
+      and then H3.Has_Peer_Settings (Server));
+   pragma Assert
+     (Client_Status = H3.Succeeded
+      and then Client_Event.Kind = H3.Settings_Received
+      and then H3.Has_Peer_Settings (Client));
+
+   declare
+      Request_Headers  : H3.Header_Block;
+      Response_Headers : H3.Header_Block;
+      Request_Stream   : QUIC.Stream_ID;
+      Request_Packet, Response_Packet, Data_Packet : QUIC.Datagram;
+   begin
+      H3.Append (Request_Headers, H3.Make_Field (":method", "GET"));
+      H3.Append (Request_Headers, H3.Make_Field (":scheme", "https"));
+      H3.Append (Request_Headers, H3.Make_Field (":path", "/hello"));
+      H3.Append
+        (Request_Headers, H3.Make_Field (":authority", "example.com"));
+      H3.Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      H3.Send_Headers
+        (Client, Client_Transport, Request_Stream, Request_Headers,
+         Fin => True, Now => 2_000, Packet => Request_Packet,
+         Status => Client_Status);
+      pragma Assert (Client_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      H3.Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = H3.Succeeded
+         and then Server_Event.Kind = H3.Headers_Received
+         and then H3.Header_Count (Server_Event.Headers) = 4);
+
+      H3.Append (Response_Headers, H3.Make_Field (":status", "200"));
+      H3.Send_Headers
+        (Server, Server_Transport, Request_Stream, Response_Headers,
+         Fin => False, Now => 3_000, Packet => Response_Packet,
+         Status => Server_Status);
+      pragma Assert (Server_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Response_Packet, Client_Transport);
+      H3.Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = H3.Succeeded
+         and then Client_Event.Kind = H3.Headers_Received
+         and then H3.Field_Value
+           (H3.Field_At (Client_Event.Headers, 1)) = "200");
+
+      H3.Send_Data
+        (Server, Server_Transport, Request_Stream,
+         Ada.Streams.Stream_Element_Array'
+           (16#68#, 16#65#, 16#6C#, 16#6C#, 16#6F#),
+         Fin => True, Now => 4_000, Packet => Data_Packet,
+         Status => Server_Status);
+      pragma Assert (Server_Status = H3.Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Data_Packet, Client_Transport);
+      H3.Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = H3.Succeeded
+         and then Client_Event.Kind = H3.Data_Received
+         and then Client_Event.Data_Length = 5
+         and then Client_Event.Data (1) = 16#68#
+         and then Client_Event.Data (5) = 16#6F#);
+   end;
+end HTTP3_Public_Smoke;

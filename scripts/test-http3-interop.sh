@@ -20,7 +20,7 @@ fi
 
 cd "$http_root"
 "$alr" exec -- gprbuild -p -P tests/http_tests.gpr \
-  flyology-http-http_3_connection-interop_client.adb
+  http3_interop_client.adb
 
 mkdir -p "$http_root/build/oracle"
 oracle_log="$http_root/build/oracle/aioquic-h3.log"
@@ -51,5 +51,5 @@ if [ "$ready" != true ]; then
   exit 1
 fi
 
-"$http_root/tests/bin/flyology-http-http_3_connection-interop_client" \
+"$http_root/tests/bin/http3_interop_client" \
   "$oracle_port"

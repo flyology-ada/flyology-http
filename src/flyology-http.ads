@@ -89,6 +89,9 @@ package Flyology.HTTP is
    --  Negotiated HTTP/2 protocol.
    HTTP_2_Protocol : constant Protocol;
 
+   --  Negotiated HTTP/3 protocol.
+   HTTP_3_Protocol : constant Protocol;
+
    --  Return the conventional protocol spelling.
    --  @param Value Protocol to format
    --  @return Protocol name
@@ -111,5 +114,6 @@ private
    type Protocol is new Positive;
    HTTP_1_1_Protocol : constant Protocol := 1;
    HTTP_2_Protocol   : constant Protocol := 2;
+   HTTP_3_Protocol   : constant Protocol := 3;
 
 end Flyology.HTTP;

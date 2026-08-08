@@ -2,15 +2,20 @@ with Ada.Command_Line;
 with Ada.IO_Exceptions;
 with Ada.Streams;
 with Ada.Text_IO;
+with Flyology.HTTP.HTTP_3;
 with Flyology.IO.Sockets;
 with Flyology.QUIC.Connections.IO;
 with Flyology.QUIC.Test_Connections;
 
-procedure Flyology.HTTP.HTTP_3_Connection.Interop_Client is
+procedure HTTP3_Interop_Client is
+   package H3 renames Flyology.HTTP.HTTP_3;
+   package QUIC renames Flyology.QUIC.Connections;
    package Sockets renames Flyology.IO.Sockets;
    package QUIC_IO renames Flyology.QUIC.Connections.IO;
 
    use type Ada.Streams.Stream_Element;
+   use type H3.Event_Kind;
+   use type H3.Operation_Status;
    use type QUIC.Operation_Status;
 
    Port : constant Sockets.Port :=
@@ -19,8 +24,7 @@ procedure Flyology.HTTP.HTTP_3_Connection.Interop_Client is
 
    Socket    : Sockets.Socket_Type;
    Transport : QUIC.Connection;
-   Session   : Connection;
-   Settings  : HTTP_3_Settings_Policy.Settings;
+   Session   : H3.Session;
    Flight    : QUIC.Datagram_Batch;
    Status    : QUIC.Operation_Status;
 
@@ -65,75 +69,71 @@ begin
       raise Program_Error with "QUIC oracle handshake did not complete";
    end if;
 
-   Initialize (Session, Client, Settings);
+   H3.Initialize (Session, H3.Client);
    declare
-      Control : QUIC.Datagram;
-      H3_Status : Operation_Status;
+      Control   : QUIC.Datagram;
+      H3_Status : H3.Operation_Status;
    begin
-      Start
+      H3.Start
         (Session, Transport, Now => 1_000,
          Packet => Control, Status => H3_Status);
-      if H3_Status /= Succeeded then
+      if H3_Status /= H3.Succeeded then
          raise Program_Error with "HTTP/3 control stream did not start";
       end if;
       Send (Control);
    end;
 
    declare
-      Headers : QPACK_Field_Section_Policy.Header_Block;
-      Stream  : QUIC.Stream_ID;
-      Packet  : QUIC.Datagram;
-      H3_Status : Operation_Status;
+      Headers   : H3.Header_Block;
+      Stream    : QUIC.Stream_ID;
+      Packet    : QUIC.Datagram;
+      H3_Status : H3.Operation_Status;
    begin
-      Headers.Count := 4;
-      Headers.Fields (1) :=
-        QPACK_Field_Section_Policy.Make_Field (":method", "GET");
-      Headers.Fields (2) :=
-        QPACK_Field_Section_Policy.Make_Field (":scheme", "https");
-      Headers.Fields (3) :=
-        QPACK_Field_Section_Policy.Make_Field (":path", "/hello");
-      Headers.Fields (4) :=
-        QPACK_Field_Section_Policy.Make_Field
-          (":authority", "localhost:4433");
-      Open_Request (Session, Transport, Stream, H3_Status);
-      if H3_Status /= Succeeded then
+      H3.Append (Headers, H3.Make_Field (":method", "GET"));
+      H3.Append (Headers, H3.Make_Field (":scheme", "https"));
+      H3.Append (Headers, H3.Make_Field (":path", "/hello"));
+      H3.Append
+        (Headers, H3.Make_Field (":authority", "localhost:4433"));
+      H3.Open_Request (Session, Transport, Stream, H3_Status);
+      if H3_Status /= H3.Succeeded then
          raise Program_Error with "HTTP/3 request stream did not open";
       end if;
-      Build_Headers
+      H3.Send_Headers
         (Session, Transport, Stream, Headers, Fin => True, Now => 2_000,
          Packet => Packet, Status => H3_Status);
-      if H3_Status /= Succeeded then
+      if H3_Status /= H3.Succeeded then
          raise Program_Error with "HTTP/3 request HEADERS did not encode";
       end if;
       Send (Packet);
    end;
 
    declare
-      Item       : Event;
-      H3_Status  : Operation_Status;
+      Item       : H3.Event;
+      H3_Status  : H3.Operation_Status;
       Saw_Status : Boolean := False;
       Saw_Hello  : Boolean := False;
    begin
       for Attempt in 1 .. 16 loop
          Receive_One;
          loop
-            Poll (Session, Transport, Item, H3_Status);
-            exit when H3_Status = No_Event;
-            if H3_Status /= Succeeded then
+            H3.Poll (Session, Transport, Item, H3_Status);
+            exit when H3_Status = H3.No_Event;
+            if H3_Status /= H3.Succeeded then
                raise Program_Error with
                  "HTTP/3 oracle response failed: "
-                 & Operation_Status'Image (H3_Status);
-            elsif Item.Kind = Headers_Received then
-               for Index in 1 .. Item.Headers.Count loop
-                  if QPACK_Field_Section_Policy.Field_Name
-                       (Item.Headers.Fields (Index)) = ":status"
-                    and then QPACK_Field_Section_Policy.Field_Value
-                      (Item.Headers.Fields (Index)) = "200"
+                 & H3.Operation_Status'Image (H3_Status);
+            elsif Item.Kind = H3.Headers_Received then
+               for Index in 1 .. H3.Header_Count (Item.Headers) loop
+                  if H3.Field_Name (H3.Field_At (Item.Headers, Index)) =
+                       ":status"
+                    and then
+                      H3.Field_Value (H3.Field_At (Item.Headers, Index)) =
+                        "200"
                   then
                      Saw_Status := True;
                   end if;
                end loop;
-            elsif Item.Kind = Data_Received
+            elsif Item.Kind = H3.Data_Received
               and then Item.Data_Length = 5
               and then Item.Data (1) = Character'Pos ('h')
               and then Item.Data (2) = Character'Pos ('e')
@@ -156,4 +156,4 @@ begin
 exception
    when Ada.IO_Exceptions.End_Error =>
       raise Program_Error with "HTTP/3 oracle timed out";
-end Flyology.HTTP.HTTP_3_Connection.Interop_Client;
+end HTTP3_Interop_Client;

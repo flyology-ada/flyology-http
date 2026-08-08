@@ -534,6 +534,8 @@ begin
      (Flyology.HTTP.Image (Flyology.HTTP.HTTP_1_1_Protocol) = "HTTP/1.1");
    pragma Assert
      (Flyology.HTTP.Image (Flyology.HTTP.HTTP_2_Protocol) = "HTTP/2");
+   pragma Assert
+     (Flyology.HTTP.Image (Flyology.HTTP.HTTP_3_Protocol) = "HTTP/3");
 
    declare
       Plain : constant Flyology.HTTP.Origin :=

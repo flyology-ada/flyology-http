@@ -40,6 +40,7 @@ project Flyology_HTTP is
             "flyology-http-client-request_bodies-channels.ads",
             "flyology-http-client-request_bodies-files.ads",
             "flyology-http-headers.ads",
+            "flyology-http-http_3.ads",
             "flyology-http-methods.ads",
             "flyology-http-server.ads",
             "flyology-http-server-applications.ads",
