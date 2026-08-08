@@ -80,4 +80,32 @@ begin
         Invalid_Connection_ID);
    pragma Assert
      (Parse_Next (Hex ("18000000"), 0).Status = Invalid_Connection_ID);
+
+   declare
+      Encoded : constant Abort_Encode_Result :=
+        Encode_Stream_Abort (Stream_ID => 4, Application_Error => 16#10C#,
+                             Final_Size => 255);
+      Reset : constant Parse_Result :=
+        Parse_Next
+          (Encoded.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)), 0);
+      Stop : constant Parse_Result :=
+        Parse_Next
+          (Encoded.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)),
+           Reset.Consumed);
+   begin
+      pragma Assert
+        (Encoded.Length = 10
+         and then Reset.Status = Application_Frame_Policy.Parsed
+         and then Reset.Kind = Reset_Stream
+         and then Reset.Stream_ID = 4
+         and then Reset.Application_Error = 16#10C#
+         and then Reset.Final_Size = 255
+         and then Stop.Status = Application_Frame_Policy.Parsed
+         and then Stop.Kind = Stop_Sending
+         and then Stop.Stream_ID = 4
+         and then Stop.Application_Error = 16#10C#
+         and then Natural (Reset.Consumed + Stop.Consumed) = Encoded.Length);
+   end;
 end Flyology.QUIC.Application_Frame_Policy.Smoke;

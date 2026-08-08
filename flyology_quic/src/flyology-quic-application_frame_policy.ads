@@ -93,4 +93,24 @@ is
              Cursor = Frame_Offset (Data'Length)
              and then Parse_Next'Result.Consumed = 0
           else Parse_Next'Result.Consumed = 0);
+
+   --  RESET_STREAM followed by STOP_SENDING for both directions of one
+   --  bidirectional application stream.
+   Max_Abort_Length : constant := 42;
+   subtype Abort_Length is Natural range 0 .. Max_Abort_Length;
+
+   type Abort_Encode_Result is record
+      Data   : Ada.Streams.Stream_Element_Array (1 .. Max_Abort_Length) :=
+        (others => 0);
+      Length : Abort_Length := 0;
+   end record;
+
+   function Encode_Stream_Abort
+     (Stream_ID         : Varint_Policy.Value_Type;
+      Application_Error : Varint_Policy.Value_Type;
+      Final_Size        : Varint_Policy.Value_Type)
+      return Abort_Encode_Result
+   with
+     Global => null,
+     Post => Encode_Stream_Abort'Result.Length in 7 .. Max_Abort_Length;
 end Flyology.QUIC.Application_Frame_Policy;
