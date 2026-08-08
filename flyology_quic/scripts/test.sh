@@ -13,6 +13,7 @@ for test in \
   flyology-quic-application_space-smoke \
   flyology-quic-application_frame_policy-smoke \
   flyology-quic-connection_state_policy-smoke \
+  flyology-quic-connection_driver-smoke \
   flyology-quic-crypto_frame_policy-smoke \
   flyology-quic-crypto_openssl-smoke \
   flyology-quic-crypto_reassembly_policy-smoke \

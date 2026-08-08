@@ -106,6 +106,7 @@ package body Flyology.QUIC.Initial_Space is
                  Invalid_Reserved_Bits);
          return;
       end if;
+      Result.Peer_Source := Received.Packet.Envelope.Header.Source;
 
       Length := Initial_Frame_Policy.Frame_Offset
         (Received.Packet.Plaintext_Length);

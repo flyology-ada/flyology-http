@@ -1,5 +1,6 @@
 procedure Flyology.QUIC.Initial_Space.Smoke is
    use type Ada.Streams.Stream_Element;
+   use type Long_Header_Policy.Connection_ID;
 
    function ID
      (Data : Ada.Streams.Stream_Element_Array)
@@ -58,7 +59,9 @@ begin
         (1 .. Ada.Streams.Stream_Element_Offset (Built_2.Packet_Length)),
       Received);
    pragma Assert
-     (Received.Status = Processed and then Contiguous_Length (Server) = 0);
+     (Received.Status = Processed
+      and then Received.Peer_Source = Client_ID
+      and then Contiguous_Length (Server) = 0);
    Process_Packet
      (Server,
       Packet_1

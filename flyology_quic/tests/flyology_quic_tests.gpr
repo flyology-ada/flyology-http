@@ -12,6 +12,7 @@ project Flyology_QUIC_Tests is
       "flyology-quic-application_space-smoke.adb",
       "flyology-quic-application_frame_policy-smoke.adb",
       "flyology-quic-connection_state_policy-smoke.adb",
+      "flyology-quic-connection_driver-smoke.adb",
       "flyology-quic-crypto_frame_policy-smoke.adb",
       "flyology-quic-crypto_openssl-smoke.adb",
       "flyology-quic-crypto_reassembly_policy-smoke.adb",

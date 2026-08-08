@@ -75,6 +75,7 @@ private package Flyology.QUIC.Initial_Space is
    type Process_Result is record
       Status      : Process_Status := Envelope_Rejected;
       Frame_Count : Natural := 0;
+      Peer_Source : Long_Header_Policy.Connection_ID;
    end record;
 
    procedure Process_Packet
