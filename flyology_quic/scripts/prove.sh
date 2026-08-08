@@ -16,6 +16,7 @@ alr gnatprove \
   --report=all \
   -f \
   -u \
+  flyology-quic-ack_frame_policy.adb \
   flyology-quic-ack_range_policy.adb \
   flyology-quic-application_frame_policy.adb \
   flyology-quic-connection_state_policy.adb \
