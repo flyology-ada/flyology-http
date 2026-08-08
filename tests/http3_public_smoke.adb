@@ -8,6 +8,7 @@ procedure HTTP3_Public_Smoke is
    package QUIC renames Flyology.QUIC.Connections;
 
    use type Ada.Streams.Stream_Element;
+   use type Ada.Streams.Stream_Element_Array;
    use type H3.Event_Kind;
    use type H3.Operation_Status;
    use type QUIC.Stream_Offset;
@@ -18,6 +19,16 @@ procedure HTTP3_Public_Smoke is
    Client_Event, Server_Event : H3.Event;
    Client_Status, Server_Status : H3.Operation_Status;
 begin
+   declare
+      First  : constant QUIC.Connection_ID := QUIC.Random_Connection_ID;
+      Second : constant QUIC.Connection_ID := QUIC.Random_Connection_ID;
+   begin
+      pragma Assert
+        (First.Length = 8
+         and then Second.Length = 8
+         and then First.Data (1 .. 8) /= Second.Data (1 .. 8));
+   end;
+
    Flyology.QUIC.Test_Connections.Connect
      (Client_Transport, Server_Transport);
    H3.Initialize (Client, H3.Client);

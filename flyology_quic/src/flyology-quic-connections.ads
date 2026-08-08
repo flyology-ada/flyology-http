@@ -35,6 +35,19 @@ package Flyology.QUIC.Connections is
       Length : Natural range 0 .. Max_Connection_ID_Length := 0;
    end record;
 
+   --  Raised when the configured cryptographic provider cannot supply random
+   --  bytes for a connection identifier.
+   Randomness_Error : exception;
+
+   --  Generate an unpredictable connection identifier with the configured
+   --  cryptographic provider.
+   --  @param Length Number of identifier octets
+   --  @return Fresh QUIC connection identifier
+   --  @exception Randomness_Error Secure random generation failed
+   function Random_Connection_ID
+     (Length : Positive := 8) return Connection_ID
+   with Pre => Length <= Max_Connection_ID_Length;
+
    --  Raw Ed25519 private key used by the current server identity provider.
    subtype Ed25519_Private_Key is
      Ada.Streams.Stream_Element_Array (1 .. 32);

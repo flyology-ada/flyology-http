@@ -77,6 +77,25 @@ package body Flyology.QUIC.Connections is
       return Result;
    end Public_ID;
 
+   function Random_Connection_ID
+     (Length : Positive := 8) return Connection_ID
+   is
+      Provider : Crypto_OpenSSL.Provider;
+      Random : Ada.Streams.Stream_Element_Array
+        (1 .. Ada.Streams.Stream_Element_Offset (Length));
+      Result : Connection_ID;
+   begin
+      Crypto_OpenSSL.Initialize_Provider (Provider);
+      Crypto_OpenSSL.Random_Bytes (Provider, Random);
+      Result.Data (Random'Range) := Random;
+      Result.Length := Length;
+      return Result;
+   exception
+      when Crypto_OpenSSL.Crypto_Error =>
+         raise Randomness_Error with
+           "the QUIC cryptographic provider could not generate randomness";
+   end Random_Connection_ID;
+
    function Parameter
      (Value : Connection_ID)
       return Transport_Parameter_Policy.Connection_ID_Parameter
