@@ -50,6 +50,7 @@ is
 
    type Record_Status is
      (Recorded,
+      Not_Tracked,
       Packet_Number_Not_Next,
       Table_Full);
 
@@ -80,6 +81,10 @@ is
      Post =>
        (if Status = Recorded then
            Retained (Item) = Retained (Item'Old) + 1
+           and then Has_Sent (Item)
+           and then Largest_Sent (Item) = Packet.Number
+        elsif Status = Not_Tracked then
+           Retained (Item) = Retained (Item'Old)
            and then Has_Sent (Item)
            and then Largest_Sent (Item) = Packet.Number
         else Item = Item'Old);

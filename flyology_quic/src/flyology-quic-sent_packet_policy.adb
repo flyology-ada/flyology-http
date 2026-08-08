@@ -53,8 +53,15 @@ is
       then
          Status := Packet_Number_Not_Next;
          return;
-      elsif Item.Count = Max_Sent_Packets then
+      elsif Packet.In_Flight and then Item.Count = Max_Sent_Packets then
          Status := Table_Full;
+         return;
+      end if;
+
+      if not Packet.In_Flight then
+         Item.Has_Largest_Sent := True;
+         Item.Largest_Sent_PN := Packet.Number;
+         Status := Not_Tracked;
          return;
       end if;
 
