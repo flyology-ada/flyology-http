@@ -210,6 +210,13 @@ begin
      (Server_Result.Status = Succeeded and then Is_Connected (Server)
       and then Server_Output.Count = 0);
 
+   Connection_IO.Send (Client_Socket, Reply, Timeout => 1.0);
+   Connection_IO.Receive
+     (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);
+   pragma Assert
+     (Server_Result.Status = Succeeded and then Is_Connected (Server)
+      and then Server_Output.Count = 0);
+
    declare
       Stream_ID : Varint_Policy.Value_Type;
       Opened    : Application_Space.Open_Status;
@@ -293,7 +300,7 @@ begin
       Coalesced := (others => <>);
       for Index in 1 .. Server_Flight.Count loop
          pragma Assert
-           (Coalesced.Length + Server_Flight.Items (Index).Length <=
+           (Coalesced.Length + Server_Flight.Items (Index).Length <
               Connections.Max_Datagram_Length);
          Coalesced.Data
            (Ada.Streams.Stream_Element_Offset (Coalesced.Length + 1)
@@ -305,6 +312,9 @@ begin
          Coalesced.Length :=
            Coalesced.Length + Server_Flight.Items (Index).Length;
       end loop;
+      Coalesced.Length := Coalesced.Length + 1;
+      Coalesced.Data
+        (Ada.Streams.Stream_Element_Offset (Coalesced.Length)) := 0;
       Connections.Process_Datagram
         (Public_Client,
          Coalesced.Data

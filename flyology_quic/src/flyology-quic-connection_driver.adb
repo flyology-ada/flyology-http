@@ -366,7 +366,12 @@ package body Flyology.QUIC.Connection_Driver is
       Length : Natural;
    begin
       Initial_Space.Process_Packet (Item.Initial, Packet, Processed);
-      if Processed.Status /= Initial_Space.Processed then
+      if Processed.Status in
+        Initial_Space.Duplicate_Packet | Initial_Space.Packet_Too_Old
+      then
+         Result.Status := Succeeded;
+         return;
+      elsif Processed.Status /= Initial_Space.Processed then
          Result.Status := Packet_Error;
          return;
       end if;
@@ -466,6 +471,8 @@ package body Flyology.QUIC.Connection_Driver is
             Item.Current := Client_Handshake;
             Result.Status := Succeeded;
          end;
+      elsif Item.Current in Client_Handshake | Server_Handshake | Connected then
+         Result.Status := Succeeded;
       else
          Result.Status := Invalid_State;
       end if;
@@ -485,7 +492,12 @@ package body Flyology.QUIC.Connection_Driver is
          return;
       end if;
       Handshake_Space.Process_Packet (Item.Handshake, Packet, Processed);
-      if Processed.Status /= Handshake_Space.Processed then
+      if Processed.Status in
+        Handshake_Space.Duplicate_Packet | Handshake_Space.Packet_Too_Old
+      then
+         Result.Status := Succeeded;
+         return;
+      elsif Processed.Status /= Handshake_Space.Processed then
          Result.Status := Packet_Error;
          return;
       end if;
@@ -555,6 +567,8 @@ package body Flyology.QUIC.Connection_Driver is
             Item.Current := Connected;
             Result.Status := Succeeded;
          end;
+      elsif Item.Current = Connected then
+         Result.Status := Succeeded;
       else
          Result.Status := Invalid_State;
       end if;
@@ -570,6 +584,7 @@ package body Flyology.QUIC.Connection_Driver is
       Application_Result : Application_Space.Process_Result;
       Cursor              : Natural := 0;
       Total               : constant Natural := Natural (Packet'Length);
+      Accepted            : Boolean := False;
    begin
       Clear (Output);
       Result := (others => <>);
@@ -585,7 +600,16 @@ package body Flyology.QUIC.Connection_Driver is
                 (Packet'First + Ada.Streams.Stream_Element_Offset (Cursor));
          begin
             if (First and 16#80#) = 0 then
-               if Item.Current /= Connected then
+               if (First and 16#40#) = 0 then
+                  if Accepted then
+                     return;
+                  end if;
+                  Result.Status := Unsupported_Packet;
+                  return;
+               elsif Item.Current /= Connected then
+                  if Accepted then
+                     return;
+                  end if;
                   Result.Status := Unsupported_Packet;
                   return;
                end if;
@@ -628,6 +652,7 @@ package body Flyology.QUIC.Connection_Driver is
                   if Result.Status not in Succeeded | Waiting_For_More then
                      return;
                   end if;
+                  Accepted := True;
                   Cursor := Cursor + Envelope.Consumed;
                end;
             elsif (First and 16#30#) = 16#20# then
@@ -655,9 +680,13 @@ package body Flyology.QUIC.Connection_Driver is
                   if Result.Status not in Succeeded | Waiting_For_More then
                      return;
                   end if;
+                  Accepted := True;
                   Cursor := Cursor + Envelope.Consumed;
                end;
             else
+               if Accepted then
+                  return;
+               end if;
                Result.Status := Unsupported_Packet;
                return;
             end if;
