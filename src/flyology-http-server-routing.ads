@@ -1,8 +1,10 @@
 with Ada.Strings.Unbounded;
 with Ada.Streams;
 with Flyology.Cancellation;
+with Flyology.IO;
 with Flyology.IO.Connections;
 with Flyology.IO.Sockets;
+with Flyology.IO.TLS.ALPN;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Middleware;
 with Flyology.QUIC.Connections;
@@ -13,6 +15,10 @@ generic
    --  Application context shared by routed handlers.
    type App_Context is limited private;
 package Flyology.HTTP.Server.Routing is
+   use type Flyology.IO.Sockets.Port;
+
+   --  Raised after a unified listener's TCP or UDP serving task fails.
+   Unified_Server_Error : exception;
 
    --  Typed middleware API used by this router instance. Applications may
    --  also instantiate Server.Middleware independently of routing.
@@ -389,13 +395,15 @@ package Flyology.HTTP.Server.Routing is
    --  @param Value Parsed request head
    --  @param Peer Connected peer address
    --  @param Token Optional cancellation token
+   --  @param Alt_Svc Optional HTTP/3 alternative-service field value
    procedure Dispatch
      (Item       : in out Router;
       Context    : in out App_Context;
       Connection : aliased in out Flyology.HTTP.Server.Connection;
       Value      : aliased in out Request;
       Peer       : Flyology.IO.Sockets.Endpoint;
-      Token      : access Flyology.Cancellation.Token := null);
+      Token      : access Flyology.Cancellation.Token := null;
+      Alt_Svc    : String := "");
 
    --  Match and invoke one protocol-neutral application exchange. Protocol
    --  engines use this overload after parsing and admitting a stream.
@@ -420,6 +428,7 @@ package Flyology.HTTP.Server.Routing is
    --  @param Token Optional cancellation token
    --  @param Header_Timeout Absolute slow-header budget for each request;
    --  negative uses the remaining request/connection lifetime
+   --  @param Alt_Svc Optional HTTP/3 alternative-service field value
    procedure Serve
      (Item         : in out Router;
       Context      : in out App_Context;
@@ -429,7 +438,8 @@ package Flyology.HTTP.Server.Routing is
       Max_Connection_Age : Duration := 300.0;
       Max_Requests : Natural := 1_000;
       Token        : access Flyology.Cancellation.Token := null;
-      Header_Timeout : Duration := -1.0);
+      Header_Timeout : Duration := -1.0;
+      Alt_Svc      : String := "");
 
    --  Select HTTP/1.x or HTTP/2 for one accepted Flyology connection and
    --  serve it through this router. Route registration, middleware, body
@@ -448,6 +458,7 @@ package Flyology.HTTP.Server.Routing is
    --  @param Token Optional cancellation token
    --  @param Header_Timeout HTTP/1.x slow-header budget; ignored for HTTP/2
    --  @param Ingress Optional HTTP/1.x retained-body budget
+   --  @param Alt_Svc Optional HTTP/3 alternative-service field value
    procedure Serve
      (Item               : in out Router;
       Context            : in out App_Context;
@@ -459,7 +470,63 @@ package Flyology.HTTP.Server.Routing is
       Max_Requests       : Natural := 1_000;
       Token              : access Flyology.Cancellation.Token := null;
       Header_Timeout     : Duration := -1.0;
-      Ingress            : access Ingress_Budget := null);
+      Ingress            : access Ingress_Budget := null;
+      Alt_Svc            : String := "");
+
+   --  Bind one endpoint as TLS/TCP for HTTP/1.1 and HTTP/2 and as UDP for
+   --  HTTP/3, then serve every protocol through this router until Token is
+   --  requested. TLS_Backend must be a server provider configured to select
+   --  h2 or http/1.1. H1/H2 responses advertise the active H3 endpoint with
+   --  Alt-Svc; H3 responses do not. Mutable router context must synchronize
+   --  access across concurrent protocol workers.
+   --  @param Item Frozen router shared by all protocol workers
+   --  @param Context Shared application context
+   --  @param Endpoint Non-ephemeral local TCP and UDP endpoint
+   --  @param TLS_Backend Initialized ALPN-capable TLS server provider
+   --  @param Certificate_DER DER-encoded Ed25519 HTTP/3 certificate
+   --  @param Private_Key Raw Ed25519 HTTP/3 private key
+   --  @param TCP_Capacity Maximum concurrent H1/H2 connections
+   --  @param HTTP_3_Capacity Maximum concurrent H3 connections
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request or stream application deadline
+   --  @param Handshake_Timeout TLS and QUIC handshake deadline
+   --  @param Max_Connection_Age Per-connection lifetime
+   --  @param TCP_Max_Requests HTTP/1.x persistent request limit
+   --  @param HTTP_3_Max_Requests H3 request limit per connection
+   --  @param Header_Timeout HTTP/1.x slow-header deadline
+   --  @param Ingress Optional shared HTTP/1.x retained-body budget
+   --  @param Alt_Svc_Max_Age Alt-Svc lifetime in seconds
+   --  @param Drain_Timeout TCP handler drain after shutdown
+   --  @param Token Required unified server shutdown source
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      Endpoint             : Flyology.IO.Sockets.Endpoint;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 8;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 5;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token)
+   with Pre => Endpoint.Port /= Flyology.IO.Sockets.Any_Port
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then HTTP_3_Capacity <= 32
+     and then HTTP_3_Max_Requests <= 5
+     and then Handshake_Timeout > 0.0
+     and then
+       (Drain_Timeout = Flyology.IO.Infinite or else Drain_Timeout >= 0.0);
 
    --  Receive and serve one HTTP/3 connection on an exclusively owned bound
    --  UDP socket. Requests use the same routes, middleware, body policies, and
@@ -530,6 +597,40 @@ package Flyology.HTTP.Server.Routing is
      and then Max_Requests <= 5
      and then Source.Length in 1 ..
        Flyology.QUIC.Connections.Max_Connection_ID_Length;
+
+   --  Serve multiple concurrent HTTP/3 connections through this router on an
+   --  unconnected bound UDP socket until Token is requested.
+   --  @param Item Frozen router shared by all connection workers
+   --  @param Context Shared application context; mutable parts synchronize
+   --  @param Socket Exclusively owned bound UDP listener
+   --  @param Certificate_DER DER-encoded Ed25519 server certificate
+   --  @param Private_Key Raw Ed25519 private key for Certificate_DER
+   --  @param Capacity Maximum concurrent QUIC connections
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request application deadline
+   --  @param Handshake_Timeout Maximum time to establish each QUIC connection
+   --  @param Max_Connection_Age Per-connection lifetime
+   --  @param Max_Requests Requests served by each connection
+   --  @param Token Required listener shutdown and connection cancellation
+   procedure Serve_HTTP_3_Listener
+     (Item               : aliased in out Router;
+      Context            : aliased in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Capacity           : Positive := 8;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := 5;
+      Token              : not null access Flyology.Cancellation.Token)
+   with Pre => Flyology.IO.Sockets.Is_Open (Socket)
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then Capacity <= 32
+     and then Handshake_Timeout > 0.0
+     and then Max_Requests <= 5;
 
 private
    use Ada.Strings.Unbounded;

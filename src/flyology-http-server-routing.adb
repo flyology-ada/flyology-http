@@ -6,8 +6,8 @@ with Flyology.HTTP.Route_Parameter_Policy;
 with Flyology.HTTP.Server.Connections;
 with Flyology.HTTP.Server.HTTP_2;
 with Flyology.HTTP.Server.HTTP_3;
-with Flyology.IO;
 with Flyology.IO.Connections.TLS;
+with Flyology.IO.Structured_Servers;
 with Flyology.IO.TLS;
 
 package body Flyology.HTTP.Server.Routing is
@@ -1158,11 +1158,15 @@ package body Flyology.HTTP.Server.Routing is
       Connection : aliased in out Flyology.HTTP.Server.Connection;
       Value      : aliased in out Request;
       Peer       : Flyology.IO.Sockets.Endpoint;
-      Token      : access Flyology.Cancellation.Token := null)
+      Token      : access Flyology.Cancellation.Token := null;
+      Alt_Svc    : String := "")
    is
       X : App.Exchange := App.Create
         (Value, Connection, Peer, Token, Request_Deadline (Connection));
    begin
+      if Alt_Svc /= "" then
+         X.Set_Header ("Alt-Svc", Alt_Svc);
+      end if;
       Dispatch (Item, Context, X);
    end Dispatch;
 
@@ -1175,7 +1179,8 @@ package body Flyology.HTTP.Server.Routing is
       Max_Connection_Age : Duration := 300.0;
       Max_Requests : Natural := 1_000;
       Token        : access Flyology.Cancellation.Token := null;
-      Header_Timeout : Duration := -1.0)
+      Header_Timeout : Duration := -1.0;
+      Alt_Svc      : String := "")
    is
       Value  : aliased Request;
       Closed : Boolean;
@@ -1273,7 +1278,8 @@ package body Flyology.HTTP.Server.Routing is
             Connection.Request_Close := True;
          end if;
          begin
-            Dispatch (Item, Context, Connection, Value, Peer, Token);
+            Dispatch
+              (Item, Context, Connection, Value, Peer, Token, Alt_Svc);
          exception
             when Flyology.Cancellation.Operation_Cancelled |
                  Flyology.IO.Timeout_Error |
@@ -1311,7 +1317,8 @@ package body Flyology.HTTP.Server.Routing is
       Max_Requests       : Natural := 1_000;
       Token              : access Flyology.Cancellation.Token := null;
       Header_Timeout     : Duration := -1.0;
-      Ingress            : access Ingress_Budget := null)
+      Ingress            : access Ingress_Budget := null;
+      Alt_Svc            : String := "")
    is
       procedure Serve_HTTP_1 is
          Transport : aliased
@@ -1325,13 +1332,16 @@ package body Flyology.HTTP.Server.Routing is
          end if;
          Serve
            (Item, Context, Connection, Peer, Timeout, Max_Connection_Age,
-            Max_Requests, Token, Header_Timeout);
+            Max_Requests, Token, Header_Timeout, Alt_Svc);
       end Serve_HTTP_1;
 
       procedure Dispatch_HTTP_2
         (State : in out App_Context;
          X     : in out Applications.Exchange) is
       begin
+         if Alt_Svc /= "" then
+            X.Set_Header ("Alt-Svc", Alt_Svc);
+         end if;
          Dispatch (Item, State, X);
       end Dispatch_HTTP_2;
 
@@ -1364,6 +1374,220 @@ package body Flyology.HTTP.Server.Routing is
                end if;
             end;
       end case;
+   end Serve;
+
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      Endpoint             : Flyology.IO.Sockets.Endpoint;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 8;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 5;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token)
+   is
+      package Sockets renames Flyology.IO.Sockets;
+      package Connection_TLS renames Flyology.IO.Connections.TLS;
+      package ALPN renames Flyology.IO.TLS.ALPN;
+
+      function Compact (Value : Natural) return String is
+        (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+
+      Alt_Svc : constant String :=
+        "h3=" & Character'Val (34) & ":" &
+        Compact (Natural (Endpoint.Port)) & Character'Val (34) &
+        "; ma=" & Compact (Alt_Svc_Max_Age);
+
+      type TCP_Context is limited record
+         Routes      : access Router;
+         Application : access App_Context;
+         Backend     : access ALPN.Provider'Class;
+         Ingress     : access Ingress_Budget;
+      end record;
+
+      procedure Handle_TCP
+        (State        : in out TCP_Context;
+         Connection   : in out Flyology.IO.Connections.Connection;
+         Peer         : Sockets.Endpoint;
+         Cancellation : not null access
+           Flyology.IO.Connections.Cancellation_Token)
+      is
+      begin
+         Connection_TLS.Upgrade
+           (Connection, State.Backend.all, Flyology.IO.TLS.Server, "",
+            Protocols => ALPN.Empty_Protocol_List,
+            Timeout => Handshake_Timeout, Token => Cancellation);
+         State.Routes.Serve
+           (State.Application.all, Connection, Peer,
+            Mode               => ALPN_Negotiated,
+            Timeout            => Timeout,
+            Max_Connection_Age => Max_Connection_Age,
+            Max_Requests       => TCP_Max_Requests,
+            Token              => Cancellation,
+            Header_Timeout     => Header_Timeout,
+            Ingress            => State.Ingress,
+            Alt_Svc            => Alt_Svc);
+      end Handle_TCP;
+
+      package TCP_Servers is new Flyology.IO.Structured_Servers
+        (Handler_Context => TCP_Context,
+         Handle          => Handle_TCP);
+
+      procedure Dispatch_HTTP_3
+        (State : in out App_Context;
+         X     : in out Applications.Exchange) is
+      begin
+         Dispatch (Item, State, X);
+      end Dispatch_HTTP_3;
+
+      package HTTP_3_Engine is new
+        Flyology.HTTP.Server.HTTP_3 (App_Context, Dispatch_HTTP_3);
+
+      protected Outcome is
+         procedure Record_Failure;
+         function Failed return Boolean;
+      private
+         Has_Failed : Boolean := False;
+      end Outcome;
+
+      protected body Outcome is
+         procedure Record_Failure is
+         begin
+            Has_Failed := True;
+         end Record_Failure;
+
+         function Failed return Boolean is (Has_Failed);
+      end Outcome;
+
+      TCP_Listener : Sockets.Socket_Type;
+      UDP_Listener : aliased Sockets.Socket_Type;
+
+      procedure Request_Stop is
+      begin
+         begin
+            Token.Request;
+         exception
+            when others => null;
+         end;
+      end Request_Stop;
+
+      procedure Close_If_Open (Socket : in out Sockets.Socket_Type) is
+      begin
+         if Sockets.Is_Open (Socket) then
+            Sockets.Close_Socket (Socket);
+         end if;
+      end Close_If_Open;
+   begin
+      if HTTP_3_Capacity > 32 then
+         raise Constraint_Error with
+           "HTTP/3 listener capacity exceeds the bounded worker profile";
+      elsif HTTP_3_Max_Requests >
+        HTTP_3_Engine.Maximum_Requests_Per_Connection
+      then
+         raise Constraint_Error with
+           "HTTP/3 request limit exceeds the bounded connection profile";
+      elsif Handshake_Timeout <= 0.0 then
+         raise Constraint_Error with
+           "unified server handshake timeout must be positive";
+      end if;
+
+      Sockets.Create_Socket
+        (TCP_Listener, Endpoint.Family, Sockets.Socket_Stream);
+      Sockets.Set_Socket_Option
+        (TCP_Listener,
+         (Name => Sockets.Reuse_Address, Enabled => True));
+      Sockets.Bind_Socket (TCP_Listener, Endpoint);
+      Sockets.Listen_Socket (TCP_Listener, TCP_Capacity);
+
+      Sockets.Create_Socket
+        (UDP_Listener, Endpoint.Family, Sockets.Socket_Datagram);
+      Sockets.Set_Socket_Option
+        (UDP_Listener,
+         (Name => Sockets.Reuse_Address, Enabled => True));
+      Sockets.Bind_Socket (UDP_Listener, Endpoint);
+
+      declare
+         TCP_Manager : aliased TCP_Servers.Server
+           (Capacity => TCP_Capacity);
+         Shared : aliased TCP_Context :=
+           (Routes      => Item'Unchecked_Access,
+            Application => Context'Unchecked_Access,
+            Backend     => TLS_Backend'Unchecked_Access,
+            Ingress     => Ingress);
+
+         task TCP_Task;
+         task UDP_Task;
+         task Stop_Task;
+
+         task body TCP_Task is
+         begin
+            begin
+               TCP_Servers.Serve
+                 (TCP_Manager, TCP_Listener, Shared, Drain_Timeout);
+            exception
+               when others =>
+                  Outcome.Record_Failure;
+                  Request_Stop;
+            end;
+         end TCP_Task;
+
+         task body UDP_Task is
+         begin
+            begin
+               HTTP_3_Engine.Serve_Listener
+                 (Context, UDP_Listener, Certificate_DER, Private_Key,
+                  Capacity => HTTP_3_Capacity,
+                  Transport_Settings => Transport_Settings,
+                  Timeout => Timeout,
+                  Handshake_Timeout => Handshake_Timeout,
+                  Max_Connection_Age => Max_Connection_Age,
+                  Max_Requests => HTTP_3_Max_Requests,
+                  Token => Token);
+            exception
+               when others =>
+                  Outcome.Record_Failure;
+                  Request_Stop;
+            end;
+         end UDP_Task;
+
+         task body Stop_Task is
+         begin
+            Token.Await_Request;
+            TCP_Servers.Request_Shutdown (TCP_Manager);
+         exception
+            when others =>
+               Outcome.Record_Failure;
+               Request_Stop;
+         end Stop_Task;
+      begin
+         null;
+      end;
+
+      Close_If_Open (UDP_Listener);
+      Close_If_Open (TCP_Listener);
+      if Outcome.Failed then
+         raise Unified_Server_Error with
+           "the unified HTTP server stopped after a listener failure";
+      end if;
+   exception
+      when others =>
+         Request_Stop;
+         Close_If_Open (UDP_Listener);
+         Close_If_Open (TCP_Listener);
+         raise;
    end Serve;
 
    procedure Serve_HTTP_3
@@ -1418,5 +1642,36 @@ package body Flyology.HTTP.Server.Routing is
          Transport_Settings, Timeout, Handshake_Timeout,
          Max_Connection_Age, Max_Requests, Token);
    end Serve_HTTP_3;
+
+   procedure Serve_HTTP_3_Listener
+     (Item               : aliased in out Router;
+      Context            : aliased in out App_Context;
+      Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
+      Certificate_DER    : Ada.Streams.Stream_Element_Array;
+      Private_Key        : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Capacity           : Positive := 8;
+      Transport_Settings : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout            : Duration := 30.0;
+      Handshake_Timeout  : Duration := 10.0;
+      Max_Connection_Age : Duration := 300.0;
+      Max_Requests       : Positive := 5;
+      Token              : not null access Flyology.Cancellation.Token)
+   is
+      procedure Dispatch_HTTP_3
+        (State : in out App_Context;
+         X     : in out Applications.Exchange) is
+      begin
+         Dispatch (Item, State, X);
+      end Dispatch_HTTP_3;
+
+      package HTTP_3_Engine is new
+        Flyology.HTTP.Server.HTTP_3 (App_Context, Dispatch_HTTP_3);
+   begin
+      HTTP_3_Engine.Serve_Listener
+        (Context, Socket, Certificate_DER, Private_Key, Capacity,
+         Transport_Settings, Timeout, Handshake_Timeout,
+         Max_Connection_Age, Max_Requests, Token);
+   end Serve_HTTP_3_Listener;
 
 end Flyology.HTTP.Server.Routing;
