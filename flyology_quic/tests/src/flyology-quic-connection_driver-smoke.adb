@@ -152,12 +152,14 @@ begin
      (Client, ALPN,
       Client_Encoded.Data
         (1 .. Ada.Streams.Stream_Element_Offset (Client_Encoded.Length)),
-      Certificate, Original_ID, Original_Destination, Client_ID);
+      Certificate, Original_ID, Original_Destination, Client_ID,
+      Client_Parameters);
    Initialize_Server
      (Server, ALPN,
       Server_Encoded.Data
         (1 .. Ada.Streams.Stream_Element_Offset (Server_Encoded.Length)),
-      Certificate, Private_Key, Original_ID, Client_ID, Server_ID);
+      Certificate, Private_Key, Original_ID, Client_ID, Server_ID,
+      Server_Parameters);
 
    Flyology.IO.Sockets.Create_Socket
      (Client_Socket, Flyology.IO.Sockets.IPv4,

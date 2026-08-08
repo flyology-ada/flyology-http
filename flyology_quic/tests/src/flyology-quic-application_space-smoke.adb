@@ -59,10 +59,10 @@ begin
 
    Initialize
      (Client, Client_Keys, Server_Keys, Server_ID, Client_ID,
-      Stream_ID_Policy.Client, Client_Peer);
+      Stream_ID_Policy.Client, Server_Peer, Client_Peer);
    Initialize
      (Server, Server_Keys, Client_Keys, Client_ID, Server_ID,
-      Stream_ID_Policy.Server, Server_Peer);
+      Stream_ID_Policy.Server, Client_Peer, Server_Peer);
 
    Open_Stream (Client, Stream_ID_Policy.Bidirectional, Opened_ID, Opened);
    pragma Assert
@@ -219,10 +219,10 @@ begin
    begin
       Initialize
         (Loss_Client, Client_Keys, Server_Keys, Server_ID, Client_ID,
-         Stream_ID_Policy.Client, Client_Peer);
+         Stream_ID_Policy.Client, Server_Peer, Client_Peer);
       Initialize
         (Loss_Server, Server_Keys, Client_Keys, Client_ID, Server_ID,
-         Stream_ID_Policy.Server, Server_Peer);
+         Stream_ID_Policy.Server, Client_Peer, Server_Peer);
       Open_Stream
         (Loss_Client, Stream_ID_Policy.Bidirectional, Loss_ID, Loss_Opened);
       pragma Assert
@@ -278,10 +278,10 @@ begin
    begin
       Initialize
         (Abort_Client, Client_Keys, Server_Keys, Server_ID, Client_ID,
-         Stream_ID_Policy.Client, Server_Peer);
+         Stream_ID_Policy.Client, Server_Peer, Server_Peer);
       Initialize
         (Abort_Server, Server_Keys, Client_Keys, Client_ID, Server_ID,
-         Stream_ID_Policy.Server, Server_Peer);
+         Stream_ID_Policy.Server, Server_Peer, Server_Peer);
       Open_Stream
         (Abort_Client, Stream_ID_Policy.Bidirectional,
          Abort_ID, Abort_Opened);
@@ -324,5 +324,58 @@ begin
         (Abort_Received.Status = Processed
          and then Was_Reset (Abort_Server, Abort_ID)
          and then Reset_Error (Abort_Server, Abort_ID) = 16#10C#);
+   end;
+
+   --  Stream admission and all other packet effects are transactional. A
+   --  rejected packet must not expose an otherwise valid leading STREAM.
+   declare
+      Attack_Sender : Application_Connection.Connection;
+      Attack_Server : State;
+      Attack_Packet : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
+      Attack_Built    : Application_Connection.Build_Result;
+      Attack_Received : Process_Result;
+
+      procedure Check_Rejected
+        (Plaintext : Ada.Streams.Stream_Element_Array;
+         Expected  : Process_Status)
+      is
+      begin
+         Application_Connection.Build_One_RTT
+           (Attack_Sender, Plaintext, Attack_Packet, Attack_Built);
+         pragma Assert
+           (Attack_Built.Status = Application_Connection.Built);
+         Process_Packet
+           (Attack_Server,
+            Attack_Packet
+              (1 .. Ada.Streams.Stream_Element_Offset
+                      (Attack_Built.Packet_Length)),
+            Now => Timestamp (Attack_Built.Number + 400),
+            ACK_Delay_Exponent => 3, Maximum_ACK_Delay => 25_000,
+            Handshake_Confirmed => True, Result => Attack_Received);
+         pragma Assert
+           (Attack_Received.Status = Expected
+            and then not Has_Stream (Attack_Server, 0));
+      end Check_Rejected;
+   begin
+      Application_Connection.Initialize
+        (Attack_Sender, Client_Keys, Server_Keys, Server_ID, Client_ID);
+      Initialize
+        (Attack_Server, Server_Keys, Client_Keys, Client_ID, Server_ID,
+         Stream_ID_Policy.Server, Client_Peer, Server_Peer);
+
+      --  A server cannot receive its own unopened bidi or uni stream.
+      Check_Rejected ((16#0A#, 1, 1, 16#A1#), Invalid_Stream_State);
+      Check_Rejected ((16#0A#, 3, 1, 16#A3#), Invalid_Stream_State);
+      --  The server advertised only one client-initiated bidi stream.
+      Check_Rejected ((16#0A#, 4, 1, 16#A4#), Invalid_Stream_Limit);
+      --  STREAM and RESET_STREAM final sizes both consume receive credit.
+      Check_Rejected
+        ((16#0A#, 0, 3, 16#A0#, 16#A1#, 16#A2#),
+         Flow_Control_Error);
+      Check_Rejected ((16#04#, 0, 0, 3), Flow_Control_Error);
+      --  The valid leading byte is rolled back when HANDSHAKE_DONE is illegal.
+      Check_Rejected
+        ((16#0A#, 0, 1, 16#AA#, 16#1E#), Unexpected_Handshake_Done);
    end;
 end Flyology.QUIC.Application_Space.Smoke;

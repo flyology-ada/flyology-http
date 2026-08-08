@@ -16,6 +16,7 @@ package body Flyology.QUIC.Application_Space is
    use type Flow_Control_Policy.Reserve_Status;
    use type Flow_Control_Policy.Update_Status;
    use type Recovery_Policy.Send_Status;
+   use type Receive_Flow_Control_Policy.Reserve_Status;
    use type Sent_Packet_Policy.Apply_Status;
    use type Sent_Packet_Policy.Event_Kind;
    use type Sent_Packet_Policy.Packet_Number;
@@ -234,33 +235,34 @@ package body Flyology.QUIC.Application_Space is
    end Retain_New_Frame;
 
    procedure Resolve_Retransmittable_Frame
-     (Item         : in out State;
+     (Retransmittable : in out Retransmittable_Table;
+      Packet_Frames   : in out Packet_Frame_Table;
       Number       : Packet_Number;
       Acknowledged : Boolean)
    is
       Frame : Natural := 0;
    begin
       for Index in Retransmittable_Index loop
-         if Item.Packet_Frames (Index).Valid
-           and then Item.Packet_Frames (Index).Number = Number
+         if Packet_Frames (Index).Valid
+           and then Packet_Frames (Index).Number = Number
          then
-            Frame := Item.Packet_Frames (Index).Frame;
-            Item.Packet_Frames (Index).Valid := False;
+            Frame := Packet_Frames (Index).Frame;
+            Packet_Frames (Index).Valid := False;
          end if;
       end loop;
       if Frame = 0 then
          return;
       elsif Acknowledged then
          for Index in Retransmittable_Index loop
-            if Item.Packet_Frames (Index).Valid
-              and then Item.Packet_Frames (Index).Frame = Frame
+            if Packet_Frames (Index).Valid
+              and then Packet_Frames (Index).Frame = Frame
             then
-               Item.Packet_Frames (Index).Valid := False;
+               Packet_Frames (Index).Valid := False;
             end if;
          end loop;
-         Item.Retransmittable (Frame) := (others => <>);
+         Retransmittable (Frame) := (others => <>);
       else
-         Item.Retransmittable (Frame).Needs_Retransmission := True;
+         Retransmittable (Frame).Needs_Retransmission := True;
       end if;
    end Resolve_Retransmittable_Frame;
 
@@ -271,6 +273,7 @@ package body Flyology.QUIC.Application_Space is
       Destination : Long_Header_Policy.Connection_ID;
       Local_ID    : Long_Header_Policy.Connection_ID;
       Role        : Stream_ID_Policy.Endpoint_Role;
+      Local       : Transport_Parameter_Policy.Transport_Parameters;
       Peer        : Transport_Parameter_Policy.Transport_Parameters)
    is
       function Value_Or_Zero
@@ -286,12 +289,25 @@ package body Flyology.QUIC.Application_Space is
            Value_Or_Zero (Peer.Initial_Max_Stream_Data_Bidi_Remote),
          Unidirectional =>
            Value_Or_Zero (Peer.Initial_Max_Stream_Data_Uni));
+      Receive_Limits : constant
+        Receive_Flow_Control_Policy.Receive_Limits :=
+          (Connection => Value_Or_Zero (Local.Initial_Max_Data),
+           Bidi_Local =>
+             Value_Or_Zero (Local.Initial_Max_Stream_Data_Bidi_Local),
+           Bidi_Remote =>
+             Value_Or_Zero (Local.Initial_Max_Stream_Data_Bidi_Remote),
+           Unidirectional =>
+             Value_Or_Zero (Local.Initial_Max_Stream_Data_Uni),
+           Streams_Bidi => Value_Or_Zero (Local.Initial_Max_Streams_Bidi),
+           Streams_Uni => Value_Or_Zero (Local.Initial_Max_Streams_Uni));
    begin
       Application_Connection.Initialize
         (Item.Packets, Sending, Receiving, Destination, Local_ID);
       Stream_Table_Policy.Reset (Item.Streams);
       Stream_ID_Policy.Reset (Item.Allocator, Role);
       Flow_Control_Policy.Reset (Item.Flow, Role, Limits);
+      Receive_Flow_Control_Policy.Reset
+        (Item.Receive_Flow, Role, Receive_Limits);
       Item.Peer_Bidi := Value_Or_Zero (Peer.Initial_Max_Streams_Bidi);
       Item.Peer_Uni := Value_Or_Zero (Peer.Initial_Max_Streams_Uni);
       Sent_Packet_Policy.Reset (Item.Sent);
@@ -769,6 +785,28 @@ package body Flyology.QUIC.Application_Space is
          when Stream_Table_Policy.Stream_Reset_Conflict =>
            Stream_Reset_Conflict);
 
+   function Process_Status_For
+     (Status : Receive_Flow_Control_Policy.Reserve_Status)
+      return Process_Status
+   is
+     (case Status is
+         when Receive_Flow_Control_Policy.Reserved => Processed,
+         when Receive_Flow_Control_Policy.Stream_Not_Receivable
+            | Receive_Flow_Control_Policy.Stream_Not_Sendable
+            | Receive_Flow_Control_Policy.Stream_Not_Opened =>
+           Invalid_Stream_State,
+         when Receive_Flow_Control_Policy.Stream_Limit_Exceeded =>
+           Invalid_Stream_Limit,
+         when Receive_Flow_Control_Policy.Stream_Capacity_Exceeded =>
+           Stream_Capacity_Exceeded,
+         when Receive_Flow_Control_Policy.Stream_Flow_Exceeded
+            | Receive_Flow_Control_Policy.Connection_Flow_Exceeded =>
+           Flow_Control_Error,
+         when Receive_Flow_Control_Policy.Stream_Range_Too_Large =>
+           Stream_Data_Too_Large,
+         when Receive_Flow_Control_Policy.Stream_Final_Size_Mismatch =>
+           Stream_Final_Size_Error);
+
    procedure Process_Packet
      (Item                : in out State;
       Packet              : Ada.Streams.Stream_Element_Array;
@@ -789,6 +827,24 @@ package body Flyology.QUIC.Application_Space is
       Sampled   : Boolean;
       ACKed_Ack_Eliciting : Boolean;
       Updated   : Flow_Control_Policy.Update_Status;
+      Receive_Status : Receive_Flow_Control_Policy.Reserve_Status;
+      Local_Bidi_Opened : constant Stream_ID_Policy.Stream_Count :=
+        Stream_ID_Policy.Opened_Count
+          (Item.Allocator, Stream_ID_Policy.Bidirectional);
+      Local_Uni_Opened : constant Stream_ID_Policy.Stream_Count :=
+        Stream_ID_Policy.Opened_Count
+          (Item.Allocator, Stream_ID_Policy.Unidirectional);
+      Candidate_Streams : Stream_Table_Policy.Stream_Table := Item.Streams;
+      Candidate_Receive : Receive_Flow_Control_Policy.State :=
+        Item.Receive_Flow;
+      Candidate_Flow : Flow_Control_Policy.State := Item.Flow;
+      Candidate_Sent : Sent_Packet_Policy.Ledger := Item.Sent;
+      Candidate_Recovery : Recovery_Policy.State := Item.Recovery;
+      Candidate_Retransmittable : Retransmittable_Table :=
+        Item.Retransmittable;
+      Candidate_Packet_Frames : Packet_Frame_Table := Item.Packet_Frames;
+      Candidate_Peer_Bidi : Varint_Policy.Value_Type := Item.Peer_Bidi;
+      Candidate_Peer_Uni : Varint_Policy.Value_Type := Item.Peer_Uni;
    begin
       Result := (others => <>);
       Application_Connection.Process_One_RTT
@@ -801,7 +857,7 @@ package body Flyology.QUIC.Application_Space is
       Length := Application_Frame_Policy.Frame_Offset
         (Received.Packet.Plaintext_Length);
       Stream_Table_Policy.Process_Plaintext
-        (Item.Streams, Plaintext (1 .. Length), Streams);
+        (Candidate_Streams, Plaintext (1 .. Length), Streams);
       Result.Frame_Count := Natural (Streams.Frame_Count);
       if Streams.Status /= Stream_Table_Policy.Processed then
          Result.Status := Process_Status_For (Streams.Status);
@@ -830,12 +886,48 @@ package body Flyology.QUIC.Application_Space is
                return;
             end if;
             Result.Handshake_Done := True;
+         elsif Frame.Kind = Application_Frame_Policy.Stream then
+            Receive_Flow_Control_Policy.Reserve_Stream
+              (Candidate_Receive, Frame.Stream_ID,
+               Frame.Stream_Frame.Stream_Offset,
+               Natural (Frame.Stream_Frame.Data_Length),
+               Frame.Stream_Frame.Fin, Local_Bidi_Opened,
+               Local_Uni_Opened, Receive_Status);
+            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+               Result.Status := Process_Status_For (Receive_Status);
+               return;
+            end if;
+         elsif Frame.Kind = Application_Frame_Policy.Reset_Stream then
+            Receive_Flow_Control_Policy.Reserve_Reset
+              (Candidate_Receive, Frame.Stream_ID, Frame.Final_Size,
+               Local_Bidi_Opened, Local_Uni_Opened, Receive_Status);
+            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+               Result.Status := Process_Status_For (Receive_Status);
+               return;
+            end if;
+         elsif Frame.Kind = Application_Frame_Policy.Stop_Sending then
+            Receive_Status :=
+              Receive_Flow_Control_Policy.Check_Stop_Sending
+                (Candidate_Receive, Frame.Stream_ID, Local_Bidi_Opened,
+                 Local_Uni_Opened);
+            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+               Result.Status := Process_Status_For (Receive_Status);
+               return;
+            end if;
          elsif Frame.Kind = Application_Frame_Policy.Max_Data then
             Flow_Control_Policy.Raise_Connection_Limit
-              (Item.Flow, Frame.Maximum);
+              (Candidate_Flow, Frame.Maximum);
          elsif Frame.Kind = Application_Frame_Policy.Max_Stream_Data then
+            Receive_Status :=
+              Receive_Flow_Control_Policy.Check_Max_Stream_Data
+                (Candidate_Receive, Frame.Stream_ID, Local_Bidi_Opened,
+                 Local_Uni_Opened);
+            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+               Result.Status := Process_Status_For (Receive_Status);
+               return;
+            end if;
             Flow_Control_Policy.Raise_Stream_Limit
-              (Item.Flow, Frame.Stream_ID, Frame.Maximum, Updated);
+              (Candidate_Flow, Frame.Stream_ID, Frame.Maximum, Updated);
             if Updated = Flow_Control_Policy.Stream_Not_Sendable then
                Result.Status := Invalid_Stream_State;
                return;
@@ -852,11 +944,11 @@ package body Flyology.QUIC.Application_Space is
                Result.Status := Invalid_Stream_Limit;
                return;
             elsif Frame.Kind = Application_Frame_Policy.Max_Streams_Bidi then
-               Item.Peer_Bidi := Varint_Policy.Value_Type'Max
-                 (Item.Peer_Bidi, Frame.Maximum);
+               Candidate_Peer_Bidi := Varint_Policy.Value_Type'Max
+                 (Candidate_Peer_Bidi, Frame.Maximum);
             else
-               Item.Peer_Uni := Varint_Policy.Value_Type'Max
-                 (Item.Peer_Uni, Frame.Maximum);
+               Candidate_Peer_Uni := Varint_Policy.Value_Type'Max
+                 (Candidate_Peer_Uni, Frame.Maximum);
             end if;
          elsif Frame.Kind = Application_Frame_Policy.Acknowledgment then
             Ranges := ACK_Range_Policy.Decode
@@ -872,8 +964,8 @@ package body Flyology.QUIC.Application_Space is
                return;
             end if;
             Sent_Packet_Policy.Apply_ACK
-              (Item.Sent, Ranges, Now,
-               Recovery_Policy.Loss_Delay (Item.Recovery), Applied);
+              (Candidate_Sent, Ranges, Now,
+               Recovery_Policy.Loss_Delay (Candidate_Recovery), Applied);
             if Applied.Status = Sent_Packet_Policy.Acknowledges_Unsent_Packet
             then
                Result.Status := Acknowledges_Unsent_Packet;
@@ -883,7 +975,8 @@ package body Flyology.QUIC.Application_Space is
             ACKed_Ack_Eliciting := False;
             for Index in 1 .. Applied.Count loop
                Resolve_Retransmittable_Frame
-                 (Item, Applied.Events (Index).Packet.Number,
+                 (Candidate_Retransmittable, Candidate_Packet_Frames,
+                  Applied.Events (Index).Packet.Number,
                   Applied.Events (Index).Kind =
                     Sent_Packet_Policy.Acknowledged);
                if Applied.Events (Index).Kind =
@@ -901,7 +994,7 @@ package body Flyology.QUIC.Application_Space is
                  and then Now >= Applied.Events (Index).Packet.Sent_At
                then
                   Recovery_Policy.Update_RTT
-                    (Item.Recovery,
+                    (Candidate_Recovery,
                      Now - Applied.Events (Index).Packet.Sent_At,
                      Decoded_ACK_Delay
                        (Frame.Base.ACK_Delay, ACK_Delay_Exponent),
@@ -910,16 +1003,25 @@ package body Flyology.QUIC.Application_Space is
                end if;
             end loop;
             if ACKed_Ack_Eliciting then
-               Recovery_Policy.On_ACK_Received (Item.Recovery);
+               Recovery_Policy.On_ACK_Received (Candidate_Recovery);
             end if;
             Recovery_Policy.On_Packets_Resolved
-              (Item.Recovery, Applied.Events, Applied.Count, Now,
+              (Candidate_Recovery, Applied.Events, Applied.Count, Now,
                Application_Limited => False);
             Result.Resolved_Count :=
               Result.Resolved_Count + Natural (Applied.Count);
          end if;
          Cursor := Cursor + Frame.Consumed;
       end loop;
+      Item.Streams := Candidate_Streams;
+      Item.Receive_Flow := Candidate_Receive;
+      Item.Flow := Candidate_Flow;
+      Item.Sent := Candidate_Sent;
+      Item.Recovery := Candidate_Recovery;
+      Item.Retransmittable := Candidate_Retransmittable;
+      Item.Packet_Frames := Candidate_Packet_Frames;
+      Item.Peer_Bidi := Candidate_Peer_Bidi;
+      Item.Peer_Uni := Candidate_Peer_Uni;
       Result.Status := Processed;
    end Process_Packet;
 end Flyology.QUIC.Application_Space;

@@ -7,6 +7,7 @@ with Flyology.QUIC.Long_Header_Policy;
 with Flyology.QUIC.Recovery_Policy;
 with Flyology.QUIC.Stream_ID_Policy;
 with Flyology.QUIC.TLS_Session;
+with Flyology.QUIC.Transport_Parameter_Policy;
 with Flyology.QUIC.Varint_Policy;
 
 --  Internal packet-driven QUIC/TLS connection state machine.
@@ -54,7 +55,9 @@ private package Flyology.QUIC.Connection_Driver is
       Pinned_Certificate      : Ada.Streams.Stream_Element_Array;
       Original_Destination_ID : Ada.Streams.Stream_Element_Array;
       Destination             : Long_Header_Policy.Connection_ID;
-      Source                  : Long_Header_Policy.Connection_ID)
+      Source                  : Long_Header_Policy.Connection_ID;
+      Local_Parameters        :
+        Transport_Parameter_Policy.Transport_Parameters)
    with Pre => State (Item) = Uninitialized
      and then ALPN'Length in 1 .. 255
      and then Transport_Parameters'Length <= 512
@@ -74,7 +77,9 @@ private package Flyology.QUIC.Connection_Driver is
       Private_Key             : Crypto_OpenSSL.Ed25519_Private_Key;
       Original_Destination_ID : Ada.Streams.Stream_Element_Array;
       Destination             : Long_Header_Policy.Connection_ID;
-      Source                  : Long_Header_Policy.Connection_ID)
+      Source                  : Long_Header_Policy.Connection_ID;
+      Local_Parameters        :
+        Transport_Parameter_Policy.Transport_Parameters)
    with Pre => State (Item) = Uninitialized
      and then ALPN'Length in 1 .. 255
      and then Transport_Parameters'Length <= 512
@@ -226,5 +231,6 @@ private
       Peer_Max_ACK_Delay    : Recovery_Policy.Duration := 25_000;
       Local_ID              : Long_Header_Policy.Connection_ID;
       Peer_ID               : Long_Header_Policy.Connection_ID;
+      Local_Parameters      : Transport_Parameter_Policy.Transport_Parameters;
    end record;
 end Flyology.QUIC.Connection_Driver;

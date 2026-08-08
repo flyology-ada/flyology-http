@@ -2,6 +2,7 @@ with Ada.Streams;
 with Flyology.QUIC.Application_Connection;
 with Flyology.QUIC.Flow_Control_Policy;
 with Flyology.QUIC.Long_Header_Policy;
+with Flyology.QUIC.Receive_Flow_Control_Policy;
 with Flyology.QUIC.Recovery_Policy;
 with Flyology.QUIC.Sent_Packet_Policy;
 with Flyology.QUIC.Stream_ID_Policy;
@@ -39,6 +40,7 @@ private package Flyology.QUIC.Application_Space is
       Destination : Long_Header_Policy.Connection_ID;
       Local_ID    : Long_Header_Policy.Connection_ID;
       Role        : Stream_ID_Policy.Endpoint_Role;
+      Local       : Transport_Parameter_Policy.Transport_Parameters;
       Peer        : Transport_Parameter_Policy.Transport_Parameters)
    with
      Pre => not Is_Initialized (Item)
@@ -156,6 +158,7 @@ private package Flyology.QUIC.Application_Space is
       Acknowledges_Unsent_Packet,
       Invalid_Stream_Limit,
       Invalid_Stream_State,
+      Flow_Control_Error,
       Stream_Capacity_Exceeded,
       Stream_Data_Too_Large,
       Conflicting_Stream_Data,
@@ -277,6 +280,7 @@ private
       Streams     : Stream_Table_Policy.Stream_Table;
       Allocator   : Stream_ID_Policy.Allocator;
       Flow        : Flow_Control_Policy.State;
+      Receive_Flow : Receive_Flow_Control_Policy.State;
       Peer_Bidi   : Varint_Policy.Value_Type := 0;
       Peer_Uni    : Varint_Policy.Value_Type := 0;
       Sent        : Sent_Packet_Policy.Ledger;

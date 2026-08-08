@@ -30,6 +30,7 @@ alr gnatprove \
   flyology-quic-one_rtt_packet_policy.adb \
   flyology-quic-packet_number_policy.adb \
   flyology-quic-protection_policy.adb \
+  flyology-quic-receive_flow_control_policy.adb \
   flyology-quic-recovery_policy.adb \
   flyology-quic-sent_packet_policy.adb \
   flyology-quic-stream_frame_policy.adb \

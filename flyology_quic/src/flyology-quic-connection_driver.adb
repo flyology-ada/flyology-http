@@ -298,6 +298,7 @@ package body Flyology.QUIC.Connection_Driver is
         (Item.Application, Sending, Receiving, Item.Peer_ID, Item.Local_ID,
          (if Item.Is_Client then Stream_ID_Policy.Client
           else Stream_ID_Policy.Server),
+         Item.Local_Parameters,
          Peer);
       Item.Peer_ACK_Exponent :=
         (if Peer.ACK_Delay_Exponent.Present
@@ -318,7 +319,9 @@ package body Flyology.QUIC.Connection_Driver is
       Pinned_Certificate      : Ada.Streams.Stream_Element_Array;
       Original_Destination_ID : Ada.Streams.Stream_Element_Array;
       Destination             : Long_Header_Policy.Connection_ID;
-      Source                  : Long_Header_Policy.Connection_ID) is
+      Source                  : Long_Header_Policy.Connection_ID;
+      Local_Parameters        :
+        Transport_Parameter_Policy.Transport_Parameters) is
    begin
       TLS_Session.Initialize_Client
         (Item.TLS, ALPN, Transport_Parameters, Pinned_Certificate);
@@ -329,6 +332,7 @@ package body Flyology.QUIC.Connection_Driver is
       Item.Is_Handshake_Confirmed := False;
       Item.Local_ID := Source;
       Item.Peer_ID := Destination;
+      Item.Local_Parameters := Local_Parameters;
       Item.Current := Client_Initial;
    end Initialize_Client;
 
@@ -340,7 +344,9 @@ package body Flyology.QUIC.Connection_Driver is
       Private_Key             : Crypto_OpenSSL.Ed25519_Private_Key;
       Original_Destination_ID : Ada.Streams.Stream_Element_Array;
       Destination             : Long_Header_Policy.Connection_ID;
-      Source                  : Long_Header_Policy.Connection_ID) is
+      Source                  : Long_Header_Policy.Connection_ID;
+      Local_Parameters        :
+        Transport_Parameter_Policy.Transport_Parameters) is
    begin
       TLS_Session.Initialize_Server
         (Item.TLS, ALPN, Transport_Parameters, Certificate_DER, Private_Key);
@@ -351,6 +357,7 @@ package body Flyology.QUIC.Connection_Driver is
       Item.Is_Handshake_Confirmed := False;
       Item.Local_ID := Source;
       Item.Peer_ID := Destination;
+      Item.Local_Parameters := Local_Parameters;
       Item.Current := Server_Initial;
    end Initialize_Server;
 

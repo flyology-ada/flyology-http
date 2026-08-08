@@ -12,6 +12,7 @@ package body Flyology.QUIC.Connections is
    use type System.Address;
    use type Initial_Packet_Policy.Parse_Status;
    use type Transport_Parameter_Policy.Encode_Status;
+   use type Transport_Parameter_Policy.Decode_Status;
    use type Transport_Parameter_Policy.Endpoint_Role;
 
    type Connection_Impl is limited record
@@ -148,12 +149,18 @@ package body Flyology.QUIC.Connections is
       Original_Destination_ID : Ada.Streams.Stream_Element_Array;
       Destination             : Connection_ID;
       Source                  : Connection_ID) is
+      Decoded : constant Transport_Parameter_Policy.Decode_Result :=
+        Transport_Parameter_Policy.Decode
+          (Transport_Parameters, Transport_Parameter_Policy.Client);
    begin
+      if Decoded.Status /= Transport_Parameter_Policy.Decoded then
+         raise Program_Error with "invalid QUIC client transport parameters";
+      end if;
       Ensure_Impl (Item);
       Connection_Driver.Initialize_Client
         (Impl (Item).Driver, ALPN, Transport_Parameters, Pinned_Certificate,
          Original_Destination_ID, Internal_ID (Destination),
-         Internal_ID (Source));
+         Internal_ID (Source), Decoded.Parameters);
    end Initialize_Client;
 
    procedure Initialize_Client
@@ -189,13 +196,19 @@ package body Flyology.QUIC.Connections is
       Original_Destination_ID : Ada.Streams.Stream_Element_Array;
       Destination             : Connection_ID;
       Source                  : Connection_ID) is
+      Decoded : constant Transport_Parameter_Policy.Decode_Result :=
+        Transport_Parameter_Policy.Decode
+          (Transport_Parameters, Transport_Parameter_Policy.Server);
    begin
+      if Decoded.Status /= Transport_Parameter_Policy.Decoded then
+         raise Program_Error with "invalid QUIC server transport parameters";
+      end if;
       Ensure_Impl (Item);
       Connection_Driver.Initialize_Server
         (Impl (Item).Driver, ALPN, Transport_Parameters, Certificate_DER,
          Crypto_OpenSSL.Ed25519_Private_Key (Private_Key),
          Original_Destination_ID, Internal_ID (Destination),
-         Internal_ID (Source));
+         Internal_ID (Source), Decoded.Parameters);
    end Initialize_Server;
 
    procedure Initialize_Server_From_Initial
