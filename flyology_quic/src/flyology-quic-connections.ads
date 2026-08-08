@@ -19,8 +19,10 @@ package Flyology.QUIC.Connections is
    Max_Output_Datagrams : constant := 20;
    --  Largest stream payload carried by one generated datagram.
    Max_Stream_Payload : constant := 1_100;
-   --  Application streams retained by one bounded QUIC connection.
-   Max_Tracked_Streams : constant Positive := 32;
+   --  Lifetime stream accounting retained by one bounded QUIC connection.
+   --  Large byte reassembly buffers remain separately bounded to 32 active
+   --  streams and are recycled after protocol completion.
+   Max_Tracked_Streams : constant Positive := 1_024;
    --  Largest QUIC connection identifier accepted by version 1.
    Max_Connection_ID_Length : constant := 20;
 
@@ -455,6 +457,23 @@ package Flyology.QUIC.Connections is
       Status            : out Send_Status)
    with Pre => Is_Connected (Item);
 
+   --  Return peer concurrency credit after retiring streams. Maximum is the
+   --  new cumulative stream-count limit carried by MAX_STREAMS.
+   --  @param Item Connected endpoint
+   --  @param Direction Stream direction whose cumulative limit is raised
+   --  @param Maximum New cumulative stream-count limit
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   procedure Build_Max_Streams_Datagram
+     (Item      : in out Connection;
+      Direction : Stream_Direction;
+      Maximum   : Stream_Offset;
+      Now       : Timestamp;
+      Packet    : out Datagram;
+      Status    : out Send_Status)
+   with Pre => Is_Connected (Item) and then Maximum <= 2**60;
+
    --  Build one protected ACK-only packet for received application packets.
    --  @param Item Connected endpoint
    --  @param ACK_Delay Peer-visible encoded acknowledgment delay
@@ -561,6 +580,16 @@ package Flyology.QUIC.Connections is
      (Item : in out Connection; ID : Stream_ID; Length : Stream_Offset)
    with Pre => Has_Stream (Item, ID)
      and then Length <= Available_Length (Item, ID);
+
+   --  Return completed receive reassembly storage to the concurrent-stream
+   --  pool. Callers must retain protocol-level completion tombstones so late
+   --  retransmissions cannot be delivered twice.
+   --  @param Item Connection to update
+   --  @param ID Completed or reset stream identifier
+   procedure Release_Stream
+     (Item : in out Connection; ID : Stream_ID)
+   with Pre => Has_Stream (Item, ID)
+     and then (Is_Complete (Item, ID) or else Was_Reset (Item, ID));
 
 private
    type Connection is new Ada.Finalization.Limited_Controlled with record

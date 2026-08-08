@@ -224,10 +224,13 @@ connections sequentially. The library does not provide proxying or content
 decoding. The managed UDP adapter uses a bounded
 connection registry and fixed worker set, dispatches request streams
 synchronously, and buffers each complete request stream before entering the
-route handler. Each connection's bounded profile retains 32 QUIC streams and
-serves at most 29 requests, leaving room for the peer's mandatory HTTP/3
-unidirectional streams. The unified server defaults to 128 concurrent HTTP/3
-connections and accepts an explicit capacity up to 256. The QPACK
+route handler. Each connection retains at most 32 concurrent QUIC stream
+reassembly buffers and recycles completed request state. The unified server
+defaults to 128 concurrent HTTP/3 connections alongside 64 TCP connections,
+serves 1,000 requests per H3 connection by default, and accepts explicit
+limits up to 256 concurrent H3 connections and 1,000 requests per connection.
+These are separate resource controls: connection capacity creates worker
+tasks, while the request limit controls connection rotation. The QPACK
 profile does not use the dynamic table. It is experimental and does not claim
 production qualification. HTTP/3 server push is disabled. Because this profile
 does not advertise MAX_PUSH_ID, received push promises and push streams are

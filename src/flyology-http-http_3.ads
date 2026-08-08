@@ -223,6 +223,19 @@ package Flyology.HTTP.HTTP_3 is
       Output    : out Event;
       Status    : out Operation_Status);
 
+   --  Release a completed server request after its response has been sent.
+   --  High-level servers do this automatically; low-level server drivers call
+   --  it after Poll reports Stream_Ended and response construction completes.
+   --  @param Item Initialized server session
+   --  @param Transport Connected QUIC connection
+   --  @param Stream Completed request stream identifier
+   --  @param Status Operation outcome
+   procedure Release_Request
+     (Item      : in out Session;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Status    : out Operation_Status);
+
    --  Allocate a client-initiated bidirectional request stream.
    --  @param Item Initialized client session
    --  @param Transport Connected QUIC connection

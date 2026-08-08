@@ -1,4 +1,5 @@
 procedure Flyology.QUIC.Application_Frame_Policy.Smoke is
+   use type Ada.Streams.Stream_Element;
    use type Varint_Policy.Value_Type;
 
    function Hex (Value : String) return Ada.Streams.Stream_Element_Array is
@@ -107,5 +108,22 @@ begin
          and then Stop.Stream_ID = 4
          and then Stop.Application_Error = 16#10C#
          and then Natural (Reset.Consumed + Stop.Consumed) = Encoded.Length);
+   end;
+
+   declare
+      Encoded : constant Max_Streams_Encode_Result :=
+        Encode_Max_Streams (Bidirectional => True, Maximum => 30);
+      Credit : constant Parse_Result :=
+        Parse_Next
+          (Encoded.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)), 0);
+   begin
+      pragma Assert
+        (Credit.Status = Application_Frame_Policy.Parsed
+         and then Credit.Kind = Max_Streams_Bidi
+         and then Credit.Maximum = 30
+         and then Natural (Credit.Consumed) <= Encoded.Length
+         and then Encoded.Data
+           (Ada.Streams.Stream_Element_Offset (Encoded.Length)) = 0);
    end;
 end Flyology.QUIC.Application_Frame_Policy.Smoke;

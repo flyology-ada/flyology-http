@@ -19,7 +19,7 @@ procedure HTTP3_Public_Smoke is
    Client_Event, Server_Event : H3.Event;
    Client_Status, Server_Status : H3.Operation_Status;
 begin
-   pragma Assert (QUIC.Max_Tracked_Streams = 32);
+   pragma Assert (QUIC.Max_Tracked_Streams = 1_024);
    declare
       Defaults : constant QUIC.Transport_Settings := (others => <>);
    begin

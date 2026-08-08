@@ -1152,7 +1152,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Max_Requests       : Positive := Default_Requests_Per_Connection;
       Token              : access Flyology.Cancellation.Token := null)
    is
       State : Connection_State_Access := new Connection_State'
@@ -1274,6 +1274,30 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Served := Served + 1;
       end Dispatch_Request;
 
+      procedure Return_Request_Credit is
+         Packet : QUIC.Datagram;
+         Status : QUIC.Send_Status;
+         Limit  : constant QUIC.Stream_Offset :=
+           QUIC.Stream_Offset'Min
+             (2**60,
+              Transport_Settings.Max_Streams_Bidi
+                + QUIC.Stream_Offset (Served));
+      begin
+         loop
+            QUIC.Build_Max_Streams_Datagram
+              (State.Transport, QUIC.Bidirectional, Limit, Now (State.all),
+               Packet, Status);
+            exit when Status = QUIC.Sent;
+            if Status /= QUIC.Congestion_Blocked then
+               raise Protocol_Error with
+                 "QUIC MAX_STREAMS failed: " &
+                 QUIC.Send_Status'Image (Status);
+            end if;
+            Receive_One (State.all, Remaining (Connection_Deadline));
+         end loop;
+         Send (State.all, Packet, Remaining (Connection_Deadline));
+      end Return_Request_Credit;
+
       procedure Release (Slot : Positive) is
       begin
          Requests (Slot).Occupied := False;
@@ -1327,7 +1351,18 @@ package body Flyology.HTTP.Server.HTTP_3 is
                     "HTTP/3 stream ended without request";
                end if;
                Dispatch_Request (Positive (Slot));
+               H3.Release_Request
+                 (State.Session, State.Transport,
+                  Requests (Slot).Stream, H3_Status);
+               if H3_Status /= H3.Succeeded then
+                  raise Protocol_Error with
+                    "HTTP/3 request release failed: " &
+                    H3.Operation_Status'Image (H3_Status);
+               end if;
                Release (Positive (Slot));
+               if Served < Max_Requests then
+                  Return_Request_Credit;
+               end if;
             when H3.Stream_Reset =>
                if Slot /= 0 then
                   Release (Positive (Slot));
@@ -1436,7 +1471,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Max_Requests       : Positive := Default_Requests_Per_Connection;
       Token              : access Flyology.Cancellation.Token := null)
    is
       First : Received_Datagram;
@@ -1482,15 +1517,18 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Max_Requests       : Positive := Default_Requests_Per_Connection;
       Token              : not null access Flyology.Cancellation.Token)
    is
       subtype Slot_Index is Positive range 1 .. Capacity;
       subtype Inbox is Datagram_Channels.Channel (Capacity => 32);
       type Inbox_Array is array (Slot_Index) of aliased Inbox;
+      type Inbox_Array_Access is access Inbox_Array;
+      type Registry_Access is access Connection_Registry;
 
-      Inboxes  : Inbox_Array;
-      Registry : Connection_Registry (Capacity);
+      Inboxes  : constant Inbox_Array_Access := new Inbox_Array;
+      Registry : constant Registry_Access :=
+        new Connection_Registry (Capacity);
 
       task type Worker is
          entry Start (Index : Slot_Index);
@@ -1528,11 +1566,12 @@ package body Flyology.HTTP.Server.HTTP_3 is
       end Worker;
 
       type Worker_Array is array (Slot_Index) of Worker;
-      Workers : Worker_Array;
+      type Worker_Array_Access is access Worker_Array;
+      Workers : constant Worker_Array_Access := new Worker_Array;
 
       procedure Close_Inboxes is
       begin
-         for Index in Inboxes'Range loop
+         for Index in Inboxes.all'Range loop
             Inboxes (Index).Close;
          end loop;
       end Close_Inboxes;
@@ -1549,7 +1588,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       end if;
 
       Sockets.Enable_Datagram_Metadata (Socket);
-      for Index in Workers'Range loop
+      for Index in Workers.all'Range loop
          Workers (Index).Start (Index);
       end loop;
 
@@ -1619,7 +1658,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Max_Requests       : Positive := Default_Requests_Per_Connection;
       Token              : access Flyology.Cancellation.Token := null) is
    begin
       Serve

@@ -13,6 +13,7 @@ private package Flyology.QUIC.Application_Frame_Policy
        SPARK_Mode => On
 is
    use type Ada.Streams.Stream_Element_Offset;
+   use type Varint_Policy.Value_Type;
 
    Max_Frame_Data : constant := 65_535;
    subtype Frame_Offset is
@@ -113,4 +114,21 @@ is
    with
      Global => null,
      Post => Encode_Stream_Abort'Result.Length in 7 .. Max_Abort_Length;
+
+   Max_Streams_Length : constant := 9;
+   subtype Max_Streams_Encode_Length is Natural range 0 .. Max_Streams_Length;
+   type Max_Streams_Encode_Result is record
+      Data   : Ada.Streams.Stream_Element_Array (1 .. Max_Streams_Length) :=
+        (others => 0);
+      Length : Max_Streams_Encode_Length := 0;
+   end record;
+
+   function Encode_Max_Streams
+     (Bidirectional : Boolean;
+      Maximum       : Varint_Policy.Value_Type)
+      return Max_Streams_Encode_Result
+   with
+     Global => null,
+     Pre => Maximum <= 2**60,
+     Post => Encode_Max_Streams'Result.Length in 3 .. Max_Streams_Length;
 end Flyology.QUIC.Application_Frame_Policy;

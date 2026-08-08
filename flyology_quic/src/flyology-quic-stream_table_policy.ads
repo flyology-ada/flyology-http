@@ -136,6 +136,18 @@ is
        and then Length <= Available_Length (Item, Stream_ID),
      Post => Stream_Count (Item) = Stream_Count (Item'Old);
 
+   --  Release completed reassembly storage. Flow-control accounting remains
+   --  owned by its lifetime table; this only returns one bounded byte buffer
+   --  to the concurrent-stream pool.
+   procedure Release
+     (Item      : in out Stream_Table;
+      Stream_ID : Varint_Policy.Value_Type)
+   with
+     Global => null,
+     Pre => Has_Stream (Item, Stream_ID)
+       and then (Is_Complete (Item, Stream_ID)
+                 or else Was_Reset (Item, Stream_ID));
+
    type Process_Status is
      (Processed,
       Frame_Truncated,

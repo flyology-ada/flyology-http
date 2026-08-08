@@ -1399,7 +1399,7 @@ package body Flyology.HTTP.Server.Routing is
       Handshake_Timeout    : Duration := 10.0;
       Max_Connection_Age   : Duration := 300.0;
       TCP_Max_Requests     : Natural := 1_000;
-      HTTP_3_Max_Requests  : Positive := 29;
+      HTTP_3_Max_Requests  : Positive := 1_000;
       Header_Timeout       : Duration := -1.0;
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
@@ -1630,7 +1630,7 @@ package body Flyology.HTTP.Server.Routing is
       Handshake_Timeout    : Duration := 10.0;
       Max_Connection_Age   : Duration := 300.0;
       TCP_Max_Requests     : Natural := 1_000;
-      HTTP_3_Max_Requests  : Positive := 29;
+      HTTP_3_Max_Requests  : Positive := 1_000;
       Header_Timeout       : Duration := -1.0;
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
@@ -1779,7 +1779,7 @@ package body Flyology.HTTP.Server.Routing is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 29;
+      Max_Requests       : Positive := 1_000;
       Token              : access Flyology.Cancellation.Token := null)
    is
    begin
@@ -1802,7 +1802,7 @@ package body Flyology.HTTP.Server.Routing is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 29;
+      Max_Requests       : Positive := 1_000;
       Token              : access Flyology.Cancellation.Token := null)
    is
       procedure Dispatch_HTTP_3
@@ -1833,7 +1833,7 @@ package body Flyology.HTTP.Server.Routing is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := 29;
+      Max_Requests       : Positive := 1_000;
       Token              : not null access Flyology.Cancellation.Token)
    is
       procedure Dispatch_HTTP_3

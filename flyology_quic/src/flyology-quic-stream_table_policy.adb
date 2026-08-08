@@ -78,7 +78,7 @@ is
      (Item      : Stream_Table;
       Stream_ID : Varint_Policy.Value_Type) return Boolean
    is
-     (Find (Item, Stream_ID) /= 0);
+     (Item.Count > 0 and then Find (Item, Stream_ID) /= 0);
 
    function Available_Length
      (Item      : Stream_Table;
@@ -172,7 +172,12 @@ is
       Created     : Boolean := False;
       Data_Status : Stream_Reassembly_Policy.Insert_Status;
    begin
-      if Index = 0 then
+      if Index /= 0 and then Item.Count = 0 then
+         --  Fail closed if the private occupancy counter is ever inconsistent
+         --  with a slot, rather than permitting an underflow during release.
+         Status := Stream_Capacity_Exceeded;
+         return;
+      elsif Index = 0 then
          if Item.Count = Max_Streams then
             Status := Stream_Capacity_Exceeded;
             return;
@@ -255,6 +260,28 @@ is
       end if;
       Stream_Reassembly_Policy.Consume (Item.Slots (Index).Data, Length);
    end Consume;
+
+   procedure Release
+     (Item      : in out Stream_Table;
+      Stream_ID : Varint_Policy.Value_Type)
+   is
+      Index : constant Optional_Slot := Find (Item, Stream_ID);
+      Old_Count : constant Stream_Count_Type := Item.Count;
+   begin
+      pragma Assert (Index in Slot_Index);
+      if not Stream_Reassembly_Policy.Is_Complete (Item.Slots (Index).Data)
+        and then not Item.Slots (Index).Reset_Seen
+      then
+         return;
+      end if;
+      Stream_Reassembly_Policy.Reset (Item.Slots (Index).Data);
+      Item.Slots (Index).Occupied := False;
+      Item.Slots (Index).ID := 0;
+      Item.Slots (Index).Reset_Seen := False;
+      Item.Slots (Index).Reset_Code := 0;
+      Item.Count := Item.Count - 1;
+      pragma Assert (Item.Count = Old_Count - 1);
+   end Release;
 
    procedure Process_Plaintext
      (Item      : in out Stream_Table;

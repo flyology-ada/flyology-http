@@ -17,6 +17,7 @@ with Flyology.QUIC.Varint_Policy;
 --  and lightweight Flyology tasks to drive the same synchronous state.
 private package Flyology.QUIC.Connection_Driver is
    use type Ada.Streams.Stream_Element_Offset;
+   use type Varint_Policy.Value_Type;
 
    Max_Datagram_Length : constant := 1_350;
    Max_Output_Datagrams : constant := 20;
@@ -172,6 +173,15 @@ private package Flyology.QUIC.Connection_Driver is
       Status            : out Application_Space.Send_Status)
    with Pre => Is_Connected (Item);
 
+   procedure Build_Max_Streams_Datagram
+     (Item          : in out Connection;
+      Bidirectional : Boolean;
+      Maximum       : Varint_Policy.Value_Type;
+      Now           : Application_Space.Timestamp;
+      Packet        : out Datagram;
+      Status        : out Application_Space.Send_Status)
+   with Pre => Is_Connected (Item) and then Maximum <= 2**60;
+
    procedure Build_ACK_Datagram
      (Item      : in out Connection;
       ACK_Delay : Varint_Policy.Value_Type;
@@ -229,6 +239,13 @@ private package Flyology.QUIC.Connection_Driver is
       Length    : Application_Space.Stream_Offset)
    with Pre => Has_Stream (Item, Stream_ID)
      and then Length <= Available_Length (Item, Stream_ID);
+
+   procedure Release_Stream
+     (Item      : in out Connection;
+      Stream_ID : Varint_Policy.Value_Type)
+   with Pre => Has_Stream (Item, Stream_ID)
+     and then (Is_Complete (Item, Stream_ID)
+               or else Was_Reset (Item, Stream_ID));
 
 private
    type Connection is limited record

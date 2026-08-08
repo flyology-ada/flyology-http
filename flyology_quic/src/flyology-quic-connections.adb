@@ -523,6 +523,26 @@ package body Flyology.QUIC.Connections is
       Status := Public_Status (Internal_Status);
    end Build_Stream_Abort_Datagram;
 
+   procedure Build_Max_Streams_Datagram
+     (Item      : in out Connection;
+      Direction : Stream_Direction;
+      Maximum   : Stream_Offset;
+      Now       : Timestamp;
+      Packet    : out Datagram;
+      Status    : out Send_Status)
+   is
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      Connection_Driver.Build_Max_Streams_Datagram
+        (Impl (Item).Driver, Direction = Bidirectional,
+         Varint_Policy.Value_Type (Maximum),
+         Application_Space.Timestamp (Now), Internal_Packet,
+         Internal_Status);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Max_Streams_Datagram;
+
    procedure Build_ACK_Datagram
      (Item      : in out Connection;
       ACK_Delay : Varint_Policy.Value_Type;
@@ -609,4 +629,10 @@ package body Flyology.QUIC.Connections is
       Connection_Driver.Consume
         (Impl (Item).Driver, ID, Application_Space.Stream_Offset (Length));
    end Consume;
+
+   procedure Release_Stream
+     (Item : in out Connection; ID : Stream_ID) is
+   begin
+      Connection_Driver.Release_Stream (Impl (Item).Driver, ID);
+   end Release_Stream;
 end Flyology.QUIC.Connections;

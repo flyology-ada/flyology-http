@@ -70,4 +70,14 @@ begin
    pragma Assert
      (Status = Stream_Capacity_Exceeded
       and then Stream_Count (Item) = Max_Streams);
+   Release (Item, 0);
+   pragma Assert
+     (Stream_Count (Item) = Max_Streams - 1 and then not Has_Stream (Item, 0));
+   Insert
+     (Item, Varint_Policy.Value_Type (4 * Max_Streams), 0, True,
+      Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+   pragma Assert
+     (Status = Accepted
+      and then Stream_Count (Item) = Max_Streams
+      and then Has_Stream (Item, Varint_Policy.Value_Type (4 * Max_Streams)));
 end Flyology.QUIC.Stream_Table_Policy.Smoke;

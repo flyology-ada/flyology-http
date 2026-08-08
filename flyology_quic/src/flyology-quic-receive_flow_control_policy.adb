@@ -57,6 +57,20 @@ is
    function Stream_Count_Used (Item : State) return Stream_Count is
      (Item.Count);
 
+   procedure Raise_Stream_Limit
+     (Item          : in out State;
+      Bidirectional : Boolean;
+      Limit         : Value_Type) is
+   begin
+      if Bidirectional then
+         Item.Initial.Streams_Bidi :=
+           Value_Type'Max (Item.Initial.Streams_Bidi, Limit);
+      else
+         Item.Initial.Streams_Uni :=
+           Value_Type'Max (Item.Initial.Streams_Uni, Limit);
+      end if;
+   end Raise_Stream_Limit;
+
    function Initial_Stream_Limit
      (Item : State; ID : Stream_ID_Policy.Stream_ID) return Value_Type
    is

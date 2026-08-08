@@ -89,6 +89,13 @@ package body Flyology.QUIC.Application_Space is
       Stream_Table_Policy.Consume (Item.Streams, Stream_ID, Length);
    end Consume;
 
+   procedure Release_Stream
+     (Item      : in out State;
+      Stream_ID : Varint_Policy.Value_Type) is
+   begin
+      Stream_Table_Policy.Release (Item.Streams, Stream_ID);
+   end Release_Stream;
+
    function Retained_Packets
      (Item : State) return Sent_Packet_Policy.Sent_Count
    is
@@ -546,6 +553,29 @@ package body Flyology.QUIC.Application_Space is
          Result.Status := Internal_State_Error;
       end if;
    end Build_Tracked_Frame_Packet;
+
+   procedure Build_Max_Streams_Packet
+     (Item          : in out State;
+      Bidirectional : Boolean;
+      Maximum       : Varint_Policy.Value_Type;
+      Now           : Timestamp;
+      Packet        : out Ada.Streams.Stream_Element_Array;
+      Result        : out Send_Result)
+   is
+      Frame : constant Application_Frame_Policy.Max_Streams_Encode_Result :=
+        Application_Frame_Policy.Encode_Max_Streams
+          (Bidirectional, Maximum);
+   begin
+      Build_Tracked_Frame_Packet
+        (Item,
+         Frame.Data (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
+         Now, Permit_Probe => False, Retain_Frame => True,
+         Packet => Packet, Result => Result);
+      if Result.Status = Sent then
+         Receive_Flow_Control_Policy.Raise_Stream_Limit
+           (Item.Receive_Flow, Bidirectional, Maximum);
+      end if;
+   end Build_Max_Streams_Packet;
 
    procedure Build_Stream_Abort_Packet
      (Item              : in out State;

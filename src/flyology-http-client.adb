@@ -62,9 +62,9 @@ package body Flyology.HTTP.Client is
    type Transport_Protocol is
      (HTTP_1_Transport, HTTP_2_Transport, HTTP_3_Transport);
 
-   --  The current bounded H3 session retains three critical streams and 29
-   --  request streams. Rotate before another request can exhaust that table.
-   HTTP_3_Requests_Per_Connection : constant Positive := 29;
+   --  Match the server's generous default lifetime while completed stream
+   --  storage is recycled inside the bounded concurrent-stream profile.
+   HTTP_3_Requests_Per_Connection : constant Positive := 1_000;
 
    type Pooled_Connection is limited record
       Channel  : aliased Connections.Connection;

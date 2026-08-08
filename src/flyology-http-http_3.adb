@@ -227,6 +227,23 @@ package body Flyology.HTTP.HTTP_3 is
       end if;
    end Poll;
 
+   procedure Release_Request
+     (Item      : in out Session;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Status    : out Operation_Status)
+   is
+      Result : Internal.Operation_Status;
+   begin
+      if not Is_Initialized (Item) then
+         Status := Uninitialized;
+         return;
+      end if;
+      Internal.Release_Request
+        (Impl (Item).Value, Transport, Stream, Result);
+      Status := Public_Status (Result);
+   end Release_Request;
+
    procedure Open_Request
      (Item      : in out Session;
       Transport : in out QUIC.Connection;

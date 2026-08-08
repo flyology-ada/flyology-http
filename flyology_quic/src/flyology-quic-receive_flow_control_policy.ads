@@ -13,7 +13,7 @@ private package Flyology.QUIC.Receive_Flow_Control_Policy
 is
    use type Interfaces.Unsigned_64;
 
-   Max_Streams : constant := 32;
+   Max_Streams : constant := 1_024;
    subtype Stream_Count is Natural range 0 .. Max_Streams;
    subtype Stream_Index is Positive range 1 .. Max_Streams;
    subtype Value_Type is Varint_Policy.Value_Type;
@@ -53,6 +53,14 @@ is
 
    function Stream_Count_Used (Item : State) return Stream_Count
    with Global => null;
+
+   procedure Raise_Stream_Limit
+     (Item          : in out State;
+      Bidirectional : Boolean;
+      Limit         : Value_Type)
+   with
+     Global => null,
+     Pre => Limit <= 2**60;
 
    procedure Reserve_Stream
      (Item               : in out State;

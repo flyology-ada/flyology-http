@@ -91,6 +91,13 @@ package body Flyology.QUIC.Connection_Driver is
       Application_Space.Consume (Item.Application, Stream_ID, Length);
    end Consume;
 
+   procedure Release_Stream
+     (Item      : in out Connection;
+      Stream_ID : Varint_Policy.Value_Type) is
+   begin
+      Application_Space.Release_Stream (Item.Application, Stream_ID);
+   end Release_Stream;
+
    procedure Open_Stream
      (Item      : in out Connection;
       Direction : Stream_ID_Policy.Stream_Direction;
@@ -143,6 +150,25 @@ package body Flyology.QUIC.Connection_Driver is
          Packet.Length := Built.Packet_Length;
       end if;
    end Build_Stream_Abort_Datagram;
+
+   procedure Build_Max_Streams_Datagram
+     (Item          : in out Connection;
+      Bidirectional : Boolean;
+      Maximum       : Varint_Policy.Value_Type;
+      Now           : Application_Space.Timestamp;
+      Packet        : out Datagram;
+      Status        : out Application_Space.Send_Status)
+   is
+      Built : Application_Space.Send_Result;
+   begin
+      Packet := (others => <>);
+      Application_Space.Build_Max_Streams_Packet
+        (Item.Application, Bidirectional, Maximum, Now, Packet.Data, Built);
+      Status := Built.Status;
+      if Built.Status = Application_Space.Sent then
+         Packet.Length := Built.Packet_Length;
+      end if;
+   end Build_Max_Streams_Datagram;
 
    procedure Build_ACK_Datagram
      (Item      : in out Connection;

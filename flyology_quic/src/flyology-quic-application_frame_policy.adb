@@ -52,6 +52,26 @@ is
       return Result;
    end Encode_Stream_Abort;
 
+   function Encode_Max_Streams
+     (Bidirectional : Boolean;
+      Maximum       : Varint_Policy.Value_Type)
+      return Max_Streams_Encode_Result
+   is
+      Encoded : constant Varint_Policy.Encoded_Value :=
+        Varint_Policy.Encode (Maximum);
+      Result : Max_Streams_Encode_Result;
+   begin
+      Result.Data (1) := (if Bidirectional then 16#12# else 16#13#);
+      Result.Data
+        (2 .. Ada.Streams.Stream_Element_Offset (Encoded.Length + 1)) :=
+          Encoded.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length));
+      --  One-RTT header protection needs at least three plaintext octets.
+      --  PADDING is semantically neutral and retransmitted with the frame.
+      Result.Length := Natural'Max (3, Encoded.Length + 1);
+      return Result;
+   end Encode_Max_Streams;
+
    function Parse_Next
      (Data   : Ada.Streams.Stream_Element_Array;
       Cursor : Frame_Offset) return Parse_Result

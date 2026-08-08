@@ -13,7 +13,7 @@ private package Flyology.QUIC.Flow_Control_Policy
 is
    use type Interfaces.Unsigned_64;
 
-   Max_Streams : constant := 32;
+   Max_Streams : constant := 1_024;
    subtype Stream_Count is Natural range 0 .. Max_Streams;
    subtype Stream_Index is Positive range 1 .. Max_Streams;
    subtype Value_Type is Varint_Policy.Value_Type;

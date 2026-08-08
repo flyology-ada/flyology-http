@@ -352,9 +352,14 @@ package body HTTP_3_Internals is
          Add ("content-length", Decimal (Retained_Length));
       end if;
 
-      H3.Open_Request
-        (Data.Connection.HTTP_3, Data.Connection.QUIC_Transport,
-         Stream, Status);
+      loop
+         H3.Open_Request
+           (Data.Connection.HTTP_3, Data.Connection.QUIC_Transport,
+            Stream, Status);
+         exit when Status /= H3.Stream_Limit_Reached;
+         Receive_One
+           (Data.Owner, Data.Connection, Data.Started, Data.Timeout, Token);
+      end loop;
       if Status /= H3.Succeeded then
          raise Protocol_Error with
            "HTTP/3 request stream open failed: " &

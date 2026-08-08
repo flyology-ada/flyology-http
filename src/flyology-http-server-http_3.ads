@@ -22,9 +22,12 @@ package Flyology.HTTP.Server.HTTP_3 is
    --  Largest accepted listener capacity for the task-per-connection profile.
    Maximum_Connection_Capacity : constant Positive := 256;
 
-   --  Conservative request count available after the peer's mandatory HTTP/3
-   --  unidirectional streams occupy the bounded 32-stream QUIC table.
-   Maximum_Requests_Per_Connection : constant Positive := 29;
+   --  Default lifetime request policy. Completed request reassembly is
+   --  recycled; 32 retained QUIC streams bound concurrency, while compact
+   --  flow-control accounting supports one thousand lifetime exchanges.
+   Default_Requests_Per_Connection : constant Positive := 1_000;
+   --  Largest accepted lifetime request policy for the bounded profile.
+   Maximum_Requests_Per_Connection : constant Positive := 1_000;
 
    --  Run a bounded multi-connection HTTP/3 listener on an unconnected bound
    --  UDP socket. One receiver dispatches datagrams by connection identifier
@@ -53,7 +56,7 @@ package Flyology.HTTP.Server.HTTP_3 is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Max_Requests       : Positive := Default_Requests_Per_Connection;
       Token              : not null access Flyology.Cancellation.Token)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
@@ -86,7 +89,7 @@ package Flyology.HTTP.Server.HTTP_3 is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Max_Requests       : Positive := Default_Requests_Per_Connection;
       Token              : access Flyology.Cancellation.Token := null)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
@@ -121,7 +124,7 @@ package Flyology.HTTP.Server.HTTP_3 is
       Timeout            : Duration := 30.0;
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
-      Max_Requests       : Positive := Maximum_Requests_Per_Connection;
+      Max_Requests       : Positive := Default_Requests_Per_Connection;
       Token              : access Flyology.Cancellation.Token := null)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096

@@ -102,6 +102,45 @@ package body Flyology.HTTP.HTTP_3_Connection is
       return 0;
    end Find;
 
+   function Is_Released_Message
+     (Item : Connection; ID : QUIC.Stream_ID) return Boolean is
+     (ID mod 4 = 0
+      and then ID / 4 <= QUIC.Stream_ID (Message_Ordinal'Last)
+      and then Item.Released_Messages (Message_Ordinal (ID / 4))
+      and then Find (Item, ID) = 0);
+
+   procedure Release_Message
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      ID        : QUIC.Stream_ID;
+      Slot      : Slot_Index)
+   is
+   begin
+      if ID mod 4 = 0
+        and then ID / 4 <= QUIC.Stream_ID (Message_Ordinal'Last)
+      then
+         Item.Released_Messages (Message_Ordinal (ID / 4)) := True;
+      end if;
+      Item.Streams (Slot) := (others => <>);
+      Item.Count := Item.Count - 1;
+      QUIC.Release_Stream (Transport, ID);
+
+      --  A client retains request-send state until the response finishes so
+      --  HEAD response validation remains available. The completed response
+      --  is the point at which that compact state can be recycled.
+      if Item.Local_Role = Client then
+         for Index in Slot_Index loop
+            if Item.Sending (Index).Occupied
+              and then Item.Sending (Index).ID = ID
+            then
+               Item.Sending (Index) := (others => <>);
+               Item.Send_Count := Item.Send_Count - 1;
+               exit;
+            end if;
+         end loop;
+      end if;
+   end Release_Message;
+
    procedure Find_Or_Open
      (Item   : in out Connection;
       ID     : QUIC.Stream_ID;
@@ -252,6 +291,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
             Output.Stream := ID;
             Output.Application_Error := QUIC.Reset_Error (Transport, ID);
             Status := Succeeded;
+            Release_Message (Item, Transport, ID, Slot);
          else
             Status := No_Event;
          end if;
@@ -266,6 +306,19 @@ package body Flyology.HTTP.HTTP_3_Connection is
       for Stream_Index in 1 .. QUIC.Stream_Count (Transport) loop
          Reset_Handled := False;
          ID := QUIC.Stream_At (Transport, Stream_Index);
+         if Is_Released_Message (Item, ID) then
+            Length := QUIC.Available_Length (Transport, ID);
+            if Length > 0 then
+               QUIC.Consume (Transport, ID, Length);
+            end if;
+            if QUIC.Is_Complete (Transport, ID)
+              or else QUIC.Was_Reset (Transport, ID)
+            then
+               QUIC.Release_Stream (Transport, ID);
+            end if;
+            Status := No_Event;
+            return;
+         end if;
          Find_Or_Open (Item, ID, Slot, Status);
          if Status /= Succeeded then
             return;
@@ -372,12 +425,38 @@ package body Flyology.HTTP.HTTP_3_Connection is
             else
                Output.Kind := Stream_Ended;
                Output.Stream := ID;
+               if Item.Local_Role = Client then
+                  Release_Message
+                    (Item, Transport, ID, Slot_Index (Slot));
+               end if;
                return;
             end if;
          end if;
       end loop;
       Status := No_Event;
    end Poll;
+
+   procedure Release_Request
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Status    : out Operation_Status)
+   is
+      Slot : constant Optional_Slot := Find (Item, Stream);
+   begin
+      if Item.Local_Role /= Server then
+         Status := Wrong_Role;
+      elsif Slot = 0
+        or else not Item.Streams (Slot).Finished
+        or else not HTTP_3_Stream_Policy.Is_Request_Stream (Stream)
+      then
+         Status := Stream_Creation_Error;
+      else
+         Release_Message
+           (Item, Transport, Stream, Slot_Index (Slot));
+         Status := Succeeded;
+      end if;
+   end Release_Request;
 
    function Has_Peer_Settings (Item : Connection) return Boolean is
      (HTTP_3_Stream_Receive_Policy.Has_Peer_Settings (Item.Receive));
@@ -731,6 +810,10 @@ package body Flyology.HTTP.HTTP_3_Connection is
          else
             Item.Sending (Slot).Response := Response.State;
          end if;
+         if Fin and then Item.Local_Role = Server then
+            Item.Sending (Slot) := (others => <>);
+            Item.Send_Count := Item.Send_Count - 1;
+         end if;
       end if;
    end Build_Headers;
 
@@ -811,6 +894,10 @@ package body Flyology.HTTP.HTTP_3_Connection is
             Item.Sending (Slot).Request := Request.State;
          else
             Item.Sending (Slot).Response := Response.State;
+         end if;
+         if Fin and then Item.Local_Role = Server then
+            Item.Sending (Slot) := (others => <>);
+            Item.Send_Count := Item.Send_Count - 1;
          end if;
       end if;
    end Build_Data;

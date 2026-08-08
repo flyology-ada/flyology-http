@@ -19,6 +19,7 @@ with Flyology.QUIC.Varint_Policy;
 --  native and lightweight Flyology tasks.
 private package Flyology.QUIC.Application_Space is
    use type Ada.Streams.Stream_Element_Offset;
+   use type Varint_Policy.Value_Type;
 
    Max_Datagram_Length : constant := 1_350;
    Max_Stream_Payload  : constant := 1_100;
@@ -107,6 +108,18 @@ private package Flyology.QUIC.Application_Space is
       Result            : out Send_Result)
    with
      Pre => Is_Initialized (Item)
+       and then Packet'Length >= Max_Datagram_Length;
+
+   procedure Build_Max_Streams_Packet
+     (Item          : in out State;
+      Bidirectional : Boolean;
+      Maximum       : Varint_Policy.Value_Type;
+      Now           : Timestamp;
+      Packet        : out Ada.Streams.Stream_Element_Array;
+      Result        : out Send_Result)
+   with
+     Pre => Is_Initialized (Item)
+       and then Maximum <= 2**60
        and then Packet'Length >= Max_Datagram_Length;
 
    procedure Build_ACK_Packet
@@ -257,6 +270,13 @@ private package Flyology.QUIC.Application_Space is
       Length    : Stream_Offset)
    with Pre => Has_Stream (Item, Stream_ID)
      and then Length <= Available_Length (Item, Stream_ID);
+
+   procedure Release_Stream
+     (Item      : in out State;
+      Stream_ID : Varint_Policy.Value_Type)
+   with Pre => Has_Stream (Item, Stream_ID)
+     and then (Is_Complete (Item, Stream_ID)
+               or else Was_Reset (Item, Stream_ID));
 
    function Retained_Packets (Item : State) return Sent_Packet_Policy.Sent_Count;
    function Committed_Data (Item : State) return Varint_Policy.Value_Type;

@@ -153,12 +153,14 @@ begin
                Certificate_DER => Fixtures.Server_Certificate,
                Private_Key => Fixtures.Server_Private_Key,
                TCP_Capacity => 4,
-               HTTP_3_Capacity => 4,
+               --  Three H3 profiles run per address family. A new Initial may
+               --  overtake a preceding close across different UDP sockets.
+               HTTP_3_Capacity => 6,
                Timeout => 10.0,
                Handshake_Timeout => 10.0,
                Max_Connection_Age => 20.0,
                TCP_Max_Requests => 10,
-               HTTP_3_Max_Requests => 5,
+               HTTP_3_Max_Requests => 100,
                Drain_Timeout => 10.0,
                Token => Stop'Access);
          exception
@@ -325,18 +327,23 @@ begin
          Client.Set_Method (Request, Flyology.HTTP.To_Method ("POST"));
          Client.Set_Target (Request, "/hello/Ada");
          Client.Set_Body (Request, "payload");
-         declare
-            Reply : Client.Response :=
-              Client.Execute (HTTP, Request, Timeout => 10.0);
-         begin
-            pragma Assert (Client.Status (Reply) = 200);
-            pragma Assert
-              (Client.Negotiated_Protocol (Reply) =
-                 Flyology.HTTP.HTTP_3_Protocol);
-            pragma Assert
-              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
-                 "hello Ada");
-         end;
+         --  Cross the 29-request lifetime boundary of the original fixed
+         --  stream table on one pooled connection. This exercises completed
+         --  reassembly recycling and MAX_STREAMS credit return together.
+         for Exchange in 1 .. 40 loop
+            declare
+               Reply : Client.Response :=
+                 Client.Execute (HTTP, Request, Timeout => 10.0);
+            begin
+               pragma Assert (Client.Status (Reply) = 200);
+               pragma Assert
+                 (Client.Negotiated_Protocol (Reply) =
+                    Flyology.HTTP.HTTP_3_Protocol);
+               pragma Assert
+                 (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                    "hello Ada");
+            end;
+         end loop;
          Client.Shutdown (HTTP, Timeout => 5.0);
       end;
 

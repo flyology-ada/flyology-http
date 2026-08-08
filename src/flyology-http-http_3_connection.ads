@@ -15,6 +15,7 @@ private package Flyology.HTTP.HTTP_3_Connection is
 
    Max_Streams : constant := 32;
    Max_Event_Data : constant := 65_535;
+   Max_Message_Tombstones : constant := 1_024;
 
    type Endpoint_Role is (Client, Server);
 
@@ -24,6 +25,9 @@ private package Flyology.HTTP.HTTP_3_Connection is
      (Item     : in out Connection;
       Role     : Endpoint_Role;
       Settings : HTTP_3_Settings_Policy.Settings);
+
+   function Is_Released_Message
+     (Item : Connection; ID : QUIC.Stream_ID) return Boolean;
 
    type Operation_Status is
      (Succeeded,
@@ -87,6 +91,15 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Output    : out Event;
       Status    : out Operation_Status);
 
+   --  Retire a server-side request after its synchronous response has been
+   --  fully constructed. Client response streams retire automatically when
+   --  Poll reports Stream_Ended.
+   procedure Release_Request
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Status    : out Operation_Status);
+
    procedure Open_Request
      (Item      : in out Connection;
       Transport : in out QUIC.Connection;
@@ -143,6 +156,9 @@ private package Flyology.HTTP.HTTP_3_Connection is
    with Pre => Has_Peer_Goaway (Item);
 
 private
+   subtype Message_Ordinal is Natural range 0 .. Max_Message_Tombstones - 1;
+   type Message_Tombstone_Table is array (Message_Ordinal) of Boolean;
+
    subtype Slot_Index is Positive range 1 .. Max_Streams;
 
    type Stream_Slot is record
@@ -182,5 +198,6 @@ private
       Local_Control_Offset : QUIC.Stream_Offset := 0;
       Local_Goaway_Seen : Boolean := False;
       Local_Goaway      : QUIC.Stream_Offset := 0;
+      Released_Messages : Message_Tombstone_Table := (others => False);
    end record;
 end Flyology.HTTP.HTTP_3_Connection;
