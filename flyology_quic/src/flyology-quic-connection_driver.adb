@@ -116,6 +116,27 @@ package body Flyology.QUIC.Connection_Driver is
       end if;
    end Build_Stream_Datagram;
 
+   procedure Build_Stream_Abort_Datagram
+     (Item              : in out Connection;
+      Stream_ID         : Varint_Policy.Value_Type;
+      Application_Error : Varint_Policy.Value_Type;
+      Final_Size        : Varint_Policy.Value_Type;
+      Now               : Application_Space.Timestamp;
+      Packet            : out Datagram;
+      Status            : out Application_Space.Send_Status)
+   is
+      Built : Application_Space.Send_Result;
+   begin
+      Packet := (others => <>);
+      Application_Space.Build_Stream_Abort_Packet
+        (Item.Application, Stream_ID, Application_Error, Final_Size, Now,
+         Packet.Data, Built);
+      Status := Built.Status;
+      if Built.Status = Application_Space.Sent then
+         Packet.Length := Built.Packet_Length;
+      end if;
+   end Build_Stream_Abort_Datagram;
+
    procedure Build_ACK_Datagram
      (Item      : in out Connection;
       ACK_Delay : Varint_Policy.Value_Type;

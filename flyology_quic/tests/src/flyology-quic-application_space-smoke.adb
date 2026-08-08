@@ -265,4 +265,63 @@ begin
          Packet => Loss_Packet, Result => Loss_Sent);
       pragma Assert (Loss_Sent.Status = Sent);
    end;
+
+   declare
+      Abort_Client, Abort_Server : State;
+      Abort_Packet : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
+      Abort_Sent     : Send_Result;
+      Abort_Received : Process_Result;
+      Abort_ID       : Varint_Policy.Value_Type;
+      Abort_Opened   : Open_Status;
+   begin
+      Initialize
+        (Abort_Client, Client_Keys, Server_Keys, Server_ID, Client_ID,
+         Stream_ID_Policy.Client, Server_Peer);
+      Initialize
+        (Abort_Server, Server_Keys, Client_Keys, Client_ID, Server_ID,
+         Stream_ID_Policy.Server, Server_Peer);
+      Open_Stream
+        (Abort_Client, Stream_ID_Policy.Bidirectional,
+         Abort_ID, Abort_Opened);
+      pragma Assert
+        (Abort_Opened = Stream_ID_Policy.Opened and then Abort_ID = 0);
+      Build_Stream_Packet
+        (Abort_Client, Abort_ID, Offset => 0, Fin => False,
+         Data => (16#68#, 16#33#), Now => 300,
+         Packet => Abort_Packet, Result => Abort_Sent);
+      pragma Assert (Abort_Sent.Status = Sent);
+      Process_Packet
+        (Abort_Server,
+         Abort_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Abort_Sent.Packet_Length)),
+         Now => 301, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Abort_Received);
+      pragma Assert (Abort_Received.Status = Processed);
+
+      Build_Stream_Abort_Packet
+        (Abort_Client, Abort_ID, Application_Error => 16#10C#,
+         Final_Size => 1, Now => 302,
+         Packet => Abort_Packet, Result => Abort_Sent);
+      pragma Assert (Abort_Sent.Status = Stream_Final_Size_Mismatch);
+      Build_Stream_Abort_Packet
+        (Abort_Client, Abort_ID, Application_Error => 16#10C#,
+         Final_Size => 2, Now => 303,
+         Packet => Abort_Packet, Result => Abort_Sent);
+      pragma Assert (Abort_Sent.Status = Sent);
+      Process_Packet
+        (Abort_Server,
+         Abort_Packet
+           (1 .. Ada.Streams.Stream_Element_Offset
+                   (Abort_Sent.Packet_Length)),
+         Now => 304, ACK_Delay_Exponent => 3,
+         Maximum_ACK_Delay => 25_000, Handshake_Confirmed => True,
+         Result => Abort_Received);
+      pragma Assert
+        (Abort_Received.Status = Processed
+         and then Was_Reset (Abort_Server, Abort_ID)
+         and then Reset_Error (Abort_Server, Abort_ID) = 16#10C#);
+   end;
 end Flyology.QUIC.Application_Space.Smoke;

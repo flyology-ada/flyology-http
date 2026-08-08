@@ -384,6 +384,8 @@ package body Flyology.QUIC.Connections is
            Connection_Flow_Blocked,
          when Application_Space.Stream_Range_Too_Large =>
            Stream_Range_Too_Large,
+         when Application_Space.Stream_Final_Size_Mismatch =>
+           Stream_Final_Size_Mismatch,
          when Application_Space.Packet_Number_Exhausted =>
            Packet_Number_Exhausted,
          when Application_Space.Packet_Number_Unrepresentable =>
@@ -413,6 +415,25 @@ package body Flyology.QUIC.Connections is
       Copy (Internal_Packet, Packet);
       Status := Public_Status (Internal_Status);
    end Build_Stream_Datagram;
+
+   procedure Build_Stream_Abort_Datagram
+     (Item              : in out Connection;
+      ID                : Stream_ID;
+      Application_Error : Varint_Policy.Value_Type;
+      Final_Size        : Stream_Offset;
+      Now               : Timestamp;
+      Packet            : out Datagram;
+      Status            : out Send_Status)
+   is
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      Connection_Driver.Build_Stream_Abort_Datagram
+        (Impl (Item).Driver, ID, Application_Error, Final_Size,
+         Application_Space.Timestamp (Now), Internal_Packet, Internal_Status);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Stream_Abort_Datagram;
 
    procedure Build_ACK_Datagram
      (Item      : in out Connection;

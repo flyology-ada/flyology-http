@@ -150,6 +150,16 @@ private package Flyology.QUIC.Connection_Driver is
    with Pre => Is_Connected (Item)
      and then Data'Length <= Application_Space.Max_Stream_Payload;
 
+   procedure Build_Stream_Abort_Datagram
+     (Item              : in out Connection;
+      Stream_ID         : Varint_Policy.Value_Type;
+      Application_Error : Varint_Policy.Value_Type;
+      Final_Size        : Varint_Policy.Value_Type;
+      Now               : Application_Space.Timestamp;
+      Packet            : out Datagram;
+      Status            : out Application_Space.Send_Status)
+   with Pre => Is_Connected (Item);
+
    procedure Build_ACK_Datagram
      (Item      : in out Connection;
       ACK_Delay : Varint_Policy.Value_Type;

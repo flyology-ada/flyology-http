@@ -427,5 +427,20 @@ begin
       Connections.Consume (Public_Server, Public_Stream, 2);
       pragma Assert
         (Connections.Available_Length (Public_Server, Public_Stream) = 0);
+      Connections.Build_Stream_Abort_Datagram
+        (Public_Client, Public_Stream, Application_Error => 16#10C#,
+         Final_Size => 2, Now => 201, Packet => Stream_Packet,
+         Status => Sent);
+      pragma Assert (Sent = Connections.Sent);
+      Connections.Process_Datagram
+        (Public_Server,
+         Stream_Packet.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Stream_Packet.Length)),
+         Server_Flight, Server_Status, Now => 202);
+      pragma Assert
+        (Server_Status = Connections.Succeeded
+         and then Connections.Was_Reset (Public_Server, Public_Stream)
+         and then Connections.Reset_Error
+           (Public_Server, Public_Stream) = 16#10C#);
    end;
 end Flyology.QUIC.Connection_Driver.Smoke;

@@ -58,6 +58,7 @@ private package Flyology.QUIC.Application_Space is
       Stream_Flow_Blocked,
       Connection_Flow_Blocked,
       Stream_Range_Too_Large,
+      Stream_Final_Size_Mismatch,
       Packet_Number_Exhausted,
       Packet_Number_Unrepresentable,
       Insufficient_Protected_Payload,
@@ -92,6 +93,18 @@ private package Flyology.QUIC.Application_Space is
    with
      Pre => Is_Initialized (Item)
        and then Data'Length <= Max_Stream_Payload
+       and then Packet'Length >= Max_Datagram_Length;
+
+   procedure Build_Stream_Abort_Packet
+     (Item              : in out State;
+      Stream_ID         : Varint_Policy.Value_Type;
+      Application_Error : Varint_Policy.Value_Type;
+      Final_Size        : Varint_Policy.Value_Type;
+      Now               : Timestamp;
+      Packet            : out Ada.Streams.Stream_Element_Array;
+      Result            : out Send_Result)
+   with
+     Pre => Is_Initialized (Item)
        and then Packet'Length >= Max_Datagram_Length;
 
    procedure Build_ACK_Packet

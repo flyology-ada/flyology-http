@@ -333,6 +333,7 @@ package Flyology.QUIC.Connections is
    --  @enum Stream_Flow_Blocked The stream's send credit is exhausted
    --  @enum Connection_Flow_Blocked Connection send credit is exhausted
    --  @enum Stream_Range_Too_Large The requested range cannot be represented
+   --  @enum Stream_Final_Size_Mismatch Reset size differs from committed data
    --  @enum Packet_Number_Exhausted No further packet number can be allocated
    --  @enum Packet_Number_Unrepresentable The packet number cannot be encoded
    --  @enum Insufficient_Protected_Payload Header protection needs more bytes
@@ -349,6 +350,7 @@ package Flyology.QUIC.Connections is
       Stream_Flow_Blocked,
       Connection_Flow_Blocked,
       Stream_Range_Too_Large,
+      Stream_Final_Size_Mismatch,
       Packet_Number_Exhausted,
       Packet_Number_Unrepresentable,
       Insufficient_Protected_Payload,
@@ -376,6 +378,25 @@ package Flyology.QUIC.Connections is
       Status : out Send_Status)
    with Pre => Is_Connected (Item)
      and then Data'Length <= Max_Stream_Payload;
+
+   --  Build one protected cancellation packet for both directions of a
+   --  bidirectional application stream.
+   --  @param Item Connected endpoint
+   --  @param ID QUIC bidirectional stream identifier
+   --  @param Application_Error Application protocol error code
+   --  @param Final_Size Number of stream octets committed for transmission
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   procedure Build_Stream_Abort_Datagram
+     (Item              : in out Connection;
+      ID                : Stream_ID;
+      Application_Error : Varint_Policy.Value_Type;
+      Final_Size        : Stream_Offset;
+      Now               : Timestamp;
+      Packet            : out Datagram;
+      Status            : out Send_Status)
+   with Pre => Is_Connected (Item);
 
    --  Build one protected ACK-only packet for received application packets.
    --  @param Item Connected endpoint

@@ -450,63 +450,15 @@ package body Flyology.QUIC.Application_Space is
       Result.Status := Sent;
    end Build_Stream_Packet;
 
-   procedure Build_ACK_Packet
-     (Item      : in out State;
-      ACK_Delay : Varint_Policy.Value_Type;
-      Now       : Timestamp;
-      Packet    : out Ada.Streams.Stream_Element_Array;
-      Result    : out Send_Result)
-   is
-      Frame         : ACK_Frame_Policy.Encode_Result;
-      Built         : Application_Connection.Build_Result;
-      Record_Status : Sent_Packet_Policy.Record_Status;
-   begin
-      Packet := (others => 0);
-      Result := (others => <>);
-      Frame := Application_Connection.Encode_ACK (Item.Packets, ACK_Delay);
-      if Frame.Status = ACK_Frame_Policy.Nothing_To_ACK then
-         Result.Status := Nothing_To_ACK;
-         return;
-      end if;
-      Application_Connection.Build_One_RTT
-        (Item.Packets,
-         Frame.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
-         Packet, Built);
-      Result.Number := Built.Number;
-      if Built.Status /= Application_Connection.Built then
-         Result.Status := Send_Status_For (Built.Status);
-         return;
-      elsif Built.Packet_Length > Max_Datagram_Length then
-         Result.Status := Packet_Too_Large;
-         return;
-      end if;
-      Result.Packet_Length := Built.Packet_Length;
-      Sent_Packet_Policy.Record_Sent
-        (Item.Sent,
-         (Number        => Built.Number,
-          Sent_At       => Now,
-          Bytes         => Sent_Packet_Policy.Packet_Byte_Count
-            (Built.Packet_Length),
-          ACK_Eliciting => False,
-          In_Flight     => False),
-         Record_Status);
-      Result.Status :=
-        (if Record_Status = Sent_Packet_Policy.Not_Tracked then Sent
-         else Internal_State_Error);
-   end Build_ACK_Packet;
-
-   procedure Build_Tracked_Control_Packet
-     (Item   : in out State;
-      Frame_Type : Ada.Streams.Stream_Element;
-      Now    : Timestamp;
+   procedure Build_Tracked_Frame_Packet
+     (Item         : in out State;
+      Plaintext    : Ada.Streams.Stream_Element_Array;
+      Now          : Timestamp;
       Permit_Probe : Boolean;
       Retain_Frame : Boolean;
-      Packet : out Ada.Streams.Stream_Element_Array;
-      Result : out Send_Result)
+      Packet       : out Ada.Streams.Stream_Element_Array;
+      Result       : out Send_Result)
    is
-      Plaintext : constant Ada.Streams.Stream_Element_Array :=
-        (1 => Frame_Type, 2 .. 3 => 0);
       Built          : Application_Connection.Build_Result;
       Record_Status  : Sent_Packet_Policy.Record_Status;
       Account_Status : Recovery_Policy.Send_Status;
@@ -573,6 +525,107 @@ package body Flyology.QUIC.Application_Space is
       else
          Result.Status := Internal_State_Error;
       end if;
+   end Build_Tracked_Frame_Packet;
+
+   procedure Build_Stream_Abort_Packet
+     (Item              : in out State;
+      Stream_ID         : Varint_Policy.Value_Type;
+      Application_Error : Varint_Policy.Value_Type;
+      Final_Size        : Varint_Policy.Value_Type;
+      Now               : Timestamp;
+      Packet            : out Ada.Streams.Stream_Element_Array;
+      Result            : out Send_Result)
+   is
+      Frame : Application_Frame_Policy.Abort_Encode_Result;
+   begin
+      Packet := (others => 0);
+      Result := (others => <>);
+      if not Stream_Was_Opened (Item, Stream_ID)
+        or else Stream_ID_Policy.Direction (Stream_ID) /=
+          Stream_ID_Policy.Bidirectional
+      then
+         Result.Status := Stream_Not_Sendable;
+         return;
+      elsif (Flow_Control_Policy.Has_Stream (Item.Flow, Stream_ID)
+             and then Flow_Control_Policy.Stream_Committed
+               (Item.Flow, Stream_ID) /= Final_Size)
+        or else (not Flow_Control_Policy.Has_Stream (Item.Flow, Stream_ID)
+                 and then Final_Size /= 0)
+      then
+         Result.Status := Stream_Final_Size_Mismatch;
+         return;
+      end if;
+
+      Frame := Application_Frame_Policy.Encode_Stream_Abort
+        (Stream_ID, Application_Error, Final_Size);
+      Build_Tracked_Frame_Packet
+        (Item,
+         Frame.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
+         Now, Permit_Probe => False, Retain_Frame => True,
+         Packet => Packet, Result => Result);
+   end Build_Stream_Abort_Packet;
+
+   procedure Build_ACK_Packet
+     (Item      : in out State;
+      ACK_Delay : Varint_Policy.Value_Type;
+      Now       : Timestamp;
+      Packet    : out Ada.Streams.Stream_Element_Array;
+      Result    : out Send_Result)
+   is
+      Frame         : ACK_Frame_Policy.Encode_Result;
+      Built         : Application_Connection.Build_Result;
+      Record_Status : Sent_Packet_Policy.Record_Status;
+   begin
+      Packet := (others => 0);
+      Result := (others => <>);
+      Frame := Application_Connection.Encode_ACK (Item.Packets, ACK_Delay);
+      if Frame.Status = ACK_Frame_Policy.Nothing_To_ACK then
+         Result.Status := Nothing_To_ACK;
+         return;
+      end if;
+      Application_Connection.Build_One_RTT
+        (Item.Packets,
+         Frame.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
+         Packet, Built);
+      Result.Number := Built.Number;
+      if Built.Status /= Application_Connection.Built then
+         Result.Status := Send_Status_For (Built.Status);
+         return;
+      elsif Built.Packet_Length > Max_Datagram_Length then
+         Result.Status := Packet_Too_Large;
+         return;
+      end if;
+      Result.Packet_Length := Built.Packet_Length;
+      Sent_Packet_Policy.Record_Sent
+        (Item.Sent,
+         (Number        => Built.Number,
+          Sent_At       => Now,
+          Bytes         => Sent_Packet_Policy.Packet_Byte_Count
+            (Built.Packet_Length),
+          ACK_Eliciting => False,
+          In_Flight     => False),
+         Record_Status);
+      Result.Status :=
+        (if Record_Status = Sent_Packet_Policy.Not_Tracked then Sent
+         else Internal_State_Error);
+   end Build_ACK_Packet;
+
+   procedure Build_Tracked_Control_Packet
+     (Item   : in out State;
+      Frame_Type : Ada.Streams.Stream_Element;
+      Now    : Timestamp;
+      Permit_Probe : Boolean;
+      Retain_Frame : Boolean;
+      Packet : out Ada.Streams.Stream_Element_Array;
+      Result : out Send_Result)
+   is
+      Plaintext : constant Ada.Streams.Stream_Element_Array :=
+        (1 => Frame_Type, 2 .. 3 => 0);
+   begin
+      Build_Tracked_Frame_Packet
+        (Item, Plaintext, Now, Permit_Probe, Retain_Frame, Packet, Result);
    end Build_Tracked_Control_Packet;
 
    procedure Build_Handshake_Done_Packet
