@@ -46,6 +46,8 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Frame_Error,
       ID_Error,
       QPACK_Decompression_Failed,
+      QPACK_Encoder_Stream_Error,
+      QPACK_Decoder_Stream_Error,
       Peer_Field_Section_Too_Large,
       Message_Error,
       Header_Error);
@@ -63,7 +65,6 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Goaway_Received,
       Headers_Received,
       Data_Received,
-      QPACK_Data_Received,
       Stream_Ended);
 
    subtype Event_Data_Length is Natural range 0 .. Max_Event_Data;

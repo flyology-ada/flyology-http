@@ -143,6 +143,10 @@ package body Flyology.HTTP.HTTP_3 is
          when Internal.ID_Error => ID_Error,
          when Internal.QPACK_Decompression_Failed =>
            QPACK_Decompression_Failed,
+         when Internal.QPACK_Encoder_Stream_Error =>
+           QPACK_Encoder_Stream_Error,
+         when Internal.QPACK_Decoder_Stream_Error =>
+           QPACK_Decoder_Stream_Error,
          when Internal.Peer_Field_Section_Too_Large =>
            Peer_Field_Section_Too_Large,
          when Internal.Message_Error => Message_Error,
@@ -187,7 +191,6 @@ package body Flyology.HTTP.HTTP_3 is
          when Internal.Goaway_Received => Goaway_Received,
          when Internal.Headers_Received => Headers_Received,
          when Internal.Data_Received => Data_Received,
-         when Internal.QPACK_Data_Received => QPACK_Data_Received,
          when Internal.Stream_Ended => Stream_Ended);
 
    procedure Poll

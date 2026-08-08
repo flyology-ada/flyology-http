@@ -34,8 +34,7 @@ is
       Settings_Received,
       Goaway_Received,
       Headers_Received,
-      Data_Received,
-      QPACK_Data_Received);
+      Data_Received);
 
    type Receive_Status is
      (Consumed,
@@ -48,6 +47,8 @@ is
       Frame_Error,
       ID_Error,
       QPACK_Decompression_Failed,
+      QPACK_Encoder_Stream_Error,
+      QPACK_Decoder_Stream_Error,
       Message_Error,
       Header_Error);
 

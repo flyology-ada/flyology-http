@@ -73,6 +73,48 @@ begin
    end;
 
    declare
+      Encoder : Stream_State;
+      Decoder : Stream_State;
+   begin
+      Open (Encoder, 15, HTTP_3_Stream_Policy.Client, Status);
+      Process
+        (Connection, Encoder,
+         Ada.Streams.Stream_Element_Array'(1 => 2), Result);
+      pragma Assert
+        (Result.Status = Consumed
+         and then Kind (Encoder) = QPACK_Encoder_Stream);
+      Process
+        (Connection, Encoder,
+         Ada.Streams.Stream_Element_Array'(1 => 0), Result);
+      pragma Assert (Result.Status = QPACK_Encoder_Stream_Error);
+      Finish (Connection, Encoder, Status);
+      pragma Assert (Status = Closed_Critical_Stream);
+
+      Open (Decoder, 19, HTTP_3_Stream_Policy.Client, Status);
+      Process
+        (Connection, Decoder,
+         Ada.Streams.Stream_Element_Array'(1 => 3), Result);
+      pragma Assert
+        (Result.Status = Consumed
+         and then Kind (Decoder) = QPACK_Decoder_Stream);
+      Process
+        (Connection, Decoder,
+         Ada.Streams.Stream_Element_Array'(1 => 16#7F#), Result);
+      pragma Assert (Result.Status = Need_More_Data);
+      Process
+        (Connection, Decoder,
+         Ada.Streams.Stream_Element_Array'(16#7F#, 0), Result);
+      pragma Assert
+        (Result.Status = Consumed and then Result.Consumed = 2);
+      Process
+        (Connection, Decoder,
+         Ada.Streams.Stream_Element_Array'(1 => 0), Result);
+      pragma Assert (Result.Status = QPACK_Decoder_Stream_Error);
+      Finish (Connection, Decoder, Status);
+      pragma Assert (Status = Closed_Critical_Stream);
+   end;
+
+   declare
       Request : Stream_State;
       Block   : QPACK_Field_Section_Policy.Header_Block;
    begin

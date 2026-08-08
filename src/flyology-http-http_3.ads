@@ -118,6 +118,8 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Frame_Error A frame is malformed or unsupported
    --  @enum ID_Error A stream or push identifier violates HTTP/3 rules
    --  @enum QPACK_Decompression_Failed A field section cannot be decoded
+   --  @enum QPACK_Encoder_Stream_Error An encoder instruction is invalid
+   --  @enum QPACK_Decoder_Stream_Error A decoder instruction is invalid
    --  @enum Peer_Field_Section_Too_Large Fields exceed the peer's advertised
    --    maximum field-section size
    --  @enum Message_Error HTTP message sequencing is invalid
@@ -144,6 +146,8 @@ package Flyology.HTTP.HTTP_3 is
       Frame_Error,
       ID_Error,
       QPACK_Decompression_Failed,
+      QPACK_Encoder_Stream_Error,
+      QPACK_Decoder_Stream_Error,
       Peer_Field_Section_Too_Large,
       Message_Error,
       Header_Error);
@@ -167,7 +171,6 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Goaway_Received Peer initiated graceful shutdown
    --  @enum Headers_Received A HEADERS field section was decoded
    --  @enum Data_Received A DATA frame payload was decoded
-   --  @enum QPACK_Data_Received Peer QPACK stream data is available
    --  @enum Stream_Ended A complete request or response reached stream FIN
    type Event_Kind is
      (No_Event,
@@ -175,7 +178,6 @@ package Flyology.HTTP.HTTP_3 is
       Goaway_Received,
       Headers_Received,
       Data_Received,
-      QPACK_Data_Received,
       Stream_Ended);
 
    --  Length of the DATA payload retained by an event.

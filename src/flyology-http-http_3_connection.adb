@@ -159,6 +159,10 @@ package body Flyology.HTTP.HTTP_3_Connection is
          when HTTP_3_Stream_Receive_Policy.ID_Error => ID_Error,
          when HTTP_3_Stream_Receive_Policy.QPACK_Decompression_Failed =>
            QPACK_Decompression_Failed,
+         when HTTP_3_Stream_Receive_Policy.QPACK_Encoder_Stream_Error =>
+           QPACK_Encoder_Stream_Error,
+         when HTTP_3_Stream_Receive_Policy.QPACK_Decoder_Stream_Error =>
+           QPACK_Decoder_Stream_Error,
          when HTTP_3_Stream_Receive_Policy.Message_Error => Message_Error,
          when HTTP_3_Stream_Receive_Policy.Header_Error => Header_Error);
 
@@ -173,9 +177,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
            Goaway_Received,
          when HTTP_3_Stream_Receive_Policy.Headers_Received =>
            Headers_Received,
-         when HTTP_3_Stream_Receive_Policy.Data_Received => Data_Received,
-         when HTTP_3_Stream_Receive_Policy.QPACK_Data_Received =>
-           QPACK_Data_Received);
+         when HTTP_3_Stream_Receive_Policy.Data_Received => Data_Received);
 
    procedure Copy_Event
      (ID     : QUIC.Stream_ID;

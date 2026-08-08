@@ -1,9 +1,11 @@
 with Flyology.HTTP.HTTP_3_Frame_Policy;
 with Flyology.HTTP.HTTP_3_Header_Policy;
+with Flyology.HTTP.QPACK_Integer_Policy;
 
 package body Flyology.HTTP.HTTP_3_Stream_Receive_Policy
   with SPARK_Mode => On
 is
+   use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
    use type HTTP_3_Control_Policy.Operation_Status;
    use type HTTP_3_Frame_Policy.Parse_Status;
@@ -13,6 +15,7 @@ is
    use type HTTP_3_Message_Policy.Request_Phase;
    use type HTTP_3_Stream_Policy.Endpoint_Role;
    use type QPACK_Field_Section_Policy.Decode_Status;
+   use type QPACK_Integer_Policy.Decode_Status;
    use type Varint_Policy.Decode_Status;
    use type Varint_Policy.Value_Type;
 
@@ -147,6 +150,42 @@ is
       --  stream exceeds the permitted (unset) push-ID range.
       Result.Status := ID_Error;
    end Process_Push_ID;
+
+   procedure Process_QPACK
+     (Stream : Stream_State;
+      Data   : Ada.Streams.Stream_Element_Array;
+      Result : out Receive_Result)
+   is
+      Decoded : QPACK_Integer_Policy.Decode_Result;
+   begin
+      Result := (others => <>);
+      if Data'Length = 0 then
+         return;
+      elsif Stream.Stream_Type = QPACK_Encoder_Stream then
+         --  SETTINGS_QPACK_MAX_TABLE_CAPACITY is fixed at zero, which
+         --  prohibits every encoder instruction in this profile.
+         Result.Status := QPACK_Encoder_Stream_Error;
+         return;
+      end if;
+
+      if (Data (Data'First) and 16#C0#) /= 16#40# then
+         --  Section acknowledgments and insert-count increments cannot be
+         --  valid because this encoder never emits dynamic references.
+         Result.Status := QPACK_Decoder_Stream_Error;
+         return;
+      end if;
+
+      Decoded := QPACK_Integer_Policy.Decode (Data, 6);
+      case Decoded.Status is
+         when QPACK_Integer_Policy.Decoded =>
+            Result.Status := Consumed;
+            Result.Consumed := Decoded.Consumed;
+         when QPACK_Integer_Policy.Truncated =>
+            null;
+         when QPACK_Integer_Policy.Value_Too_Large =>
+            Result.Status := QPACK_Decoder_Stream_Error;
+      end case;
+   end Process_QPACK;
 
    procedure Process_Control
      (Connection : in out Connection_State;
@@ -335,10 +374,7 @@ is
       elsif Stream.Stream_Type in
         QPACK_Encoder_Stream | QPACK_Decoder_Stream
       then
-         Result.Status := Consumed;
-         Result.Event := QPACK_Data_Received;
-         Result.Consumed := Natural (Data'Length);
-         Result.Payload_Length := Natural (Data'Length);
+         Process_QPACK (Stream, Data, Result);
          return;
       end if;
 
