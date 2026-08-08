@@ -64,6 +64,20 @@ begin
       Poll (Client, Client_Transport, Client_Event, Client_Status);
       pragma Assert
         (Client_Status = No_Event and then Client_Event.Kind = No_Event);
+
+      QUIC.Open_Stream
+        (Server_Transport, QUIC.Unidirectional, Empty_Stream, Opened);
+      pragma Assert (Opened = QUIC.Opened and then Empty_Stream = 11);
+      QUIC.Build_Stream_Datagram
+        (Server_Transport, Empty_Stream, 0, Fin => True,
+         Data => Ada.Streams.Stream_Element_Array'(1 => 16#40#),
+         Now => 1_600, Packet => Empty_Packet, Status => Sent);
+      pragma Assert (Sent = QUIC.Sent);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Empty_Packet, Client_Transport);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = No_Event and then Client_Event.Kind = No_Event);
    end;
 
    declare
@@ -71,6 +85,7 @@ begin
       Response_Headers : QPACK_Field_Section_Policy.Header_Block;
       Request_Stream   : QUIC.Stream_ID;
       Request_Packet, Response_Packet, Data_Packet : QUIC.Datagram;
+      Sent             : QUIC.Send_Status;
    begin
       Request_Headers.Count := 4;
       Request_Headers.Fields (1) :=
@@ -143,5 +158,19 @@ begin
         (Client_Status = Succeeded
          and then Client_Event.Kind = Stream_Ended
          and then Client_Event.Stream = Request_Stream);
+
+      Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded and then Request_Stream = 4);
+      QUIC.Build_Stream_Datagram
+        (Client_Transport, Request_Stream, 0, Fin => True,
+         Data => Ada.Streams.Stream_Element_Array'(1, 2, 0),
+         Now => 5_000, Packet => Request_Packet, Status => Sent);
+      pragma Assert (Sent = QUIC.Sent);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert (Server_Status = Frame_Error);
    end;
 end Flyology.HTTP.HTTP_3_Connection.Smoke;

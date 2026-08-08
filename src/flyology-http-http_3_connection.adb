@@ -253,7 +253,22 @@ package body Flyology.HTTP.HTTP_3_Connection is
                QUIC.Consume
                  (Transport, ID, QUIC.Stream_Offset (Result.Consumed));
             end if;
-            if Status /= Succeeded then
+            if Status = No_Event
+              and then QUIC.Is_Complete (Transport, ID)
+            then
+               if HTTP_3_Stream_Receive_Policy.Kind
+                 (Item.Streams (Slot).State) in
+                   HTTP_3_Stream_Receive_Policy.Control_Stream |
+                   HTTP_3_Stream_Receive_Policy.Request_Stream |
+                   HTTP_3_Stream_Receive_Policy.Response_Stream
+               then
+                  --  A clean FIN proves that a partial frame can never be
+                  --  completed, which RFC 9114 classifies as H3_FRAME_ERROR.
+                  Status := Frame_Error;
+                  return;
+               end if;
+               exit;
+            elsif Status /= Succeeded then
                return;
             elsif Output.Kind /= No_Event then
                return;
