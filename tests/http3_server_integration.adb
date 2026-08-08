@@ -99,7 +99,9 @@ procedure HTTP3_Server_Integration is
      (Application : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (Application);
    begin
-      pragma Assert (X.Request_Protocol = Flyology.HTTP.HTTP_1_1_Protocol);
+      pragma Assert
+        (X.Request_Protocol in Flyology.HTTP.HTTP_1_1_Protocol |
+           Flyology.HTTP.HTTP_2_Protocol);
       X.Text (200, "same routes");
    end Discover;
 begin
@@ -176,7 +178,9 @@ begin
            (HTTP,
             Flyology.HTTP.Parse_Origin
               ("https://localhost:" & Decimal (Natural (Address.Port))),
-            Client_Backend'Access);
+            Client_Backend'Access,
+            Client.Negotiate_HTTP_3,
+            HTTP_3_Certificate_DER => Fixtures.Server_Certificate);
          Client.Set_Target (Request, "/discover");
          declare
             Reply : Client.Response :=
@@ -190,6 +194,51 @@ begin
             pragma Assert
               (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
                  "same routes");
+         end;
+
+         Client.Set_Method (Request, Flyology.HTTP.To_Method ("POST"));
+         Client.Set_Target (Request, "/hello/Ada");
+         Client.Set_Body (Request, "payload");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert (Client.Status (Reply) = 200);
+            pragma Assert
+              (Client.Negotiated_Protocol (Reply) =
+                 Flyology.HTTP.HTTP_3_Protocol);
+            pragma Assert (Client.Header (Reply, "X-Middleware") = "visited");
+            pragma Assert
+              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                 "hello Ada");
+         end;
+         Client.Shutdown (HTTP, Timeout => 5.0);
+      end;
+
+      declare
+         HTTP : aliased Client.Client (Capacity => 1);
+         Request : Client.Request;
+      begin
+         Client.Configure
+           (HTTP,
+            Flyology.HTTP.Parse_Origin
+              ("https://127.0.0.1:" & Decimal (Natural (Address.Port))),
+            Client.Require_HTTP_3,
+            HTTP_3_Certificate_DER => Fixtures.Server_Certificate);
+         Client.Set_Method (Request, Flyology.HTTP.To_Method ("POST"));
+         Client.Set_Target (Request, "/hello/Ada");
+         Client.Set_Body (Request, "payload");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert (Client.Status (Reply) = 200);
+            pragma Assert
+              (Client.Negotiated_Protocol (Reply) =
+                 Flyology.HTTP.HTTP_3_Protocol);
+            pragma Assert
+              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                 "hello Ada");
          end;
          Client.Shutdown (HTTP, Timeout => 5.0);
       end;

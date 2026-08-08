@@ -9,8 +9,8 @@ with Flyology.IO.TLS;
 --  Provides an origin-bound synchronous HTTP client with bounded connection
 --  pooling. Lightweight callers suspend on Flyology I/O; native callers block
 --  only their pthread. Existing configuration remains HTTP/1.1-only; additive
---  protocol modes enable negotiated or prior-knowledge HTTP/2 without exposing
---  transport or stream ownership through the request/response API.
+--  protocol modes enable HTTP/2 and HTTP/3 without exposing transport or
+--  stream ownership through the request/response API.
 package Flyology.HTTP.Client is
 
    --  Raised after client shutdown rejects a request or interrupts pool
@@ -77,17 +77,23 @@ package Flyology.HTTP.Client is
    Default_Pool_Configuration : constant Pool_Configuration := (others => <>);
 
    --  Connection protocol selection. Existing Configure overloads retain
-   --  HTTP/1.1-only behavior; callers opt into HTTP/2 with an overload that
-   --  requires this value.
+   --  HTTP/1.1-only behavior; callers opt into newer protocols with an
+   --  overload that requires this value. HTTP/3 modes require a pinned DER
+   --  certificate through an HTTP/3 Configure overload.
    --  @enum HTTP_1_Only Use HTTP/1.1 without offering HTTP/2
    --  @enum Negotiate_HTTP_2 Offer h2 then http/1.1 over TLS
    --  @enum Require_HTTP_2 Require h2 negotiation over TLS
    --  @enum HTTP_2_Prior_Knowledge Start HTTP/2 directly on cleartext HTTP
+   --  @enum Negotiate_HTTP_3 Start with TLS HTTP/2 or HTTP/1.1, learn a
+   --     same-origin h3 UDP port from Alt-Svc, and prefer HTTP/3 afterward
+   --  @enum Require_HTTP_3 Use HTTP/3 directly on the HTTPS origin's UDP port
    type Protocol_Mode is
      (HTTP_1_Only,
       Negotiate_HTTP_2,
       Require_HTTP_2,
-      HTTP_2_Prior_Knowledge);
+      HTTP_2_Prior_Knowledge,
+      Negotiate_HTTP_3,
+      Require_HTTP_3);
 
    --  Optional veto over one resolved connect target. Configure retains it and
    --  the client consults it once for every address the origin host resolves
@@ -186,8 +192,8 @@ package Flyology.HTTP.Client is
    --  is retried once on a fresh transport without the expectation, within
    --  the same deadline and shared automatic-retry budget. The whole exchange
    --  deadline is never extended.
-   --  The current HTTP/2 engine rejects this opt-in handshake; use it with an
-   --  HTTP_1_Only client.
+   --  The current HTTP/2 and HTTP/3 engines reject this opt-in handshake; use
+   --  it with an HTTP_1_Only client.
    --  @param Item Request to change
    --  @param Enabled Whether to generate Expect: 100-continue
    --  @param Wait_Timeout Maximum continue-specific wait in seconds
@@ -362,11 +368,56 @@ package Flyology.HTTP.Client is
       Pool         : Pool_Configuration := Default_Pool_Configuration;
       Connect_Policy : Connect_Target_Filter := null);
 
+   --  Bind a direct HTTP/3 client. Require_HTTP_3 sends QUIC to the HTTPS
+   --  origin's UDP port and authenticates the server with the pinned DER
+   --  certificate. No TCP TLS provider is needed because fallback is disabled.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Normalized HTTPS origin
+   --  @param Mode Must be Require_HTTP_3
+   --  @param HTTP_3_Certificate_DER Expected QUIC peer certificate
+   --  @param Pool Pool retention policy
+   --  @param Connect_Policy Optional veto over each resolved connect target
+   --  @exception Program_Error Item is configured or arguments are invalid
+   procedure Configure
+     (Item                   : in out Client;
+      Origin_Value           : Origin;
+      Mode                   : Protocol_Mode;
+      HTTP_3_Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Pool                   : Pool_Configuration :=
+        Default_Pool_Configuration;
+      Connect_Policy         : Connect_Target_Filter := null);
+
+   --  Bind an HTTPS client with HTTP/3 authentication and TCP fallback.
+   --  Negotiate_HTTP_3 begins with ALPN h2/http/1.1 and accepts only a
+   --  same-origin Alt-Svc h3=":port" alternative. A failed H3 establishment
+   --  is forgotten and retried once through TCP inside the original exchange
+   --  deadline. Require_HTTP_3 is also accepted and does not use the retained
+   --  TCP provider.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Normalized HTTPS origin
+   --  @param Backend Initialized ALPN-capable TLS provider retained by Item
+   --  @param Mode Negotiate_HTTP_3 or Require_HTTP_3
+   --  @param HTTP_3_Certificate_DER Expected QUIC peer certificate
+   --  @param Pool Pool retention policy
+   --  @param Connect_Policy Optional veto over each resolved connect target
+   --  @exception Program_Error Item is configured or arguments are invalid
+   --  @exception Flyology.IO.TLS.TLS_Error Backend cannot be retained
+   procedure Configure
+     (Item                   : in out Client;
+      Origin_Value           : Origin;
+      Backend                : not null access Flyology.IO.TLS.Provider'Class;
+      Mode                   : Protocol_Mode;
+      HTTP_3_Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Pool                   : Pool_Configuration :=
+        Default_Pool_Configuration;
+      Connect_Policy         : Connect_Target_Filter := null);
+
    --  Limited response owning one exchange lease until its body is consumed.
-   --  Reading the complete body returns an HTTP/1.1 transport lease or an
-   --  HTTP/2 stream lease to the pool. Finalizing an incomplete HTTP/1.1
-   --  response closes its transport; finalizing an incomplete HTTP/2 response
-   --  resets only its stream when the multiplexed transport remains usable.
+   --  Reading the complete body returns an HTTP/1.1 or HTTP/3 transport lease
+   --  or an HTTP/2 stream lease to the pool. Finalizing an incomplete HTTP/1.1
+   --  or HTTP/3 response closes its transport; finalizing an incomplete
+   --  HTTP/2 response resets only its stream when the multiplexed transport
+   --  remains usable.
    type Response is limited private;
 
    --  Execute one request. One monotonic Timeout starts before pool admission
@@ -411,8 +462,9 @@ package Flyology.HTTP.Client is
    --  the ordinary idempotent stale-transport retry conditions hold. Its
    --  exceptions propagate after the leased transport is discarded.
    --  The current HTTP/2 engine accepts retained request bodies but rejects
-   --  borrowed streaming sources; HTTP_1_Only retains the behavior described
-   --  above.
+   --  borrowed streaming sources. HTTP/3 does the same and currently bounds
+   --  retained request content to 16 KiB. HTTP_1_Only retains the behavior
+   --  described above.
    --  @param Item Shared configured client that outlives the result
    --  @param Value Request metadata; a retained body is rejected
    --  @param Source Request body producer used only during this call
@@ -542,8 +594,9 @@ package Flyology.HTTP.Client is
    --  Stream decoded response representation bytes. Fixed-length and chunked
    --  framing are removed. Last is Data'First - 1 when no bytes are produced.
    --  Finished becomes true only after complete framing; that transition
-   --  releases the underlying HTTP/1.1 connection or HTTP/2 stream. The
-   --  Execute deadline and token remain authoritative and are never restarted.
+   --  releases the underlying HTTP/1.1 or HTTP/3 connection or HTTP/2 stream.
+   --  The Execute deadline and token remain authoritative and are never
+   --  restarted.
    --  @param Item Active response
    --  @param Data Caller-owned destination
    --  @param Last Last decoded byte, or Data'First - 1

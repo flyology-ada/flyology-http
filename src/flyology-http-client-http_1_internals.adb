@@ -225,6 +225,10 @@ package body HTTP_1_Internals is
       Data.Slot_Index := 0;
       Data.Engine := HTTP_1_Response;
       Data.HTTP_2_Stream := H2_Connections.No_Stream;
+      Data.HTTP_3_Stream := 0;
+      Flyology.Bytes.Clear (Data.HTTP_3_Pending);
+      Data.HTTP_3_Pending_Offset := 0;
+      Data.HTTP_3_Stream_Ended := False;
       Data.Status_Value := 200;
       Data.Reason_Value := Null_Unbounded_String;
       Data.Protocol_Value := HTTP_1_1_Protocol;

@@ -79,6 +79,8 @@ package body Exchange_Internals is
      (State      : not null Client_State_Access;
       Slot_Index : Positive;
       Connection : in out Pooled_Connection_Access;
+      Use_HTTP_3  : Boolean;
+      Target_Port : Port_Number;
       Started    : Ada.Real_Time.Time;
       Timeout    : Duration;
       Token      : access Flyology.Cancellation.Token)
@@ -89,6 +91,10 @@ package body Exchange_Internals is
       --  address survived it far enough to open a socket.
       Refused   : Boolean := False;
       Attempted : Boolean := False;
+      Last_Error : Unbounded_String;
+      Last_Address : Unbounded_String;
+      Family_Known : Boolean := False;
+      Preferred_Family : Sockets.Address_Family := Sockets.IPv4;
 
       procedure Cleanup is
       begin
@@ -108,9 +114,20 @@ package body Exchange_Internals is
             if Connection.HTTP_2 /= null then
                H2_Connections.Destroy (Connection.HTTP_2);
             end if;
+            if Sockets.Is_Open (Connection.UDP) then
+               begin
+                  Sockets.Close_Socket (Connection.UDP);
+               exception
+                  when others => null;
+               end;
+            end if;
          end if;
       end Cleanup;
    begin
+      if Use_HTTP_3 then
+         State.Successful_Address.Current
+           (Family_Known, Preferred_Family);
+      end if;
       declare
          Sources : Flyology.IO.Interrupt_Set (1 .. 2);
          Count   : Natural;
@@ -132,26 +149,47 @@ package body Exchange_Internals is
                --  socket exists for it, which is the only point at which a
                --  name that resolves to a private destination can be
                --  refused.
-               if State.Connect_Policy = null
+               if Use_HTTP_3 and then Family_Known
+                 and then Address.Family /= Preferred_Family
+               then
+                  null;
+               elsif State.Connect_Policy = null
                  or else State.Connect_Policy.all
                    (Host (State.Origin_Value),
                     Sockets.Image (Address),
-                    Port (State.Origin_Value))
+                    Target_Port)
                then
                   begin
                      Attempted := True;
-                     Sockets.Create_Socket (Socket, Address.Family);
+                     Last_Address := To_Unbounded_String
+                       (Sockets.Image (Address));
+                     Sockets.Create_Socket
+                       (Socket, Address.Family,
+                        (if Use_HTTP_3 then Sockets.Socket_Datagram
+                         else Sockets.Socket_Stream));
 #if FLYOLOGY_CONNECTION_TEST_HOOKS then
                      Test_Barrier (16);
 #end if;
                      Interrupt_Sources (State, Token, Sources, Count);
                      Check_Deadline (Started, Timeout);
-                     Sockets.Connect
-                       (Socket,
-                        Sockets.Network_Endpoint
-                          (Address, Sockets.Port (Port (State.Origin_Value))),
-                        Remaining (Started, Timeout), Sources (1 .. Count));
+                     if Use_HTTP_3 then
+                        Sockets.Prepare (Socket);
+                        Sockets.Connect_Socket
+                          (Socket,
+                           Sockets.Network_Endpoint
+                             (Address, Sockets.Port (Target_Port)));
+                     else
+                        Sockets.Connect
+                          (Socket,
+                           Sockets.Network_Endpoint
+                             (Address, Sockets.Port (Target_Port)),
+                           Remaining (Started, Timeout),
+                           Sources (1 .. Count));
+                     end if;
                      Connected := True;
+                     if not Use_HTTP_3 then
+                        State.Successful_Address.Remember (Address.Family);
+                     end if;
                   exception
                      when Sockets.Operation_Interrupted =>
                         if Sockets.Is_Open (Socket) then
@@ -163,7 +201,10 @@ package body Exchange_Internals is
                            Sockets.Close_Socket (Socket);
                         end if;
                         raise;
-                     when Sockets.Socket_Error | Flyology.IO.Device_Error =>
+                     when Error : Sockets.Socket_Error |
+                          Flyology.IO.Device_Error =>
+                        Last_Error := To_Unbounded_String
+                          (Ada.Exceptions.Exception_Message (Error));
                         if Sockets.Is_Open (Socket) then
                            begin
                               Sockets.Close_Socket (Socket);
@@ -185,13 +226,24 @@ package body Exchange_Internals is
             raise Connection_Error with
               "HTTP connect policy refused every resolved endpoint";
          end if;
-         raise Connection_Error with "all resolved HTTP endpoints failed";
+         raise Connection_Error with
+           "all resolved HTTP endpoints failed" &
+             (if Length (Last_Address) = 0 then ""
+              else " at " & To_String (Last_Address)) &
+             (if Length (Last_Error) = 0 then ""
+              else ": " & To_String (Last_Error));
       end if;
 
       Connection := new Pooled_Connection;
-      Connections.Take (State.Manager, Socket, Connection.Channel);
+      if Use_HTTP_3 then
+         Sockets.Move (Socket, Connection.UDP);
+      else
+         Connections.Take (State.Manager, Socket, Connection.Channel);
+      end if;
       State.Pool.Publish_Connecting (Slot_Index, Connection);
-      if Scheme (State.Origin_Value) = Secure_HTTPS then
+      if Use_HTTP_3 then
+         Start_Connection (State, Connection, Started, Timeout, Token);
+      elsif Scheme (State.Origin_Value) = Secure_HTTPS then
          if State.Protocol_Policy = HTTP_1_Only then
             Flyology.IO.Connections.TLS.Upgrade
               (Connection.Channel, State.Backend.all,
@@ -202,7 +254,9 @@ package body Exchange_Internals is
                use Flyology.IO.TLS.ALPN;
                Protocols : Protocol_List := Offer ("h2");
             begin
-               if State.Protocol_Policy = Negotiate_HTTP_2 then
+               if State.Protocol_Policy in
+                 Negotiate_HTTP_2 | Negotiate_HTTP_3
+               then
                   Append (Protocols, "http/1.1");
                end if;
                Flyology.IO.Connections.TLS.Upgrade
@@ -221,7 +275,8 @@ package body Exchange_Internals is
                begin
                   if Selected = "h2" then
                      Connection.Protocol := HTTP_2_Transport;
-                  elsif State.Protocol_Policy = Negotiate_HTTP_2
+                  elsif State.Protocol_Policy in
+                    Negotiate_HTTP_2 | Negotiate_HTTP_3
                     and then (Selected = "" or else Selected = "http/1.1")
                   then
                      Connection.Protocol := HTTP_1_Transport;
@@ -334,6 +389,7 @@ package body Exchange_Internals is
       Connection : out Pooled_Connection_Access;
       Slot_Index : out Positive;
       Was_Reused : out Boolean;
+      Force_TCP  : Boolean;
       Started    : Ada.Real_Time.Time;
       Timeout    : Duration;
       Token      : access Flyology.Cancellation.Token)
@@ -343,6 +399,8 @@ package body Exchange_Internals is
       Value  : Pooled_Connection_Access;
       Verify : Boolean;
       Waiting : Boolean := False;
+      Use_HTTP_3 : Boolean := False;
+      Target_Port : Port_Number := 443;
 
       --  Withdraw a checked-out transport whose quiescence probe failed and
       --  close it outside the pool lock.
@@ -363,12 +421,36 @@ package body Exchange_Internals is
          raise Program_Error with "HTTP client is not configured";
       end if;
       Was_Reused := False;
+      Target_Port := Port (Item.Control.State.Origin_Value);
+      if not Force_TCP then
+         if Item.Control.State.Protocol_Policy = Require_HTTP_3 then
+            Use_HTTP_3 := True;
+         elsif Item.Control.State.Protocol_Policy = Negotiate_HTTP_3 then
+            declare
+               Alternative_Port : Port_Number;
+            begin
+               Item.Control.State.HTTP_3_Alternative.Preferred
+                 (Ada.Real_Time.Clock, Use_HTTP_3, Alternative_Port);
+               if Use_HTTP_3 then
+                  Target_Port := Alternative_Port;
+               end if;
+            end;
+         end if;
+      end if;
       loop
          Item.Control.State.Pool.Try_Checkout
            (Ada.Real_Time.Clock, Result, Index, Value, Verify);
          case Result is
             when Checkout_Idle =>
-               if Verify
+               if Value.Protocol /= HTTP_2_Transport
+                 and then
+                   ((Use_HTTP_3 and then Value.Protocol /= HTTP_3_Transport)
+                    or else
+                      (not Use_HTTP_3
+                         and then Value.Protocol = HTTP_3_Transport))
+               then
+                  Discard_Checkout;
+               elsif Verify
                  and then Value.Protocol = HTTP_1_Transport
                  and then Carries_Stray_Input (Value.Channel)
                then
@@ -387,7 +469,7 @@ package body Exchange_Internals is
                begin
                   Establish
                     (Item.Control.State, Positive (Index), Value,
-                     Started, Timeout, Token);
+                     Use_HTTP_3, Target_Port, Started, Timeout, Token);
                   Item.Control.State.Pool.Install
                     (Positive (Index), Value, Ada.Real_Time.Clock);
                exception

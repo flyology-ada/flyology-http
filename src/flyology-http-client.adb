@@ -1,4 +1,5 @@
 with Ada.Characters.Handling;
+with Ada.Exceptions;
 with Ada.Real_Time;
 with Ada.Strings.Fixed;
 with Ada.Unchecked_Deallocation;
@@ -6,6 +7,7 @@ with Flyology.HTTP.Client_Policy;
 with Flyology.HTTP.HTTP_2_Client_Connection;
 with Flyology.HTTP.HTTP_2_Policy;
 with Flyology.HTTP.HTTP_2_Requests;
+with Flyology.HTTP.HTTP_3;
 with Flyology.IO;
 with Flyology.IO.Connections;
 with Flyology.IO.Connections.TLS;
@@ -14,6 +16,7 @@ with Flyology.IO.Sockets;
 with Flyology.Time_Math;
 with Flyology.IO.TLS.ALPN;
 with Flyology.Wake_Sources;
+with Flyology.QUIC.Connections;
 #if FLYOLOGY_CONNECTION_TEST_HOOKS then
 with Interfaces.C;
 #end if;
@@ -30,11 +33,20 @@ package body Flyology.HTTP.Client is
      Flyology.HTTP.HTTP_2_Client_Connection;
    package H2_Policy renames Flyology.HTTP.HTTP_2_Policy;
    package H2_Requests renames Flyology.HTTP.HTTP_2_Requests;
+   package H3 renames Flyology.HTTP.HTTP_3;
+   package QUIC renames Flyology.QUIC.Connections;
    package Sockets renames Flyology.IO.Sockets;
+   use type Sockets.Address_Family;
    use type H2_Connections.Session_Access;
    use type H2_Connections.Stream_Handle;
    use type H2_Policy.Retry_Action;
    use type H2_Policy.Retry_Cause;
+   use type H3.Event_Kind;
+   use type H3.Operation_Status;
+   use type QUIC.Connection_State;
+   use type QUIC.Operation_Status;
+   use type QUIC.Stream_ID;
+   use type QUIC.Timeout_Status;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    Receive_Buffer_Size : constant Positive := 8 * 1_024;
@@ -46,12 +58,18 @@ package body Flyology.HTTP.Client is
    --  transport costs more than it saves and is destroyed instead.
    Max_Redirect_Drain_Bytes : constant Natural := 64 * 1_024;
 
-   type Transport_Protocol is (HTTP_1_Transport, HTTP_2_Transport);
+   type Transport_Protocol is
+     (HTTP_1_Transport, HTTP_2_Transport, HTTP_3_Transport);
 
    type Pooled_Connection is limited record
       Channel  : aliased Connections.Connection;
+      UDP      : aliased Sockets.Socket_Type;
       Protocol : Transport_Protocol := HTTP_1_Transport;
       HTTP_2   : H2_Connections.Session_Access := null;
+      QUIC_Transport : QUIC.Connection;
+      HTTP_3         : H3.Session;
+      HTTP_3_Epoch   : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
+      HTTP_3_Goaway  : Boolean := False;
    end record;
    type Pooled_Connection_Access is access Pooled_Connection;
 
@@ -165,9 +183,78 @@ package body Flyology.HTTP.Client is
       Responses   : Natural := 0;
    end State_Lifetime;
 
+   protected type HTTP_3_Discovery is
+      procedure Remember (Port : Port_Number; Max_Age : Duration);
+      procedure Clear;
+      procedure Preferred
+        (Now     : Ada.Real_Time.Time;
+         Present : out Boolean;
+         Port    : out Port_Number);
+   private
+      Available : Boolean := False;
+      UDP_Port  : Port_Number := 443;
+      Expires   : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
+   end HTTP_3_Discovery;
+
+   protected type Address_Preference is
+      procedure Remember (Family : Sockets.Address_Family);
+      procedure Current
+        (Known : out Boolean; Family : out Sockets.Address_Family);
+   private
+      Is_Known : Boolean := False;
+      Value    : Sockets.Address_Family := Sockets.IPv4;
+   end Address_Preference;
+
    protected body Pool_Controller is separate;
 
    protected body State_Lifetime is separate;
+
+   protected body HTTP_3_Discovery is
+      procedure Remember (Port : Port_Number; Max_Age : Duration) is
+      begin
+         if Max_Age <= 0.0 then
+            Available := False;
+         else
+            UDP_Port := Port;
+            Expires := Ada.Real_Time.Clock +
+              Ada.Real_Time.To_Time_Span (Max_Age);
+            Available := True;
+         end if;
+      end Remember;
+
+      procedure Clear is
+      begin
+         Available := False;
+      end Clear;
+
+      procedure Preferred
+        (Now     : Ada.Real_Time.Time;
+         Present : out Boolean;
+         Port    : out Port_Number)
+      is
+      begin
+         if Available and then Now >= Expires then
+            Available := False;
+         end if;
+         Present := Available;
+         Port := UDP_Port;
+      end Preferred;
+   end HTTP_3_Discovery;
+
+   protected body Address_Preference is
+      procedure Remember (Family : Sockets.Address_Family) is
+      begin
+         Value := Family;
+         Is_Known := True;
+      end Remember;
+
+      procedure Current
+        (Known : out Boolean; Family : out Sockets.Address_Family) is
+      begin
+         Known := Is_Known;
+         Family := Value;
+      end Current;
+   end Address_Preference;
 
    type Client_State (Capacity : Positive) is limited record
       Manager       : aliased Connections.Server (Capacity => Capacity);
@@ -176,12 +263,16 @@ package body Flyology.HTTP.Client is
       Backend       : Flyology.IO.TLS.Provider_Access := null;
       Origin_Value  : Origin;
       Protocol_Policy : Protocol_Mode := HTTP_1_Only;
+      HTTP_3_Certificate : Flyology.Bytes.Unbounded_Bytes;
+      HTTP_3_Alternative : HTTP_3_Discovery;
+      Successful_Address : Address_Preference;
       Connect_Policy : Connect_Target_Filter := null;
       Is_Configured : Boolean := False;
    end record;
 
    type Body_Mode is (No_Body, Fixed_Body, Chunked_Body, Until_Close_Body);
-   type Response_Engine is (HTTP_1_Response, HTTP_2_Response);
+   type Response_Engine is
+     (HTTP_1_Response, HTTP_2_Response, HTTP_3_Response);
 
    type Response_Data is record
       Owner          : Client_State_Access := null;
@@ -190,6 +281,10 @@ package body Flyology.HTTP.Client is
       Engine         : Response_Engine := HTTP_1_Response;
       HTTP_2_Stream  : H2_Connections.Stream_Handle :=
         H2_Connections.No_Stream;
+      HTTP_3_Stream  : QUIC.Stream_ID := 0;
+      HTTP_3_Pending : Flyology.Bytes.Unbounded_Bytes;
+      HTTP_3_Pending_Offset : Natural := 0;
+      HTTP_3_Stream_Ended : Boolean := False;
       Status_Value   : Status_Code := 200;
       Reason_Value   : Unbounded_String;
       Protocol_Value : Protocol := HTTP_1_1_Protocol;
@@ -321,6 +416,13 @@ package body Flyology.HTTP.Client is
       exception
          when others => null;
       end;
+      begin
+         if Sockets.Is_Open (Connection.UDP) then
+            Sockets.Close_Socket (Connection.UDP);
+         end if;
+      exception
+         when others => null;
+      end;
       if Connection.HTTP_2 /= null then
          H2_Connections.Destroy (Connection.HTTP_2);
       end if;
@@ -360,7 +462,13 @@ package body Flyology.HTTP.Client is
            (Found, Slot_Index, Connection);
          exit when not Found;
          begin
-            Connections.Close (Connection.Channel);
+            if Connection.Protocol = HTTP_3_Transport then
+               if Sockets.Is_Open (Connection.UDP) then
+                  Sockets.Close_Socket (Connection.UDP);
+               end if;
+            else
+               Connections.Close (Connection.Channel);
+            end if;
          exception
             when others => null;
          end;
@@ -383,13 +491,25 @@ package body Flyology.HTTP.Client is
       Result : Return_Result;
       Value  : Pooled_Connection_Access;
       Index  : constant Natural := Data.Slot_Index;
+      Prefer_HTTP_3 : Boolean := False;
+      Alternative_Port : Port_Number;
+      Keep : Boolean := Reusable;
    begin
       if Data.Connection = null then
          Data.Complete := True;
          return;
       end if;
+      if Data.Owner.Protocol_Policy = Negotiate_HTTP_3 then
+         Data.Owner.HTTP_3_Alternative.Preferred
+           (Ada.Real_Time.Clock, Prefer_HTTP_3, Alternative_Port);
+         if Prefer_HTTP_3
+           and then Data.Connection.Protocol /= HTTP_3_Transport
+         then
+            Keep := False;
+         end if;
+      end if;
       Data.Owner.Pool.Return_Lease
-        (Positive (Data.Slot_Index), Reusable, Verify, Ada.Real_Time.Clock,
+        (Positive (Data.Slot_Index), Keep, Verify, Ada.Real_Time.Clock,
          Result, Value);
       Data.Connection := null;
       Data.Slot_Index := 0;
@@ -413,6 +533,8 @@ package body Flyology.HTTP.Client is
               (Data.Connection.HTTP_2.all, Data.HTTP_2_Stream);
             Data.HTTP_2_Stream := H2_Connections.No_Stream;
          end if;
+      elsif Data.Engine = HTTP_3_Response then
+         Reusable := False;
       end if;
       Release_Lease
         (Data, Reusable => Data.Engine = HTTP_2_Response and then Reusable);
@@ -532,6 +654,9 @@ package body Flyology.HTTP.Client is
       elsif Mode in Negotiate_HTTP_2 | Require_HTTP_2 then
          raise Program_Error with
            "HTTP/2 negotiation requires an HTTPS origin";
+      elsif Mode in Negotiate_HTTP_3 | Require_HTTP_3 then
+         raise Program_Error with
+           "HTTP/3 requires a pinned certificate Configure overload";
       end if;
       Item.Control.State := new Client_State (Item.Capacity);
       Item.Control.State.Origin_Value := Origin_Value;
@@ -588,6 +713,9 @@ package body Flyology.HTTP.Client is
       then
          raise Program_Error with
            "HTTP/2 negotiation requires an ALPN-capable TLS backend";
+      elsif Mode in Negotiate_HTTP_3 | Require_HTTP_3 then
+         raise Program_Error with
+           "HTTP/3 requires a pinned certificate Configure overload";
       end if;
       Retained := Flyology.IO.TLS.Retain (Backend.all);
       Item.Control.State := new Client_State (Item.Capacity);
@@ -609,6 +737,123 @@ package body Flyology.HTTP.Client is
          raise;
    end Configure;
 
+   procedure Configure
+     (Item                   : in out Client;
+      Origin_Value           : Origin;
+      Mode                   : Protocol_Mode;
+      HTTP_3_Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Pool                   : Pool_Configuration :=
+        Default_Pool_Configuration;
+      Connect_Policy         : Connect_Target_Filter := null) is
+   begin
+      if Item.Control.State /= null then
+         raise Program_Error with "HTTP client is already configured";
+      elsif Mode /= Require_HTTP_3 then
+         raise Program_Error with
+           "HTTP/3 without a TCP TLS backend requires Require_HTTP_3";
+      elsif Scheme (Origin_Value) /= Secure_HTTPS then
+         raise Program_Error with "HTTP/3 requires an HTTPS origin";
+      elsif HTTP_3_Certificate_DER'Length not in 1 .. 4_096 then
+         raise Program_Error with
+           "HTTP/3 pinned certificate must contain 1 through 4096 bytes";
+      end if;
+      Item.Control.State := new Client_State (Item.Capacity);
+      Item.Control.State.Origin_Value := Origin_Value;
+      Item.Control.State.Protocol_Policy := Mode;
+      Item.Control.State.HTTP_3_Certificate :=
+        Flyology.Bytes.To_Unbounded_Bytes (HTTP_3_Certificate_DER);
+      Item.Control.State.Connect_Policy := Connect_Policy;
+      Item.Control.State.Pool.Configure (Pool);
+      Item.Control.State.Is_Configured := True;
+   exception
+      when others =>
+         if Item.Control.State /= null
+           and then not Item.Control.State.Is_Configured
+         then
+            Release_State (Item.Control.State);
+         end if;
+         raise;
+   end Configure;
+
+   procedure Configure
+     (Item                   : in out Client;
+      Origin_Value           : Origin;
+      Backend                : not null access Flyology.IO.TLS.Provider'Class;
+      Mode                   : Protocol_Mode;
+      HTTP_3_Certificate_DER : Ada.Streams.Stream_Element_Array;
+      Pool                   : Pool_Configuration :=
+        Default_Pool_Configuration;
+      Connect_Policy         : Connect_Target_Filter := null)
+   is
+      Retained : Flyology.IO.TLS.Provider_Access := null;
+   begin
+      if Item.Control.State /= null then
+         raise Program_Error with "HTTP client is already configured";
+      elsif Mode not in Negotiate_HTTP_3 | Require_HTTP_3 then
+         raise Program_Error with
+           "HTTP/3 certificate overload requires an HTTP/3 mode";
+      elsif Scheme (Origin_Value) /= Secure_HTTPS then
+         raise Program_Error with "HTTP/3 requires an HTTPS origin";
+      elsif HTTP_3_Certificate_DER'Length not in 1 .. 4_096 then
+         raise Program_Error with
+           "HTTP/3 pinned certificate must contain 1 through 4096 bytes";
+      elsif Mode = Negotiate_HTTP_3
+        and then Backend.all not in Flyology.IO.TLS.ALPN.Provider'Class
+      then
+         raise Program_Error with
+           "HTTP/3 discovery requires an ALPN-capable TLS backend";
+      end if;
+      Retained := Flyology.IO.TLS.Retain (Backend.all);
+      Item.Control.State := new Client_State (Item.Capacity);
+      Item.Control.State.Backend := Retained;
+      Retained := null;
+      Item.Control.State.Origin_Value := Origin_Value;
+      Item.Control.State.Protocol_Policy := Mode;
+      Item.Control.State.HTTP_3_Certificate :=
+        Flyology.Bytes.To_Unbounded_Bytes (HTTP_3_Certificate_DER);
+      Item.Control.State.Connect_Policy := Connect_Policy;
+      Item.Control.State.Pool.Configure (Pool);
+      Item.Control.State.Is_Configured := True;
+   exception
+      when others =>
+         Flyology.IO.TLS.Release (Retained);
+         if Item.Control.State /= null
+           and then not Item.Control.State.Is_Configured
+         then
+            Release_State (Item.Control.State);
+         end if;
+         raise;
+   end Configure;
+
+   package HTTP_3_Internals is
+      procedure Start_Connection
+        (State      : not null Client_State_Access;
+         Connection : not null Pooled_Connection_Access;
+         Started    : Ada.Real_Time.Time;
+         Timeout    : Duration;
+         Token      : access Flyology.Cancellation.Token);
+
+      procedure Execute_Request
+        (Data            : in out Response_Data;
+         Value           : Request;
+         Authority       : String;
+         Retained_Length : Natural;
+         Token           : access Flyology.Cancellation.Token);
+
+      procedure Read_Response_Body
+        (Item     : in out Response;
+         Data     : out Ada.Streams.Stream_Element_Array;
+         Last     : out Ada.Streams.Stream_Element_Offset;
+         Finished : out Boolean;
+         Token    : access Flyology.Cancellation.Token);
+
+      function Is_Usable
+        (Connection : Pooled_Connection_Access) return Boolean;
+   end HTTP_3_Internals;
+
+   package body HTTP_3_Internals is separate;
+   use HTTP_3_Internals;
+
    package Exchange_Internals is
       procedure Translate_Interruption
         (State : not null Client_State_Access;
@@ -620,6 +865,7 @@ package body Flyology.HTTP.Client is
          Connection : out Pooled_Connection_Access;
          Slot_Index : out Positive;
          Was_Reused : out Boolean;
+         Force_TCP  : Boolean;
          Started    : Ada.Real_Time.Time;
          Timeout    : Duration;
          Token      : access Flyology.Cancellation.Token);
@@ -693,6 +939,103 @@ package body Flyology.HTTP.Client is
       HTTP_1_Internals.Validate_Response (Value);
    end Validate_Response_Bytes_For_Testing;
 
+   procedure Observe_HTTP_3_Alternative
+     (Item : in out Client; Fields : Flyology.HTTP.Headers.List)
+   is
+      Maximum_Age : constant Natural := 31 * 24 * 60 * 60;
+      Changed : Boolean := False;
+
+      procedure Parse (Text : String) is
+         Lower : constant String := Ada.Characters.Handling.To_Lower (Text);
+         Pattern : constant String := "h3="":";
+         Marker : Natural := Ada.Strings.Fixed.Index (Lower, Pattern);
+         First_Digit : Natural;
+         Quote : Natural := 0;
+         Port_Value : Natural := 0;
+         Age_Value : Natural := 86_400;
+      begin
+         while Marker /= 0
+           and then Marker > Lower'First
+           and then Lower (Marker - 1) not in ',' | ' ' | Character'Val (9)
+         loop
+            Marker := Ada.Strings.Fixed.Index
+              (Lower, Pattern, From => Marker + 1);
+         end loop;
+         if Lower = "clear" then
+            Item.Control.State.HTTP_3_Alternative.Clear;
+            Changed := True;
+            return;
+         elsif Marker = 0 then
+            return;
+         end if;
+         First_Digit := Marker + 5;
+         if First_Digit > Lower'Last then
+            return;
+         end if;
+         for Index in First_Digit .. Lower'Last loop
+            if Lower (Index) = '"' then
+               Quote := Index;
+               exit;
+            elsif Lower (Index) not in '0' .. '9' then
+               return;
+            elsif Port_Value > 6_553 then
+               return;
+            else
+               Port_Value := Port_Value * 10 +
+                 Character'Pos (Lower (Index)) - Character'Pos ('0');
+            end if;
+         end loop;
+         if Quote = 0 or else Quote = First_Digit
+           or else Port_Value not in 1 .. 65_535
+         then
+            return;
+         end if;
+         if Quote < Lower'Last then
+            declare
+               Age_Marker : constant Natural := Ada.Strings.Fixed.Index
+                 (Lower (Quote + 1 .. Lower'Last), "ma=");
+            begin
+               if Age_Marker /= 0 then
+                  Age_Value := 0;
+                  declare
+                     Age_First : constant Natural := Age_Marker + 3;
+                  begin
+                     if Age_First > Lower'Last
+                       or else Lower (Age_First) not in '0' .. '9'
+                     then
+                        return;
+                     end if;
+                     for Index in Age_First .. Lower'Last loop
+                        exit when Lower (Index) not in '0' .. '9';
+                        if Age_Value < Maximum_Age then
+                           Age_Value := Natural'Min
+                             (Maximum_Age,
+                              Age_Value * 10 +
+                                Character'Pos (Lower (Index)) -
+                                Character'Pos ('0'));
+                        end if;
+                     end loop;
+                  end;
+               end if;
+            end;
+         end if;
+         Item.Control.State.HTTP_3_Alternative.Remember
+           (Port_Number (Port_Value), Duration (Age_Value));
+         Changed := True;
+      end Parse;
+   begin
+      if Item.Control.State.Protocol_Policy /= Negotiate_HTTP_3 then
+         return;
+      end if;
+      for Index in 1 .. Flyology.HTTP.Headers.Count (Fields, "Alt-Svc") loop
+         Parse (Flyology.HTTP.Headers.Value (Fields, "Alt-Svc", Index));
+         exit when Changed;
+      end loop;
+      if Changed then
+         Prune_Idle (Item);
+      end if;
+   end Observe_HTTP_3_Alternative;
+
    function Execute_Internal
      (Item    : aliased in out Client;
       Value   : Request;
@@ -750,6 +1093,7 @@ package body Flyology.HTTP.Client is
          declare
             Retried        : Boolean := False;
             Use_Expectation : Boolean := Value.Expect_Continue;
+            Force_TCP       : Boolean := False;
 
             function Replay return Replay_Kind is
               (if Source = null then Direct_Replay
@@ -770,6 +1114,8 @@ package body Flyology.HTTP.Client is
                       or else Remaining (Started, Timeout) > 0.0));
 
             procedure Retry_Stale (Action : Retry_Attempt_Action) is
+               Was_HTTP_3 : constant Boolean :=
+                 Result.Data.Engine = HTTP_3_Response;
             begin
                if Result.Data.Engine = HTTP_2_Response
                  and then Result.Data.Connection /= null
@@ -783,6 +1129,13 @@ package body Flyology.HTTP.Client is
                end if;
                Release_Lease (Result.Data.all, False);
                Reset_Attempt (Result.Data.all);
+               if Was_HTTP_3
+                 and then Item.Control.State.Protocol_Policy =
+                   Negotiate_HTTP_3
+               then
+                  Item.Control.State.HTTP_3_Alternative.Clear;
+                  Force_TCP := True;
+               end if;
                if Action = Rewind_And_Retry then
                   if Token /= null and then Token.Requested then
                      raise Flyology.Cancellation.Operation_Cancelled;
@@ -961,6 +1314,8 @@ package body Flyology.HTTP.Client is
                         Result.Data.Fields := Fields;
                         Result.Data.Protocol_Value := HTTP_2_Protocol;
                         Result.Data.Saw_Response_Bytes := True;
+                        Observe_HTTP_3_Alternative
+                          (Item, Result.Data.Fields);
                         if Finished then
                            H2_Connections.Release_Stream
                              (Result.Data.Connection.HTTP_2.all, Handle);
@@ -988,12 +1343,56 @@ package body Flyology.HTTP.Client is
             end Execute_HTTP_2;
          begin
             loop
-               Checkout
-                 (Item, Connection, Slot, Was_Reused, Started, Timeout, Token);
+               Connection := null;
+               declare
+                  Preferred : Boolean := False;
+                  Alternative_Port : Port_Number;
+               begin
+                  if not Force_TCP
+                    and then Item.Control.State.Protocol_Policy =
+                      Negotiate_HTTP_3
+                  then
+                     Item.Control.State.HTTP_3_Alternative.Preferred
+                       (Ada.Real_Time.Clock, Preferred, Alternative_Port);
+                  end if;
+                  begin
+                     Checkout
+                       (Item, Connection, Slot, Was_Reused, Force_TCP,
+                        Started, Timeout, Token);
+                  exception
+                     when Connection_Error | Protocol_Error |
+                          Flyology.IO.Device_Error |
+                          Flyology.IO.Timeout_Error |
+                          Flyology.IO.Sockets.Socket_Error =>
+                        if Preferred and then not Retried then
+                           Item.Control.State.HTTP_3_Alternative.Clear;
+                           Item.Control.State.Pool.Record_Stale_Retry;
+                           Force_TCP := True;
+                           Retried := True;
+                        else
+                           raise;
+                        end if;
+                  end;
+               end;
+               if Connection = null then
+                  goto Retry_Admission;
+               end if;
                Result.Data.Connection := Connection;
                Result.Data.Slot_Index := Slot;
                begin
-                  if Connection.Protocol = HTTP_2_Transport then
+                  if Connection.Protocol = HTTP_3_Transport then
+                     if Source /= null then
+                        raise Constraint_Error with
+                          "HTTP/3 streaming request bodies are not yet " &
+                          "supported";
+                     end if;
+                     Execute_Request
+                       (Result.Data.all, Value,
+                        Host_Field (Item.Control.State.Origin_Value),
+                        Retained_Length, Token);
+                     Observe_HTTP_3_Alternative (Item, Result.Data.Fields);
+                     exit;
+                  elsif Connection.Protocol = HTTP_2_Transport then
                      declare
                         Retry : Boolean;
                      begin
@@ -1064,6 +1463,8 @@ package body Flyology.HTTP.Client is
                         else
                            Select_Body_Mode
                              (Result.Data.all, Value.Method_Value);
+                           Observe_HTTP_3_Alternative
+                             (Item, Result.Data.Fields);
                            exit;
                         end if;
                      end;
@@ -1094,6 +1495,8 @@ package body Flyology.HTTP.Client is
                         end if;
                      end;
                end;
+               <<Retry_Admission>>
+               null;
             end loop;
          end;
       end return;
@@ -1679,6 +2082,15 @@ package body Flyology.HTTP.Client is
       if Item.Data.Engine = HTTP_1_Response then
          HTTP_1_Internals.Read_Response_Body
            (Item, Data, Last, Finished, Token);
+         return;
+      elsif Item.Data.Engine = HTTP_3_Response then
+         if Item.Data.Complete then
+            Last := Data'First - 1;
+            Finished := True;
+         else
+            HTTP_3_Internals.Read_Response_Body
+              (Item, Data, Last, Finished, Token);
+         end if;
          return;
       elsif Item.Data.Complete then
          Last := Data'First - 1;
