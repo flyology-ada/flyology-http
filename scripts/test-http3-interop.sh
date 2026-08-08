@@ -4,6 +4,7 @@ set -eu
 http_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 alr=$("$http_root/scripts/find-alr.sh")
 oracle_port=${FLYOLOGY_HTTP3_ORACLE_PORT:-4433}
+server_port=${FLYOLOGY_HTTP3_SERVER_ORACLE_PORT:-4434}
 oracle_python=${FLYOLOGY_HTTP3_ORACLE_PYTHON:-}
 
 if [ -z "$oracle_python" ]; then
@@ -20,18 +21,28 @@ fi
 
 cd "$http_root"
 "$alr" exec -- gprbuild -p -P tests/http_tests.gpr \
-  http3_interop_client.adb
+  http3_interop_client.adb http3_interop_server.adb
 
 mkdir -p "$http_root/build/oracle"
 oracle_log="$http_root/build/oracle/aioquic-h3.log"
+server_log="$http_root/build/oracle/ada-h3.log"
+oracle_pid=
+server_pid=
+cleanup () {
+  if [ -n "$oracle_pid" ]; then
+    kill "$oracle_pid" 2>/dev/null || :
+    wait "$oracle_pid" 2>/dev/null || :
+  fi
+  if [ -n "$server_pid" ]; then
+    kill "$server_pid" 2>/dev/null || :
+    wait "$server_pid" 2>/dev/null || :
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
 "$oracle_python" "$http_root/tests/oracle/aioquic_h3_server.py" \
   --port "$oracle_port" >"$oracle_log" 2>&1 &
 oracle_pid=$!
-cleanup () {
-  kill "$oracle_pid" 2>/dev/null || :
-  wait "$oracle_pid" 2>/dev/null || :
-}
-trap cleanup EXIT HUP INT TERM
 
 ready=false
 attempt=0
@@ -53,3 +64,40 @@ fi
 
 "$http_root/tests/bin/http3_interop_client" \
   "$oracle_port"
+kill "$oracle_pid" 2>/dev/null || :
+wait "$oracle_pid" 2>/dev/null || :
+oracle_pid=
+
+"$http_root/tests/bin/http3_interop_server" \
+  "$server_port" >"$server_log" 2>&1 &
+server_pid=$!
+ready=false
+attempt=0
+while [ "$attempt" -lt 50 ]; do
+  if grep -q 'Ada HTTP/3 oracle listening' "$server_log"; then
+    ready=true
+    break
+  fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+if [ "$ready" != true ]; then
+  sed -n '1,200p' "$server_log" >&2
+  exit 1
+fi
+
+if ! "$oracle_python" "$http_root/tests/oracle/aioquic_h3_client.py" \
+  --port "$server_port"
+then
+  sed -n '1,200p' "$server_log" >&2
+  exit 1
+fi
+if ! wait "$server_pid"; then
+  sed -n '1,200p' "$server_log" >&2
+  exit 1
+fi
+server_pid=
+sed -n '1,200p' "$server_log"
