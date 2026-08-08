@@ -8,10 +8,13 @@ with Flyology.QUIC.Varint_Policy;
 package body Flyology.QUIC.Connection_Driver is
    use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
+   use type Application_Space.Process_Status;
+   use type Application_Space.Send_Status;
    use type Handshake_Space.Build_Status;
    use type Handshake_Space.Process_Status;
    use type Initial_Space.Build_Status;
    use type Initial_Space.Process_Status;
+   use type Recovery_Policy.Duration;
    use type TLS_Session.Operation_Status;
 
    function State (Item : Connection) return Connection_State is
@@ -19,6 +22,81 @@ package body Flyology.QUIC.Connection_Driver is
 
    function Is_Connected (Item : Connection) return Boolean is
      (Item.Current = Connected);
+
+   function Has_Stream
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
+   is (Application_Space.Has_Stream (Item.Application, Stream_ID));
+
+   function Available_Length
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type)
+      return Application_Space.Stream_Offset
+   is (Application_Space.Available_Length (Item.Application, Stream_ID));
+
+   function Stream_Element
+     (Item      : Connection;
+      Stream_ID : Varint_Policy.Value_Type;
+      Offset    : Application_Space.Stream_Index)
+      return Ada.Streams.Stream_Element
+   is (Application_Space.Stream_Element
+         (Item.Application, Stream_ID, Offset));
+
+   procedure Consume
+     (Item      : in out Connection;
+      Stream_ID : Varint_Policy.Value_Type;
+      Length    : Application_Space.Stream_Offset) is
+   begin
+      Application_Space.Consume (Item.Application, Stream_ID, Length);
+   end Consume;
+
+   procedure Open_Stream
+     (Item      : in out Connection;
+      Direction : Stream_ID_Policy.Stream_Direction;
+      ID        : out Varint_Policy.Value_Type;
+      Status    : out Application_Space.Open_Status) is
+   begin
+      Application_Space.Open_Stream
+        (Item.Application, Direction, ID, Status);
+   end Open_Stream;
+
+   procedure Build_Stream_Datagram
+     (Item      : in out Connection;
+      Stream_ID : Varint_Policy.Value_Type;
+      Offset    : Varint_Policy.Value_Type;
+      Fin       : Boolean;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Now       : Application_Space.Timestamp;
+      Packet    : out Datagram;
+      Status    : out Application_Space.Send_Status)
+   is
+      Built : Application_Space.Send_Result;
+   begin
+      Packet := (others => <>);
+      Application_Space.Build_Stream_Packet
+        (Item.Application, Stream_ID, Offset, Fin, Data, Now,
+         Packet.Data, Built);
+      Status := Built.Status;
+      if Built.Status = Application_Space.Sent then
+         Packet.Length := Built.Packet_Length;
+      end if;
+   end Build_Stream_Datagram;
+
+   procedure Build_ACK_Datagram
+     (Item      : in out Connection;
+      ACK_Delay : Varint_Policy.Value_Type;
+      Now       : Application_Space.Timestamp;
+      Packet    : out Datagram;
+      Status    : out Application_Space.Send_Status)
+   is
+      Built : Application_Space.Send_Result;
+   begin
+      Packet := (others => <>);
+      Application_Space.Build_ACK_Packet
+        (Item.Application, ACK_Delay, Now, Packet.Data, Built);
+      Status := Built.Status;
+      if Built.Status = Application_Space.Sent then
+         Packet.Length := Built.Packet_Length;
+      end if;
+   end Build_ACK_Datagram;
 
    procedure Clear (Output : out Datagram_Batch) is
    begin
@@ -164,6 +242,15 @@ package body Flyology.QUIC.Connection_Driver is
          (if Item.Is_Client then Stream_ID_Policy.Client
           else Stream_ID_Policy.Server),
          Peer);
+      Item.Peer_ACK_Exponent :=
+        (if Peer.ACK_Delay_Exponent.Present
+         then Application_Space.ACK_Delay_Exponent
+           (Peer.ACK_Delay_Exponent.Value)
+         else 3);
+      Item.Peer_Max_ACK_Delay :=
+        (if Peer.Max_ACK_Delay.Present
+         then Recovery_Policy.Duration (Peer.Max_ACK_Delay.Value) * 1_000
+         else Recovery_Policy.Duration'(25_000));
       Item.Application_Initialized := True;
    end Initialize_Application;
 
@@ -453,14 +540,28 @@ package body Flyology.QUIC.Connection_Driver is
      (Item   : in out Connection;
       Packet : Ada.Streams.Stream_Element_Array;
       Output : out Datagram_Batch;
-      Result : out Operation_Result) is
+      Result : out Operation_Result;
+      Now    : Application_Space.Timestamp := 0)
+   is
+      Application_Result : Application_Space.Process_Result;
    begin
       Clear (Output);
       Result := (others => <>);
       if Packet'Length = 0 then
          Result.Status := Unsupported_Packet;
       elsif (Packet (Packet'First) and 16#80#) = 0 then
-         Result.Status := Unsupported_Packet;
+         if Item.Current /= Connected then
+            Result.Status := Unsupported_Packet;
+            return;
+         end if;
+         Application_Space.Process_Packet
+           (Item.Application, Packet, Now, Item.Peer_ACK_Exponent,
+            Item.Peer_Max_ACK_Delay, Handshake_Confirmed => True,
+            Result => Application_Result);
+         Result.Status :=
+           (if Application_Result.Status in Application_Space.Processed
+              | Application_Space.Duplicate | Application_Space.Too_Old
+            then Succeeded else Packet_Error);
       elsif (Packet (Packet'First) and 16#30#) = 16#00# then
          Process_Initial_Packet (Item, Packet, Output, Result);
       elsif (Packet (Packet'First) and 16#30#) = 16#20# then

@@ -1,7 +1,11 @@
 with Flyology.QUIC.Transport_Parameter_Policy;
 
 procedure Flyology.QUIC.Connection_Driver.Smoke is
+   use type Application_Space.Open_Status;
+   use type Application_Space.Send_Status;
+   use type Ada.Streams.Stream_Element;
    use type Transport_Parameter_Policy.Encode_Status;
+   use type Varint_Policy.Value_Type;
 
    function Nibble (Value : Character) return Natural is
      (case Value is
@@ -172,4 +176,42 @@ begin
    pragma Assert
      (Server_Result.Status = Succeeded and then Is_Connected (Server)
       and then Server_Output.Count = 0);
+
+   declare
+      Stream_ID : Varint_Policy.Value_Type;
+      Opened    : Application_Space.Open_Status;
+      Sent      : Application_Space.Send_Status;
+      Stream_Packet, ACK_Packet : Datagram;
+   begin
+      Open_Stream
+        (Client, Stream_ID_Policy.Bidirectional, Stream_ID, Opened);
+      pragma Assert
+        (Opened = Stream_ID_Policy.Opened and then Stream_ID = 0);
+      Build_Stream_Datagram
+        (Client, Stream_ID, 0, Fin => True,
+         Data => (16#68#, 16#33#), Now => 100,
+         Packet => Stream_Packet, Status => Sent);
+      pragma Assert (Sent = Application_Space.Sent);
+      Process_Datagram
+        (Server,
+         Stream_Packet.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Stream_Packet.Length)),
+         Server_Output, Server_Result, Now => 150);
+      pragma Assert
+        (Server_Result.Status = Succeeded
+         and then Has_Stream (Server, Stream_ID)
+         and then Available_Length (Server, Stream_ID) = 2
+         and then Stream_Element (Server, Stream_ID, 0) = 16#68#
+         and then Stream_Element (Server, Stream_ID, 1) = 16#33#);
+      Build_ACK_Datagram
+        (Server, ACK_Delay => 0, Now => 160,
+         Packet => ACK_Packet, Status => Sent);
+      pragma Assert (Sent = Application_Space.Sent);
+      Process_Datagram
+        (Client,
+         ACK_Packet.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (ACK_Packet.Length)),
+         Client_Output, Client_Result, Now => 200);
+      pragma Assert (Client_Result.Status = Succeeded);
+   end;
 end Flyology.QUIC.Connection_Driver.Smoke;
