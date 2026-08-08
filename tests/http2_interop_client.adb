@@ -4,6 +4,7 @@ with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology;
 with Flyology.Bytes;
+with Flyology.Execution_Groups;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
 with Flyology.HTTP.Methods;
@@ -220,6 +221,7 @@ procedure HTTP2_Interop_Client is
    procedure Run_Native is new Run (Flyology.Native_Task);
    procedure Run_Lightweight is new Run (Flyology.Lightweight_Task);
 begin
+   pragma Assert (Flyology.Execution_Groups.Configured_Pool_Size = 1);
    OpenSSL.Initialize_Client
      (Backend, CA_File => Certificate,
       Library_Directory => Library_Directory);

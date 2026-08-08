@@ -4,9 +4,12 @@ set -eu
 http_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 environment="$http_root/build/http2-tester"
 python="$environment/bin/python"
+qualification_rts="$http_root/build/http2-qualification-rts"
 certificate="$http_root/tests/fixtures/tls/server-cert.pem"
 private_key="$http_root/tests/fixtures/tls/server-key.pem"
 command=${1:-all}
+alr=
+flyology_root=
 server_pid=
 proxy_pid=
 work_dir=
@@ -32,17 +35,43 @@ require_tools () {
       "HTTP/2 tester is unavailable; run: ./scripts/http2-test.sh prepare" >&2
     exit 2
   fi
-  if [ ! -d "$http_root/build/rts/adalib" ]; then
-    printf '%s\n' \
-      "prepared test runtime is unavailable; run: ./scripts/test.sh" >&2
-    exit 2
-  fi
   for tool in go node; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       printf '%s\n' "$tool is required for HTTP/2 interoperability" >&2
       exit 2
     fi
   done
+}
+
+prepare_qualification_rts () {
+  alr=$("$http_root/scripts/find-alr.sh")
+  if [ -n "${FLYOLOGY_ROOT:-}" ]; then
+    flyology_root=$FLYOLOGY_ROOT
+  elif [ -x "$http_root/../scripts/prepare-rts.sh" ]; then
+    flyology_root=$(CDPATH= cd -- "$http_root/.." && pwd)
+  elif flyology_root=$("$alr" exec -- sh -c \
+    'printf "%s\n" "$FLYOLOGY_ROOT"') \
+    && [ -n "$flyology_root" ] \
+    && [ -d "$flyology_root" ]
+  then
+    :
+  else
+    printf '%s\n' \
+      "Flyology's source is unavailable; run: alr build" >&2
+    exit 2
+  fi
+
+  if [ ! -x "$flyology_root/scripts/prepare-rts.sh" ]; then
+    printf '%s\n' \
+      "Flyology cannot prepare the HTTP/2 qualification runtime" >&2
+    exit 2
+  fi
+
+  "$alr" exec -- env \
+    FLYOLOGY_RTS_DIR="$qualification_rts" \
+    FLYOLOGY_DEFAULT=native \
+    FLYOLOGY_LOOP_POOL_SIZE=1 \
+    "$flyology_root/scripts/prepare-rts.sh" >/dev/null
 }
 
 find_nghttpd () {
@@ -62,9 +91,8 @@ find_nghttpd () {
 }
 
 build_clients () {
-  alr=$("$http_root/scripts/find-alr.sh")
   "$alr" exec -- env -u GPR_CONFIG gprbuild \
-    --RTS="$http_root/build/rts" --subdirs=http2-qualification -p \
+    --RTS="$qualification_rts" --subdirs=http2-qualification -p \
     -P "$http_root/tests/http_tests.gpr" http2_interop_client.adb
   go build -o "$work_dir/http2-go-peer" \
     "$http_root/tests/interop/http2_go_peer.go"
@@ -256,6 +284,7 @@ run_faults () {
 
 require_tools
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2-interop.XXXXXX")
+prepare_qualification_rts
 build_clients
 
 case "$command" in
