@@ -25,7 +25,6 @@ is
       Request_Stream,
       Response_Stream,
       Control_Stream,
-      Push_Stream,
       QPACK_Encoder_Stream,
       QPACK_Decoder_Stream,
       Ignored_Stream);
@@ -36,7 +35,6 @@ is
       Goaway_Received,
       Headers_Received,
       Data_Received,
-      Push_Promise_Received,
       QPACK_Data_Received);
 
    type Receive_Status is
@@ -129,6 +127,5 @@ private
       Stream_Type    : Stream_Kind := Awaiting_Type;
       Request_State  : HTTP_3_Message_Policy.Request_State;
       Response_State : HTTP_3_Message_Policy.Response_State;
-      Push_ID        : Varint_Policy.Value_Type := 0;
    end record;
 end Flyology.HTTP.HTTP_3_Stream_Receive_Policy;

@@ -63,7 +63,6 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Goaway_Received,
       Headers_Received,
       Data_Received,
-      Push_Promise_Received,
       QPACK_Data_Received,
       Stream_Ended);
 

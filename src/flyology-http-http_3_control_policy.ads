@@ -109,5 +109,7 @@ private
         HTTP_3_Stream_Policy.Client;
       Peer_Goaway_Seen   : Boolean := False;
       Peer_Goaway        : Varint_Policy.Value_Type := 0;
+      Max_Push_ID_Seen   : Boolean := False;
+      Max_Push_ID        : Varint_Policy.Value_Type := 0;
    end record;
 end Flyology.HTTP.HTTP_3_Control_Policy;

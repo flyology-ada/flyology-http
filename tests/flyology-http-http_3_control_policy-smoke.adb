@@ -62,6 +62,18 @@ begin
      (Item, HTTP_3_Frame_Policy.Goaway_Frame,
       Ada.Streams.Stream_Element_Array'(1 => 4), Status);
    pragma Assert (Status = ID_Error and then Peer_Goaway_ID (Item) = 0);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Max_Push_ID_Frame,
+      Ada.Streams.Stream_Element_Array'(1 => 0), Status);
+   pragma Assert (Status = Frame_Unexpected);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Cancel_Push_Frame,
+      Ada.Streams.Stream_Element_Array'(1 => 0), Status);
+   pragma Assert (Status = ID_Error);
+   Process_Frame
+     (Item, HTTP_3_Frame_Policy.Cancel_Push_Frame,
+      Ada.Streams.Stream_Element_Array'(1 .. 0 => 0), Status);
+   pragma Assert (Status = Frame_Error);
 
    Peer_Stream_Closed (Item, 3, Status);
    pragma Assert (Status = Critical_Stream_Closed);
@@ -99,5 +111,21 @@ begin
          Ada.Streams.Stream_Element_Array'(1 => 3), Status);
       pragma Assert
         (Status = Accepted and then Peer_Goaway_ID (Server) = 3);
+      Process_Frame
+        (Server, HTTP_3_Frame_Policy.Max_Push_ID_Frame,
+         Ada.Streams.Stream_Element_Array'(1 => 5), Status);
+      pragma Assert (Status = Accepted);
+      Process_Frame
+        (Server, HTTP_3_Frame_Policy.Max_Push_ID_Frame,
+         Ada.Streams.Stream_Element_Array'(1 => 7), Status);
+      pragma Assert (Status = Accepted);
+      Process_Frame
+        (Server, HTTP_3_Frame_Policy.Max_Push_ID_Frame,
+         Ada.Streams.Stream_Element_Array'(1 => 6), Status);
+      pragma Assert (Status = ID_Error);
+      Process_Frame
+        (Server, HTTP_3_Frame_Policy.Cancel_Push_Frame,
+         Ada.Streams.Stream_Element_Array'(1 => 0), Status);
+      pragma Assert (Status = ID_Error);
    end;
 end Flyology.HTTP.HTTP_3_Control_Policy.Smoke;

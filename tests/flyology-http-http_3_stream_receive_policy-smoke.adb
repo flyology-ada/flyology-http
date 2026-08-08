@@ -121,6 +121,10 @@ begin
         (Result.Status = Consumed and then Result.Event = Data_Received
          and then Result.Payload_Offset = 2
          and then Result.Payload_Length = 3);
+      Process
+        (Connection, Request,
+         Ada.Streams.Stream_Element_Array'(5, 1, 0), Result);
+      pragma Assert (Result.Status = Frame_Unexpected);
       Finish (Connection, Request, Status);
       pragma Assert (Status = Consumed);
    end;
@@ -136,6 +140,10 @@ begin
         (Connection, Response,
          Ada.Streams.Stream_Element_Array'(0, 1, 120), Result);
       pragma Assert (Result.Status = Frame_Unexpected);
+      Process
+        (Connection, Response,
+         Ada.Streams.Stream_Element_Array'(5, 1, 0), Result);
+      pragma Assert (Result.Status = ID_Error);
       Finish (Connection, Response, Status);
       pragma Assert (Status = Message_Error);
 
@@ -154,8 +162,8 @@ begin
       Process
         (Connection, Push, Ada.Streams.Stream_Element_Array'(1 => 5), Result);
       pragma Assert
-        (Result.Status = Consumed and then Kind (Push) = Push_Stream);
+        (Result.Status = ID_Error and then Kind (Push) = Awaiting_Push_ID);
       Finish (Connection, Push, Status);
-      pragma Assert (Status = Message_Error);
+      pragma Assert (Status = Stream_Creation_Error);
    end;
 end Flyology.HTTP.HTTP_3_Stream_Receive_Policy.Smoke;

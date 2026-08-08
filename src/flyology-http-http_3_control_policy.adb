@@ -89,6 +89,34 @@ is
             Item.Peer_Goaway := Identifier.Value;
             Status := Accepted;
          end if;
+      elsif Frame_Type = HTTP_3_Frame_Policy.Max_Push_ID_Frame then
+         Identifier := Varint_Policy.Decode (Payload);
+         if Identifier.Status /= Varint_Policy.Decoded
+           or else Natural (Identifier.Consumed) /= Payload'Length
+         then
+            Status := Frame_Error;
+         elsif Item.Local_Role = HTTP_3_Stream_Policy.Client then
+            Status := Frame_Unexpected;
+         elsif Item.Max_Push_ID_Seen
+           and then Identifier.Value < Item.Max_Push_ID
+         then
+            Status := ID_Error;
+         else
+            Item.Max_Push_ID_Seen := True;
+            Item.Max_Push_ID := Identifier.Value;
+            Status := Accepted;
+         end if;
+      elsif Frame_Type = HTTP_3_Frame_Policy.Cancel_Push_Frame then
+         Identifier := Varint_Policy.Decode (Payload);
+         if Identifier.Status /= Varint_Policy.Decoded
+           or else Natural (Identifier.Consumed) /= Payload'Length
+         then
+            Status := Frame_Error;
+         else
+            --  This static profile neither advertises nor originates pushes,
+            --  so every cancellation references a disallowed push ID.
+            Status := ID_Error;
+         end if;
       elsif Frame_Type = HTTP_3_Frame_Policy.Settings_Frame
         or else Frame_Type = HTTP_3_Frame_Policy.Data_Frame
         or else Frame_Type = HTTP_3_Frame_Policy.Headers_Frame

@@ -130,8 +130,7 @@ is
    end Process_Prefix;
 
    procedure Process_Push_ID
-     (Stream : in out Stream_State;
-      Data   : Ada.Streams.Stream_Element_Array;
+     (Data   : Ada.Streams.Stream_Element_Array;
       Result : out Receive_Result)
    is
       Decoded : Varint_Policy.Decode_Result;
@@ -144,10 +143,9 @@ is
       if Decoded.Status /= Varint_Policy.Decoded then
          return;
       end if;
-      Stream.Push_ID := Decoded.Value;
-      Stream.Stream_Type := Push_Stream;
-      Result.Status := Consumed;
-      Result.Consumed := Natural (Decoded.Consumed);
+      --  No MAX_PUSH_ID is emitted by this static profile, so every peer push
+      --  stream exceeds the permitted (unset) push-ID range.
+      Result.Status := ID_Error;
    end Process_Push_ID;
 
    procedure Process_Control
@@ -210,8 +208,27 @@ is
         HTTP_3_Message_Policy.Not_Headers;
       Request    : HTTP_3_Message_Policy.Request_Update;
       Response   : HTTP_3_Message_Policy.Response_Update;
+      Push_ID    : Varint_Policy.Decode_Result;
    begin
-      if Frame.Frame_Type = HTTP_3_Frame_Policy.Headers_Frame then
+      if Frame.Frame_Type = HTTP_3_Frame_Policy.Push_Promise_Frame then
+         if Stream.Stream_Type = Request_Stream then
+            Result.Status := Frame_Unexpected;
+         elsif Frame.Payload_Length = 0 then
+            Result.Status := Frame_Error;
+         else
+            Push_ID := Varint_Policy.Decode
+              (Data
+                 (Data'First
+                    + Ada.Streams.Stream_Element_Offset (Frame.Payload_Offset)
+                  .. Data'First
+                       + Ada.Streams.Stream_Element_Offset
+                           (Frame.Payload_Offset + Frame.Payload_Length - 1)));
+            Result.Status :=
+              (if Push_ID.Status = Varint_Policy.Decoded
+               then ID_Error else Frame_Error);
+         end if;
+         return;
+      elsif Frame.Frame_Type = HTTP_3_Frame_Policy.Headers_Frame then
          if Frame.Payload_Length = 0 then
             Decoded := QPACK_Field_Section_Policy.Decode
               (Ada.Streams.Stream_Element_Array'(1 .. 0 => 0));
@@ -292,8 +309,6 @@ is
             Result.Event := Headers_Received;
          elsif Frame.Frame_Type = HTTP_3_Frame_Policy.Data_Frame then
             Result.Event := Data_Received;
-         elsif Frame.Frame_Type = HTTP_3_Frame_Policy.Push_Promise_Frame then
-            Result.Event := Push_Promise_Received;
          end if;
       end if;
    end Process_Message;
@@ -311,7 +326,7 @@ is
          Process_Prefix (Connection, Stream, Data, Result);
          return;
       elsif Stream.Stream_Type = Awaiting_Push_ID then
-         Process_Push_ID (Stream, Data, Result);
+         Process_Push_ID (Data, Result);
          return;
       elsif Stream.Stream_Type = Ignored_Stream then
          Result.Status := Consumed;
@@ -342,7 +357,7 @@ is
       if Stream.Stream_Type = Control_Stream then
          Process_Control (Connection, Data, Frame, Result);
       elsif Stream.Stream_Type in
-        Request_Stream | Response_Stream | Push_Stream
+        Request_Stream | Response_Stream
       then
          Process_Message (Stream, Data, Frame, Result);
       else
@@ -376,7 +391,7 @@ is
               (if HTTP_3_Message_Policy.Finish_Request (Stream.Request_State) =
                     HTTP_3_Message_Policy.Message_Complete
                then Consumed else Message_Error);
-         when Response_Stream | Push_Stream =>
+         when Response_Stream =>
             Status :=
               (if HTTP_3_Message_Policy.Finish_Response
                     (Stream.Response_State) =

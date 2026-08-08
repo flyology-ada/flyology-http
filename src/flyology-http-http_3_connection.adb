@@ -174,8 +174,6 @@ package body Flyology.HTTP.HTTP_3_Connection is
          when HTTP_3_Stream_Receive_Policy.Headers_Received =>
            Headers_Received,
          when HTTP_3_Stream_Receive_Policy.Data_Received => Data_Received,
-         when HTTP_3_Stream_Receive_Policy.Push_Promise_Received =>
-           Push_Promise_Received,
          when HTTP_3_Stream_Receive_Policy.QPACK_Data_Received =>
            QPACK_Data_Received);
 

@@ -95,6 +95,8 @@ does not provide proxying or content decoding. HTTP/3 is not yet integrated
 with the higher-level HTTP client pool, routing, or application-server APIs;
 its current QPACK profile does not use the dynamic table, and callers drive UDP
 I/O and QUIC recovery timers. It is experimental and does not claim production
-qualification.
+qualification. HTTP/3 server push is disabled. Because this profile does not
+advertise MAX_PUSH_ID, received push promises and push streams are rejected as
+required by RFC 9114.
 
 Flyology HTTP is dual-licensed under MIT or Apache-2.0.

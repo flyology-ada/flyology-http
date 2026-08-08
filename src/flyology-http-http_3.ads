@@ -167,7 +167,6 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Goaway_Received Peer initiated graceful shutdown
    --  @enum Headers_Received A HEADERS field section was decoded
    --  @enum Data_Received A DATA frame payload was decoded
-   --  @enum Push_Promise_Received A PUSH_PROMISE was decoded
    --  @enum QPACK_Data_Received Peer QPACK stream data is available
    --  @enum Stream_Ended A complete request or response reached stream FIN
    type Event_Kind is
@@ -176,7 +175,6 @@ package Flyology.HTTP.HTTP_3 is
       Goaway_Received,
       Headers_Received,
       Data_Received,
-      Push_Promise_Received,
       QPACK_Data_Received,
       Stream_Ended);
 
