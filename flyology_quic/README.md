@@ -9,7 +9,7 @@ The crate lives in the Flyology HTTP repository because HTTP/3 is its first
 consumer, but it is built and tested independently. Task-aware UDP sockets,
 buffers, deadlines, cancellation, and runtime integration remain in Flyology.
 
-The current foundation implements proved QUIC variable integers, QUIC v1
+The transport implements proved QUIC variable integers, QUIC v1
 long-header invariant and Initial packet envelope parsing, packet-number
 selection and reconstruction, nonce and header-protection policy, and the
 QUIC v1 Initial key schedule and packet protection using OpenSSL 3. The
@@ -45,6 +45,17 @@ An end-to-end transport test carries those messages in protected Initial and
 Handshake CRYPTO frames, including the client's required 1,200-byte Initial,
 with independent packet-number and replay state at each encryption level.
 
+After the handshake, the public connection API allocates bounded bidirectional
+and unidirectional streams, protects and receives 1-RTT packets, reassembles
+STREAM data, enforces peer flow-control limits, acknowledges application
+traffic, and tracks RTT, loss, congestion, and PTO state. PTO probes retransmit
+retained STREAM and critical control frames. The caller owns socket I/O and
+uses the connection's recovery deadline to drive timer expiration.
+
+HTTP/3 and QPACK are intentionally outside this crate. They are implemented by
+`Flyology.HTTP.HTTP_3` in the parent `flyology_http` crate, which depends on
+`flyology_quic` as its transport.
+
 ## Build and test
 
 ```sh
@@ -53,9 +64,12 @@ alr build
 ./scripts/prove.sh
 ```
 
-The tests use published RFC 9000 and RFC 9001 vectors. Network interoperability
-qualification will use external QUIC implementations as black-box peers; they
-are test oracles, not library dependencies.
+The tests use published RFC 9000 and RFC 9001 vectors. The parent HTTP crate
+also runs client- and server-role HTTP/3 interoperability against aioquic.
+External implementations are black-box test oracles, not library dependencies.
+
+The implementation remains bounded and experimental. It does not yet cover
+the complete QUIC v1 feature set or claim production qualification.
 
 The staged acceptance matrix is recorded in
 [`tests/qualification.md`](tests/qualification.md).
