@@ -1,6 +1,7 @@
 with Flyology.QUIC.Test_Connections;
 
 procedure Flyology.HTTP.HTTP_3_Connection.Smoke is
+   use type Ada.Streams.Stream_Element;
    use type QUIC.Stream_ID;
 
    Client_Transport, Server_Transport : QUIC.Connection;
@@ -41,4 +42,73 @@ begin
       and then Client_Event.Kind = Settings_Received
       and then Client_Event.Stream = 3
       and then Has_Peer_Settings (Client));
+
+   declare
+      Request_Headers  : QPACK_Field_Section_Policy.Header_Block;
+      Response_Headers : QPACK_Field_Section_Policy.Header_Block;
+      Request_Stream   : QUIC.Stream_ID;
+      Request_Packet, Response_Packet, Data_Packet : QUIC.Datagram;
+   begin
+      Request_Headers.Count := 4;
+      Request_Headers.Fields (1) :=
+        QPACK_Field_Section_Policy.Make_Field (":method", "GET");
+      Request_Headers.Fields (2) :=
+        QPACK_Field_Section_Policy.Make_Field (":scheme", "https");
+      Request_Headers.Fields (3) :=
+        QPACK_Field_Section_Policy.Make_Field (":path", "/hello");
+      Request_Headers.Fields (4) :=
+        QPACK_Field_Section_Policy.Make_Field
+          (":authority", "example.com");
+
+      Open_Request
+        (Client, Client_Transport, Request_Stream, Client_Status);
+      Build_Headers
+        (Client, Client_Transport, Request_Stream, Request_Headers,
+         Fin => True, Now => 2_000, Packet => Request_Packet,
+         Status => Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded and then Request_Stream = 0);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Request_Packet, Server_Transport);
+      Poll (Server, Server_Transport, Server_Event, Server_Status);
+      pragma Assert
+        (Server_Status = Succeeded
+         and then Server_Event.Kind = Headers_Received
+         and then Server_Event.Stream = Request_Stream
+         and then Server_Event.Headers.Count = 4);
+
+      Response_Headers.Count := 1;
+      Response_Headers.Fields (1) :=
+        QPACK_Field_Section_Policy.Make_Field (":status", "200");
+      Build_Headers
+        (Server, Server_Transport, Request_Stream, Response_Headers,
+         Fin => False, Now => 3_000, Packet => Response_Packet,
+         Status => Server_Status);
+      pragma Assert (Server_Status = Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver
+        (Response_Packet, Client_Transport);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded
+         and then Client_Event.Kind = Headers_Received
+         and then Client_Event.Stream = Request_Stream
+         and then Client_Event.Headers.Count = 1);
+
+      Build_Data
+        (Server, Server_Transport, Request_Stream,
+         Ada.Streams.Stream_Element_Array'(16#68#, 16#65#, 16#6C#,
+                                            16#6C#, 16#6F#),
+         Fin => True, Now => 4_000, Packet => Data_Packet,
+         Status => Server_Status);
+      pragma Assert (Server_Status = Succeeded);
+      Flyology.QUIC.Test_Connections.Deliver (Data_Packet, Client_Transport);
+      Poll (Client, Client_Transport, Client_Event, Client_Status);
+      pragma Assert
+        (Client_Status = Succeeded
+         and then Client_Event.Kind = Data_Received
+         and then Client_Event.Stream = Request_Stream
+         and then Client_Event.Data_Length = 5
+         and then Client_Event.Data (1) = 16#68#
+         and then Client_Event.Data (5) = 16#6F#);
+   end;
 end Flyology.HTTP.HTTP_3_Connection.Smoke;

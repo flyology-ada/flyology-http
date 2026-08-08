@@ -1,4 +1,5 @@
 with Ada.Streams;
+with Flyology.HTTP.HTTP_3_Message_Policy;
 with Flyology.HTTP.HTTP_3_Settings_Policy;
 with Flyology.HTTP.HTTP_3_Stream_Receive_Policy;
 with Flyology.HTTP.QPACK_Field_Section_Policy;
@@ -29,9 +30,11 @@ private package Flyology.HTTP.HTTP_3_Connection is
       No_Event,
       Not_Connected,
       Already_Started,
+      Wrong_Role,
       Stream_Limit_Reached,
       Transport_Blocked,
       Transport_Error,
+      Frame_Too_Large,
       Stream_Capacity_Exceeded,
       Stream_Creation_Error,
       Closed_Critical_Stream,
@@ -75,6 +78,32 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Output    : out Event;
       Status    : out Operation_Status);
 
+   procedure Open_Request
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      Stream    : out QUIC.Stream_ID;
+      Status    : out Operation_Status);
+
+   procedure Build_Headers
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : QPACK_Field_Section_Policy.Header_Block;
+      Fin       : Boolean;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
+      Status    : out Operation_Status);
+
+   procedure Build_Data
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Fin       : Boolean;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
+      Status    : out Operation_Status);
+
    function Has_Peer_Settings (Item : Connection) return Boolean;
 
 private
@@ -89,12 +118,28 @@ private
 
    type Stream_Array is array (Slot_Index) of Stream_Slot;
 
+   type Send_Stream_Kind is (Request_Message, Response_Message);
+
+   type Send_Stream_Slot is record
+      Occupied : Boolean := False;
+      ID       : QUIC.Stream_ID := 0;
+      Offset   : QUIC.Stream_Offset := 0;
+      Kind     : Send_Stream_Kind := Request_Message;
+      Request  : HTTP_3_Message_Policy.Request_State;
+      Response : HTTP_3_Message_Policy.Response_State;
+      Finished : Boolean := False;
+   end record;
+
+   type Send_Stream_Array is array (Slot_Index) of Send_Stream_Slot;
+
    type Connection is limited record
       Local_Role       : Endpoint_Role := Client;
       Local_Settings   : HTTP_3_Settings_Policy.Settings;
       Receive          : HTTP_3_Stream_Receive_Policy.Connection_State;
       Streams          : Stream_Array;
       Count            : Natural range 0 .. Max_Streams := 0;
+      Sending          : Send_Stream_Array;
+      Send_Count       : Natural range 0 .. Max_Streams := 0;
       Started          : Boolean := False;
       Local_Control_ID : QUIC.Stream_ID := 0;
       Local_Control_Offset : QUIC.Stream_Offset := 0;
