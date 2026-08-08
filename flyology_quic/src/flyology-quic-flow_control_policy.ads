@@ -32,7 +32,8 @@ is
       Stream_Capacity_Exceeded,
       Stream_Flow_Blocked,
       Connection_Flow_Blocked,
-      Stream_Range_Too_Large);
+      Stream_Range_Too_Large,
+      Stream_Final_Size_Mismatch);
    type Update_Status is (Updated, Stream_Not_Sendable, Stream_Capacity_Exceeded);
 
    procedure Reset
@@ -76,7 +77,8 @@ is
      (Item   : State;
       ID     : Stream_ID_Policy.Stream_ID;
       Offset : Value_Type;
-      Length : Natural) return Reserve_Status
+      Length : Natural;
+      Fin    : Boolean) return Reserve_Status
    with Global => null;
 
    procedure Reserve_Send
@@ -84,6 +86,7 @@ is
       ID     : Stream_ID_Policy.Stream_ID;
       Offset : Value_Type;
       Length : Natural;
+      Fin    : Boolean;
       Status : out Reserve_Status)
    with
      Global => null,
@@ -118,6 +121,8 @@ private
       ID       : Stream_ID_Policy.Stream_ID := 0;
       Limit    : Value_Type := 0;
       Highest  : Value_Type := 0;
+      Final_Set : Boolean := False;
+      Final     : Value_Type := 0;
    end record;
    type Stream_Table is array (Stream_Index) of Stream_Slot;
 

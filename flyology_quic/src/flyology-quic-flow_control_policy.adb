@@ -99,7 +99,8 @@ is
      (Item   : State;
       ID     : Stream_ID_Policy.Stream_ID;
       Offset : Value_Type;
-      Length : Natural) return Reserve_Status
+      Length : Natural;
+      Fin    : Boolean) return Reserve_Status
    is
       Index    : constant Optional_Index := Find (Item, ID);
       Ending   : Value_Type;
@@ -126,7 +127,16 @@ is
          Limit := Item.Streams (Index).Limit;
       end if;
 
-      if Ending > Limit then
+      if Index /= 0
+        and then Item.Streams (Index).Final_Set
+        and then
+          (Ending > Item.Streams (Index).Final
+           or else (Fin and then Ending /= Item.Streams (Index).Final))
+      then
+         return Stream_Final_Size_Mismatch;
+      elsif Fin and then Ending < Highest then
+         return Stream_Final_Size_Mismatch;
+      elsif Ending > Limit then
          return Stream_Flow_Blocked;
       end if;
       Increase := (if Ending > Highest then Ending - Highest else 0);
@@ -157,6 +167,7 @@ is
       ID     : Stream_ID_Policy.Stream_ID;
       Offset : Value_Type;
       Length : Natural;
+      Fin    : Boolean;
       Status : out Reserve_Status)
    is
       Index   : Optional_Index := Find (Item, ID);
@@ -194,7 +205,18 @@ is
          Limit := Item.Streams (Index).Limit;
       end if;
 
-      if Ending > Limit then
+      if Index /= 0
+        and then Item.Streams (Index).Final_Set
+        and then
+          (Ending > Item.Streams (Index).Final
+           or else (Fin and then Ending /= Item.Streams (Index).Final))
+      then
+         Status := Stream_Final_Size_Mismatch;
+         return;
+      elsif Fin and then Ending < Highest then
+         Status := Stream_Final_Size_Mismatch;
+         return;
+      elsif Ending > Limit then
          Status := Stream_Flow_Blocked;
          return;
       end if;
@@ -209,10 +231,15 @@ is
       pragma Assert (Index in Stream_Index);
       if Created then
          Item.Streams (Index) :=
-           (Occupied => True, ID => ID, Limit => Limit, Highest => Ending);
+           (Occupied => True, ID => ID, Limit => Limit, Highest => Ending,
+            Final_Set => Fin, Final => (if Fin then Ending else 0));
          Item.Count := Item.Count + 1;
       else
          Item.Streams (Index).Highest := Value_Type'Max (Highest, Ending);
+         if Fin then
+            Item.Streams (Index).Final_Set := True;
+            Item.Streams (Index).Final := Ending;
+         end if;
       end if;
       Item.Committed := Item.Committed + Increase;
       Status := Reserved;
@@ -249,7 +276,7 @@ is
          Item.Streams (Index) :=
            (Occupied => True, ID => ID,
             Limit => Value_Type'Max (Initial_Stream_Limit (Item, ID), Limit),
-            Highest => 0);
+            Highest => 0, Final_Set => False, Final => 0);
          Item.Count := Item.Count + 1;
       else
          for Cursor in Stream_Index loop

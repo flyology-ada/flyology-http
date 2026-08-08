@@ -153,7 +153,7 @@ begin
       Data => (1 => 16#21#), Now => 202, Packet => Packet,
       Result => Sent_Data);
    pragma Assert
-     (Sent_Data.Status = Stream_Flow_Blocked
+     (Sent_Data.Status = Stream_Final_Size_Mismatch
       and then Committed_Data (Client) = 2);
 
    Build_Handshake_Done_Packet
@@ -203,7 +203,8 @@ begin
       Data => (1 => 16#21#), Now => 208, Packet => Packet,
       Result => Sent_Data);
    pragma Assert
-     (Sent_Data.Status = Sent and then Committed_Data (Client) = 3);
+     (Sent_Data.Status = Stream_Final_Size_Mismatch
+      and then Committed_Data (Client) = 2);
 
    --  Time-threshold loss may empty the sent-packet ledger. Retained frames
    --  must keep recovery armed until a retransmitted copy is acknowledged.

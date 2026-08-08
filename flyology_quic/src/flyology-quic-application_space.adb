@@ -329,7 +329,9 @@ package body Flyology.QUIC.Application_Space is
          when Flow_Control_Policy.Connection_Flow_Blocked =>
            Connection_Flow_Blocked,
          when Flow_Control_Policy.Stream_Range_Too_Large =>
-           Stream_Range_Too_Large);
+           Stream_Range_Too_Large,
+         when Flow_Control_Policy.Stream_Final_Size_Mismatch =>
+           Stream_Final_Size_Mismatch);
 
    function Stream_Was_Opened
      (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
@@ -389,7 +391,7 @@ package body Flyology.QUIC.Application_Space is
       end if;
 
       Flow_Status := Flow_Control_Policy.Check_Send
-        (Item.Flow, Stream_ID, Offset, Data'Length);
+        (Item.Flow, Stream_ID, Offset, Data'Length, Fin);
       if Flow_Status /= Flow_Control_Policy.Reserved then
          Result.Status := Send_Status_For (Flow_Status);
          return;
@@ -415,7 +417,7 @@ package body Flyology.QUIC.Application_Space is
       end if;
 
       Flow_Control_Policy.Reserve_Send
-        (Item.Flow, Stream_ID, Offset, Data'Length, Flow_Status);
+        (Item.Flow, Stream_ID, Offset, Data'Length, Fin, Flow_Status);
       if Flow_Status /= Flow_Control_Policy.Reserved then
          Result.Status := Internal_State_Error;
          return;
