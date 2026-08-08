@@ -138,6 +138,7 @@ end;</code></pre></figure>
    Client.Require_HTTP_3,
    HTTP_3_Certificate_DER =&gt; Pinned_Certificate_DER);</code></pre></figure>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The current HTTP/3 client profile is deliberately narrow: each pooled QUIC connection is reused sequentially rather than multiplexing requests, retained request bodies are limited to 16 KiB, and streaming request sources plus <code>Expect: 100-continue</code> are rejected. HTTP/1.1 and HTTP/2 behavior is unchanged.</p></aside>
+            <p>The maintained qualification gate runs the Ada client against pinned aioquic and quic-go servers and runs both independent clients against the routed Ada server. Published RFC vectors separately cover deterministic QUIC packet protection, TLS, and the supported static-QPACK profile. Run <code>./scripts/test-http3-interop.sh all</code>; see <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http3-conformance.md"><code>tests/http3-conformance.md</code></a> for the exact evidence boundary.</p>
           </section>
 
           <section id="client-request"><span class="step-label">CLIENT 02</span><h2>Build validated request metadata.</h2>

@@ -65,7 +65,9 @@ alr build
 ```
 
 The tests use published RFC 9000 and RFC 9001 vectors. The parent HTTP crate
-also runs client- and server-role HTTP/3 interoperability against aioquic.
+CI-gates client- and server-role HTTP/3 interoperability against independently
+implemented aioquic and quic-go peers. It also runs the published h3spec error
+suite as a scheduled diagnostic while its known CONNECTION_CLOSE gaps remain.
 External implementations are black-box test oracles, not library dependencies.
 
 The implementation remains bounded and experimental. It does not yet cover

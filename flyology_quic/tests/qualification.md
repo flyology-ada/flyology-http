@@ -102,32 +102,41 @@ These checks are deterministic and run in `./scripts/test.sh` and
 
 ## Network interoperability
 
-Once the first complete Initial handshake exists, `scripts/interop.sh` will
-run the Ada endpoint in both roles against two independent black-box peers:
+`../../scripts/test-http3-interop.sh all` runs the Ada endpoint in both roles
+against two independent black-box peers:
 
 - quic-go, for a separately implemented QUIC transport and HTTP/3 stack;
-- aioquic, for packet-level diagnostics and scripted adverse-network cases.
+- aioquic, for a separately implemented scripted QUIC and HTTP/3 stack.
 
 The peers are test processes only. They are not linked, vendored into the
 library, or used to implement protocol state. quiche and ngtcp2 are excluded
 from both the library and the primary oracle matrix.
 
-The interop lock will pin exact peer revisions and artifact hashes. The gate
-will cover at least:
+aioquic is pinned to 1.3.0. quic-go is pinned to 0.54.1 together with the Go
+module checksums. The pull-request CI gate currently covers:
 
 1. Ada client to each oracle server and each oracle client to the Ada server.
-2. Version negotiation, Retry, connection-ID changes, and stateless reset.
-3. Coalesced Initial and Handshake packets, reordered packets, duplicates,
+2. QUIC v1 and TLS 1.3 with AES-128-GCM and 1,200-byte datagrams.
+3. HTTP/3 control streams, SETTINGS, static QPACK, routed GET requests,
+   concurrent aioquic GET/POST streams, request bodies and retained quic-go
+   connection reuse.
+
+The following broader qualification matrix remains required before claiming
+the complete QUIC v1 feature set:
+
+1. Version negotiation, Retry, connection-ID changes, and stateless reset.
+2. Coalesced Initial and Handshake packets, reordered packets, duplicates,
    loss, PTO, and key discard.
-4. Flow control, stream limits, reset/stop semantics, graceful close, and idle
+3. Flow control, stream limits, reset/stop semantics, graceful close, and idle
    timeout.
-5. Wildcard and concrete IPv4/IPv6 binds, local-address preservation,
+4. Wildcard and concrete IPv4/IPv6 binds, local-address preservation,
    truncation rejection, NAT rebinding, and path validation.
-6. Anti-amplification accounting, 1200-byte Initial datagrams, PMTU boundaries,
+5. Anti-amplification accounting, 1200-byte Initial datagrams, PMTU boundaries,
    and ECN when the platform exposes it.
-7. HTTP/3 control streams, SETTINGS, QPACK blocking limits, requests,
+6. HTTP/3 control streams, SETTINGS, QPACK blocking limits, requests,
    responses, cancellation, and malformed peer behavior.
 
-The initial handshake milestone is not complete until both directions pass
-against at least one oracle. Client/server publication is not complete until
-the full two-oracle matrix passes in CI.
+The published h3spec 0.1.13 error suite is wired as a scheduled diagnostic. It
+currently exposes missing transport CONNECTION_CLOSE responses and is not
+counted as a passing gate. See `../../tests/http3-conformance.md` for commands,
+the maintained passing matrix, and exact exclusions.

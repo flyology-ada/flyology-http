@@ -31,8 +31,10 @@ alr build
 ./scripts/test.sh
 ./scripts/http2-test.sh prepare
 ./scripts/http2-test.sh all
-# Optional aioquic black-box HTTP/3 interoperability:
-./scripts/test-http3-interop.sh
+# Required aioquic and quic-go black-box HTTP/3 interoperability:
+./scripts/test-http3-interop.sh all
+# Published h3spec error-suite diagnostic (currently exposes known gaps):
+./scripts/test-http3-h3spec.sh
 # Optional Docker-based server protocol qualification:
 ./scripts/http2-test.sh h2spec
 ```
@@ -45,7 +47,12 @@ retry interoperability, plus differential HPACK testing. The explicit
 `h2spec` target runs the pinned h2spec 2.6.0 image against the cleartext server
 adapter; it requires Docker and is also part of `qualification` and `nightly`.
 The HTTP/3 interoperability command creates an isolated Python test environment
-for aioquic. aioquic is an oracle only and is not a crate or runtime dependency.
+for pinned aioquic and builds a separately pinned quic-go test executable. Both
+peers exercise Ada client and server roles and are CI gates; neither is a crate
+or runtime dependency. The separately pinned h3spec command reports published
+QUIC error-case coverage. Its current failures remain documented rather than
+being counted as qualification. See
+[`tests/http3-conformance.md`](tests/http3-conformance.md) for the exact matrix.
 
 ## Use with Alire
 

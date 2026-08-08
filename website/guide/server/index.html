@@ -205,6 +205,13 @@ Routes.Serve
             <figure class="code-panel"><figcaption>unified showcase</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>./showcases/bin/http3_application_server \
   TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw 4433</code></pre></figure>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The HTTP/3 profile is deliberately bounded.</strong> It currently buffers each complete request before routing it, serves at most five requests per QUIC connection, uses a static-table QPACK profile, and does not provide HTTP/3 server push or WebSockets. The standard client supports direct and Alt-Svc-discovered HTTP/3, currently with one sequential exchange per pooled QUIC connection.</p></aside>
+
+            <h3>Verify the implemented profile against independent peers.</h3>
+            <figure class="code-panel"><figcaption>QUIC and HTTP/3 qualification</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>./scripts/test.sh
+./scripts/test-http3-interop.sh all
+./scripts/test-http3-h3spec.sh</code></pre></figure>
+            <p>The mandatory interoperability command runs Ada client and server roles against pinned aioquic and quic-go implementations. It covers QUIC v1/TLS 1.3 establishment, HTTP/3 control streams and SETTINGS, routed GET and POST requests, concurrent request streams, request bodies, response metadata, and retained-connection reuse within the current static-QPACK and 1,200-byte datagram profile. The deterministic suite separately consumes published QUIC, TLS, cryptographic, and QPACK vectors.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>h3spec is currently diagnostic.</strong> Its pinned published error suite exposes missing transport <code>CONNECTION_CLOSE</code> responses for flow-control, stream-limit, and invalid transport-parameter errors. Those results remain visible in scheduled CI and are not counted as passing qualification. The exact passing matrix and exclusions are maintained in <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http3-conformance.md"><code>tests/http3-conformance.md</code></a>.</p></aside>
           </section>
 
           <section id="body-policy"><span class="step-label">HTTP 05</span><h2>Select body behavior per route.</h2>
