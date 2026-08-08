@@ -77,14 +77,9 @@ package body Flyology.QUIC.Test_Connections is
    Server_ID : constant QUIC.Connection_ID :=
      ID (Hex ("1020304050607080"));
 
-   procedure Connect
-     (Client : in out QUIC.Connection;
-      Server : in out QUIC.Connection)
-   is
-      Client_Parameters, Server_Parameters : Parameters.Transport_Parameters;
-      Client_Encoded, Server_Encoded : Parameters.Encode_Result;
-      Client_Output, Server_Output, Finish : QUIC.Datagram_Batch;
-      Client_Status, Server_Status : QUIC.Operation_Status;
+   procedure Initialize_Client (Client : in out QUIC.Connection) is
+      Client_Parameters : Parameters.Transport_Parameters;
+      Client_Encoded    : Parameters.Encode_Result;
    begin
       Client_Parameters.Initial_Source_Connection_ID := Parameter (Client_ID);
       Client_Parameters.Initial_Max_Data := (Present => True, Value => 65_536);
@@ -98,7 +93,27 @@ package body Flyology.QUIC.Test_Connections is
         (Present => True, Value => 8);
       Client_Parameters.Initial_Max_Streams_Uni :=
         (Present => True, Value => 8);
+      Client_Encoded := Parameters.Encode
+        (Client_Parameters, Parameters.Client);
+      if Client_Encoded.Status /= Parameters.Encoded then
+         raise Program_Error with "failed to encode QUIC client parameters";
+      end if;
+      QUIC.Initialize_Client
+        (Client, ALPN,
+         Client_Encoded.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Client_Encoded.Length)),
+         Certificate, Original_ID, ID (Original_ID), Client_ID);
+   end Initialize_Client;
 
+   procedure Connect
+     (Client : in out QUIC.Connection;
+      Server : in out QUIC.Connection)
+   is
+      Server_Parameters : Parameters.Transport_Parameters;
+      Server_Encoded : Parameters.Encode_Result;
+      Client_Output, Server_Output, Finish : QUIC.Datagram_Batch;
+      Client_Status, Server_Status : QUIC.Operation_Status;
+   begin
       Server_Parameters.Original_Destination_Connection_ID :=
         Parameter (ID (Original_ID));
       Server_Parameters.Initial_Source_Connection_ID := Parameter (Server_ID);
@@ -114,19 +129,12 @@ package body Flyology.QUIC.Test_Connections is
       Server_Parameters.Initial_Max_Streams_Uni :=
         (Present => True, Value => 8);
 
-      Client_Encoded := Parameters.Encode (Client_Parameters, Parameters.Client);
       Server_Encoded := Parameters.Encode (Server_Parameters, Parameters.Server);
-      if Client_Encoded.Status /= Parameters.Encoded
-        or else Server_Encoded.Status /= Parameters.Encoded
-      then
+      if Server_Encoded.Status /= Parameters.Encoded then
          raise Program_Error with "failed to encode QUIC test parameters";
       end if;
 
-      QUIC.Initialize_Client
-        (Client, ALPN,
-         Client_Encoded.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Client_Encoded.Length)),
-         Certificate, Original_ID, ID (Original_ID), Client_ID);
+      Initialize_Client (Client);
       QUIC.Initialize_Server
         (Server, ALPN,
          Server_Encoded.Data

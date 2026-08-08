@@ -38,6 +38,7 @@ project HTTP_Tests is
       "flyology-http-http_2_settings-smoke.adb",
       "flyology-http-http_3_control_policy-smoke.adb",
       "flyology-http-http_3_connection-smoke.adb",
+      "flyology-http-http_3_connection-interop_client.adb",
       "flyology-http-http_3_frame_policy-smoke.adb",
       "flyology-http-http_3_header_policy-smoke.adb",
       "flyology-http-http_3_message_policy-smoke.adb",
