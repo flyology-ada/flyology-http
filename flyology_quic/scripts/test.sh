@@ -25,6 +25,7 @@ for test in \
   flyology-quic-initial_connection-smoke \
   flyology-quic-initial_receiver-smoke \
   flyology-quic-initial_sender-smoke \
+  flyology-quic-initial_space-smoke \
   flyology-quic-initial_packet_policy-smoke \
   flyology-quic-long_header_policy-smoke \
   flyology-quic-one_rtt_packet_policy-smoke \
