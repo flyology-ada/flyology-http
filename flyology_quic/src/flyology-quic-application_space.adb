@@ -910,6 +910,21 @@ package body Flyology.QUIC.Application_Space is
          when Receive_Flow_Control_Policy.Stream_Final_Size_Mismatch =>
            Stream_Final_Size_Error);
 
+   procedure Process_Stream_Frames_Transactionally
+     (Item      : in out Stream_Table_Policy.Stream_Table;
+      Plaintext : Ada.Streams.Stream_Element_Array;
+      Result    : out Stream_Table_Policy.Process_Result)
+   is
+      Candidate : Stream_Table_Policy.Stream_Table := Item;
+   begin
+      Stream_Table_Policy.Process_Plaintext
+        (Candidate, Plaintext, Result);
+      if Result.Status /= Stream_Table_Policy.Processed then
+         return;
+      end if;
+      Item := Candidate;
+   end Process_Stream_Frames_Transactionally;
+
    procedure Process_Packet
      (Item                : in out State;
       Packet              : Ada.Streams.Stream_Element_Array;
@@ -920,6 +935,8 @@ package body Flyology.QUIC.Application_Space is
       Result              : out Process_Result)
    is
       Plaintext : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
+      Stream_Plaintext : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
       Received  : Application_Connection.Process_Result;
       Streams   : Stream_Table_Policy.Process_Result;
       Length    : Application_Frame_Policy.Frame_Offset;
@@ -937,17 +954,25 @@ package body Flyology.QUIC.Application_Space is
       Local_Uni_Opened : constant Stream_ID_Policy.Stream_Count :=
         Stream_ID_Policy.Opened_Count
           (Item.Allocator, Stream_ID_Policy.Unidirectional);
-      Candidate_Streams : Stream_Table_Policy.Stream_Table := Item.Streams;
+      --  The stream table dominates connection-state size, so validate every
+      --  frame before changing it and reserve a full table transaction for
+      --  the uncommon packet that changes multiple streams. The smaller
+      --  policy tables remain staged until all packet effects succeed.
+      Candidate_Streams : Stream_Table_Policy.Stream_Table
+        renames Item.Streams;
       Candidate_Receive : Receive_Flow_Control_Policy.State :=
         Item.Receive_Flow;
       Candidate_Flow : Flow_Control_Policy.State := Item.Flow;
       Candidate_Sent : Sent_Packet_Policy.Ledger := Item.Sent;
       Candidate_Recovery : Recovery_Policy.State := Item.Recovery;
-      Candidate_Retransmittable : Retransmittable_Table :=
-        Item.Retransmittable;
-      Candidate_Packet_Frames : Packet_Frame_Table := Item.Packet_Frames;
+      Candidate_Retransmittable : Retransmittable_Table
+        := Item.Retransmittable;
+      Candidate_Packet_Frames : Packet_Frame_Table
+        := Item.Packet_Frames;
       Candidate_Peer_Bidi : Varint_Policy.Value_Type := Item.Peer_Bidi;
       Candidate_Peer_Uni : Varint_Policy.Value_Type := Item.Peer_Uni;
+      Active_Stream_Frame_Count : Natural := 0;
+      Stream_Plaintext_Length : Application_Frame_Policy.Frame_Offset := 0;
    begin
       Result := (others => <>);
       Application_Connection.Process_One_RTT
@@ -963,15 +988,6 @@ package body Flyology.QUIC.Application_Space is
          Result.Status := Protocol_Violation;
          return;
       end if;
-      Stream_Table_Policy.Process_Plaintext
-        (Candidate_Streams, Plaintext (1 .. Length), Streams);
-      Result.Frame_Count := Natural (Streams.Frame_Count);
-      Result.Triggering_Frame_Type := Streams.Triggering_Frame_Type;
-      if Streams.Status /= Stream_Table_Policy.Processed then
-         Result.Status := Process_Status_For (Streams.Status);
-         return;
-      end if;
-
       while Cursor < Length loop
          Frame := Application_Frame_Policy.Parse_Next
            (Plaintext (1 .. Length), Cursor);
@@ -980,6 +996,7 @@ package body Flyology.QUIC.Application_Space is
             Result.Status := Unknown_Frame_Type;
             return;
          end if;
+         Result.Frame_Count := Result.Frame_Count + 1;
          if Frame.Kind not in Application_Frame_Policy.Padding
            | Application_Frame_Policy.Acknowledgment
            | Application_Frame_Policy.Transport_Close
@@ -1061,25 +1078,24 @@ package body Flyology.QUIC.Application_Space is
                Frame.Stream_Frame.Fin, Local_Bidi_Opened,
                Local_Uni_Opened, Receive_Status);
             if Receive_Status = Receive_Flow_Control_Policy.Retired then
-               --  Process_Plaintext stages every STREAM frame before flow
-               --  validation. Undo the staged reassembly for a late frame,
-               --  but continue processing unrelated frames in this packet.
-               Stream_Table_Policy.Release
-                 (Candidate_Streams, Frame.Stream_ID);
+               null;
             elsif Receive_Status /= Receive_Flow_Control_Policy.Reserved then
                Result.Status := Process_Status_For (Receive_Status);
                return;
+            else
+               Active_Stream_Frame_Count := Active_Stream_Frame_Count + 1;
             end if;
          elsif Frame.Kind = Application_Frame_Policy.Reset_Stream then
             Receive_Flow_Control_Policy.Reserve_Reset
               (Candidate_Receive, Frame.Stream_ID, Frame.Final_Size,
                Local_Bidi_Opened, Local_Uni_Opened, Receive_Status);
             if Receive_Status = Receive_Flow_Control_Policy.Retired then
-               Stream_Table_Policy.Release
-                 (Candidate_Streams, Frame.Stream_ID);
+               null;
             elsif Receive_Status /= Receive_Flow_Control_Policy.Reserved then
                Result.Status := Process_Status_For (Receive_Status);
                return;
+            else
+               Active_Stream_Frame_Count := Active_Stream_Frame_Count + 1;
             end if;
          elsif Frame.Kind = Application_Frame_Policy.Stop_Sending then
             Receive_Status :=
@@ -1201,7 +1217,59 @@ package body Flyology.QUIC.Application_Space is
          end if;
          Cursor := Cursor + Frame.Consumed;
       end loop;
-      Item.Streams := Candidate_Streams;
+
+      --  Rebuild just the active STREAM and RESET_STREAM frames. Retired
+      --  streams are ignored before reassembly, while all control frames have
+      --  already been validated and staged by their owning policies.
+      Cursor := 0;
+      while Cursor < Length loop
+         Frame := Application_Frame_Policy.Parse_Next
+           (Plaintext (1 .. Length), Cursor);
+         pragma Assert (Frame.Status = Application_Frame_Policy.Parsed);
+         if Frame.Kind in Application_Frame_Policy.Stream
+             | Application_Frame_Policy.Reset_Stream
+           and then not Receive_Flow_Control_Policy.Is_Stream_Retired
+             (Candidate_Receive, Frame.Stream_ID)
+         then
+            pragma Assert (Frame.Consumed > 0);
+            Stream_Plaintext
+              (Ada.Streams.Stream_Element_Offset
+                 (Stream_Plaintext_Length) + 1
+               .. Ada.Streams.Stream_Element_Offset
+                    (Stream_Plaintext_Length + Frame.Consumed)) :=
+              Plaintext
+                (Ada.Streams.Stream_Element_Offset (Cursor) + 1
+                 .. Ada.Streams.Stream_Element_Offset
+                      (Cursor + Frame.Consumed));
+            Stream_Plaintext_Length :=
+              Stream_Plaintext_Length + Frame.Consumed;
+         end if;
+         Cursor := Cursor + Frame.Consumed;
+      end loop;
+
+      if Active_Stream_Frame_Count = 1 then
+         --  Insert and reset operations validate before mutation, so one
+         --  active stream frame can commit directly after every other frame
+         --  in the packet has passed validation.
+         Stream_Table_Policy.Process_Plaintext
+           (Candidate_Streams,
+            Stream_Plaintext (1 .. Stream_Plaintext_Length), Streams);
+      elsif Active_Stream_Frame_Count > 0 then
+         --  Preserve packet-level atomicity when more than one stream can be
+         --  changed. This slow path is bounded but deliberately pays for a
+         --  full table copy.
+         Process_Stream_Frames_Transactionally
+           (Candidate_Streams,
+            Stream_Plaintext (1 .. Stream_Plaintext_Length), Streams);
+      else
+         Streams := (Status => Stream_Table_Policy.Processed, others => <>);
+      end if;
+      if Streams.Status /= Stream_Table_Policy.Processed then
+         Result.Triggering_Frame_Type := Streams.Triggering_Frame_Type;
+         Result.Status := Process_Status_For (Streams.Status);
+         return;
+      end if;
+
       Item.Receive_Flow := Candidate_Receive;
       Item.Flow := Candidate_Flow;
       Item.Sent := Candidate_Sent;
