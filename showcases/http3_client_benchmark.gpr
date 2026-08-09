@@ -1,0 +1,23 @@
+with "../flyology_http.gpr";
+with "config/flyology_http_showcases_config.gpr";
+
+project HTTP3_Client_Benchmark is
+   for Languages use ("Ada", "C");
+   for Runtime ("Ada") use external ("FLYOLOGY_RTS_DIR", "../build/rts");
+   for Source_Dirs use ("../tests");
+   for Object_Dir use "obj/http3-client-benchmark";
+   for Exec_Dir use "bin";
+   for Main use
+     ("http3_client_stress_probe.adb",
+      "http3_h3spec_server.adb",
+      "http3_stress_runtime_probe.adb");
+   for Create_Missing_Dirs use "True";
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        Flyology_HTTP_Showcases_Config.Ada_Compiler_Switches
+        & ("-gnat2022", "-gnata", "-gnatVa", "-gnatwa", "-gnatwJ",
+           "-gnateDFLYOLOGY_CONNECTION_TEST_HOOKS=False");
+      for Default_Switches ("C") use ("-O2", "-Wall", "-Wextra");
+   end Compiler;
+end HTTP3_Client_Benchmark;

@@ -26,9 +26,20 @@ prepare_qualification_rts () {
 
   "$alr" exec -- env \
     FLYOLOGY_RTS_DIR="$qualification_rts" \
-    FLYOLOGY_DEFAULT=native \
+    FLYOLOGY_DEFAULT=lightweight \
     FLYOLOGY_LOOP_POOL_SIZE=1 \
     "$flyology_root/scripts/prepare-rts.sh" >/dev/null
+
+  if [ ! -f "$qualification_rts/.flyology-rts-root" ] \
+    || ! grep -q 'Flyology prepared RTS version' \
+      "$qualification_rts/.flyology-rts-root" \
+    || ! grep -q 'Lightweight : constant Boolean := True;' \
+      "$qualification_rts/adainclude/s-fldeex.ads"
+  then
+    printf '%s\n' \
+      'HTTP/3 qualification RTS is not a prepared Flyology lightweight RTS' >&2
+    exit 2
+  fi
 }
 
 prepare_aioquic () {

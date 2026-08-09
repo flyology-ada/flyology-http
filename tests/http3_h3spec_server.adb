@@ -26,6 +26,9 @@ procedure HTTP3_H3Spec_Server is
    Max_Connection_Age : constant Duration :=
      (if Ada.Command_Line.Argument_Count < 4 then 15.0
       else Duration'Value (Ada.Command_Line.Argument (4)));
+   Max_Requests : constant Positive :=
+     (if Ada.Command_Line.Argument_Count < 5 then 5
+      else Positive'Value (Ada.Command_Line.Argument (5)));
 
    type Context is limited null record;
    package Routing is new Flyology.HTTP.Server.Routing (Context);
@@ -36,8 +39,14 @@ procedure HTTP3_H3Spec_Server is
       X.Text (200, "h3spec");
    end Root;
 
+   procedure Hello (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+   begin
+      X.Text (200, "hello");
+   end Hello;
+
    Routes : aliased Routing.Router
-     (Capacity => 1, Slashes => Routing.Strict_Slashes);
+     (Capacity => 2, Slashes => Routing.Strict_Slashes);
    State  : aliased Context;
    Socket : aliased Sockets.Socket_Type;
    Stop   : aliased Flyology.Cancellation.Token;
@@ -47,6 +56,7 @@ begin
         "HTTP/3 stress server linked an unexpected loop-pool size";
    end if;
    Routes.Get ("/", Root'Access, Name => "root");
+   Routes.Get ("/hello", Hello'Access, Name => "hello");
    Sockets.Create_Socket (Socket, Sockets.IPv4, Sockets.Socket_Datagram);
    Sockets.Bind_Socket
      (Socket, Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Port));
@@ -64,6 +74,6 @@ begin
       Timeout => 5.0,
       Handshake_Timeout => 5.0,
       Max_Connection_Age => Max_Connection_Age,
-      Max_Requests => 5,
+      Max_Requests => Max_Requests,
       Token => Stop'Access);
 end HTTP3_H3Spec_Server;
