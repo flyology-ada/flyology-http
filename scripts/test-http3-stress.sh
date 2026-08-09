@@ -51,12 +51,14 @@ prepare_stress_rts () {
     FLYOLOGY_LOOP_POOL_SIZE="$loop_pool_size" \
     "$flyology_root/scripts/prepare-rts.sh" >/dev/null
 
-  default_execution="$stress_rts/adainclude/s-fldeex.ads"
-  if ! grep -q 'Lightweight : constant Boolean := True;' \
-      "$default_execution"
+  if [ ! -f "$stress_rts/.flyology-rts-root" ] \
+    || ! grep -q 'Flyology prepared RTS version' \
+      "$stress_rts/.flyology-rts-root" \
+    || ! grep -q 'Lightweight : constant Boolean := True;' \
+      "$stress_rts/adainclude/s-fldeex.ads"
   then
     printf '%s\n' \
-      'HTTP/3 stress RTS is not configured for lightweight tasks' >&2
+      'HTTP/3 stress RTS is not a prepared Flyology lightweight RTS' >&2
     exit 2
   fi
 }
