@@ -22,26 +22,7 @@ esac
 mkdir -p "$http_root/build/oracle"
 
 prepare_qualification_rts () {
-  if [ -n "${FLYOLOGY_ROOT:-}" ]; then
-    flyology_root=$FLYOLOGY_ROOT
-  elif [ -x "$http_root/../scripts/prepare-rts.sh" ]; then
-    flyology_root=$(CDPATH= cd -- "$http_root/.." && pwd)
-  elif flyology_root=$("$alr" exec -- sh -c \
-    'printf "%s\n" "$FLYOLOGY_ROOT"') \
-    && [ -n "$flyology_root" ] \
-    && [ -d "$flyology_root" ]
-  then
-    :
-  else
-    printf '%s\n' "Flyology's source is unavailable; run: alr build" >&2
-    exit 2
-  fi
-
-  if [ ! -x "$flyology_root/scripts/prepare-rts.sh" ]; then
-    printf '%s\n' \
-      'Flyology cannot prepare the HTTP/3 qualification runtime' >&2
-    exit 2
-  fi
+  flyology_root=$("$http_root/scripts/resolve-flyology-root.sh")
 
   "$alr" exec -- env \
     FLYOLOGY_RTS_DIR="$qualification_rts" \

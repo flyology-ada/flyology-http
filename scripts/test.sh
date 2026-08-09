@@ -16,19 +16,7 @@ fi
 FLYOLOGY_TLS_TEST_HOOKS=true
 export FLYOLOGY_TLS_TEST_HOOKS
 
-if [ -n "${FLYOLOGY_ROOT:-}" ]; then
-  flyology_root=$FLYOLOGY_ROOT
-elif [ -f "$http_root/../scripts/prepare-rts.sh" ]; then
-  flyology_root=$(CDPATH= cd -- "$http_root/.." && pwd)
-elif flyology_root=$("$alr" exec -- sh -c 'printf "%s\n" "$FLYOLOGY_ROOT"') \
-  && [ -n "$flyology_root" ] \
-  && [ -d "$flyology_root" ]
-then
-  :
-else
-  printf '%s\n' "FLYOLOGY_ROOT is required to test flyology_http" >&2
-  exit 2
-fi
+flyology_root=$("$http_root/scripts/resolve-flyology-root.sh")
 
 run_gprbuild () {
   if [ -n "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
@@ -81,30 +69,25 @@ compile_and_link () {
 
 cd "$http_root"
 "$http_root/flyology_iri/scripts/test.sh"
+"$http_root/scripts/prepare-test-tls.sh"
+if [ -z "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
+  "$alr" build
+fi
+FLYOLOGY_RTS_DIR="$test_rts" \
+FLYOLOGY_DEFAULT=native \
+FLYOLOGY_LOOP_POOL_SIZE=1 \
+  "$flyology_root/scripts/prepare-rts.sh" >/dev/null
 if [ -n "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
   env \
     -u FLYOLOGY_ALIRE_PREFIX \
     -u FLYOLOGY_ROOT \
     -u GPR_CONFIG \
     -u GPR_PROJECT_PATH \
+    FLYOLOGY_QUIC_TEST_RTS="$test_rts" \
     "$http_root/flyology_quic/scripts/test.sh"
 else
-  "$http_root/flyology_quic/scripts/test.sh"
-fi
-"$http_root/scripts/prepare-test-tls.sh"
-if [ -z "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
-  "$alr" build
-fi
-if [ -x "$flyology_root/scripts/prepare-rts.sh" ]; then
-  FLYOLOGY_RTS_DIR="$test_rts" \
-  FLYOLOGY_DEFAULT=native \
-  FLYOLOGY_LOOP_POOL_SIZE=1 \
-    "$flyology_root/scripts/prepare-rts.sh" >/dev/null
-elif [ -d "$flyology_root/build/rts" ]; then
-  test_rts="$flyology_root/build/rts"
-else
-  printf '%s\n' "Flyology's prepared RTS is unavailable; run alr build first" >&2
-  exit 2
+  FLYOLOGY_QUIC_TEST_RTS="$test_rts" \
+    "$http_root/flyology_quic/scripts/test.sh"
 fi
 
 ordinary_mains='flyology-rate_limit_policy_smoke

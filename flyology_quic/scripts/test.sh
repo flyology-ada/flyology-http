@@ -19,6 +19,16 @@ else
   exit 2
 fi
 
+runtime_marker="$test_rts/adainclude/s-fldeex.ads"
+if [ ! -f "$runtime_marker" ] \
+  || ! grep -q 'package System.Flyology.Default_Execution is' "$runtime_marker"
+then
+  printf '%s\n' \
+    "Flyology QUIC tests require a Flyology custom RTS; refusing $test_rts" \
+    >&2
+  exit 2
+fi
+
 run_gprbuild () {
   if [ "$(uname -s)" = Darwin ]; then
     compiler_sysroot=$(alr exec -- gcc -print-sysroot)
