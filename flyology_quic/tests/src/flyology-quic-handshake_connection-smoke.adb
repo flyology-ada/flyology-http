@@ -16,11 +16,13 @@ procedure Flyology.QUIC.Handshake_Connection.Smoke is
    end ID;
 
    Client_Keys : constant TLS_Key_Schedule.QUIC_Traffic_Keys :=
-     (Key => (others => 16#11#),
+     (Traffic => (others => 0),
+      Key => (others => 16#11#),
       IV  => (others => 16#22#),
       HP  => (others => 16#33#));
    Server_Keys : constant TLS_Key_Schedule.QUIC_Traffic_Keys :=
-     (Key => (others => 16#44#),
+     (Traffic => (others => 0),
+      Key => (others => 16#44#),
       IV  => (others => 16#55#),
       HP  => (others => 16#66#));
    Client_ID : constant Long_Header_Policy.Connection_ID :=

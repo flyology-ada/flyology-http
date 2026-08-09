@@ -26,6 +26,7 @@ private package Flyology.QUIC.TLS_Key_Schedule is
    end record;
 
    type QUIC_Traffic_Keys is record
+      Traffic : Secret := (others => 0);
       Key : Crypto_OpenSSL.AES_128_Key := (others => 0);
       IV  : Crypto_OpenSSL.AES_GCM_IV := (others => 0);
       HP  : Crypto_OpenSSL.AES_128_Key := (others => 0);
@@ -89,6 +90,11 @@ private package Flyology.QUIC.TLS_Key_Schedule is
      (Provider : Crypto_OpenSSL.Provider;
       Current  : Secret;
       Next     : out Secret);
+
+   procedure Update_QUIC_Keys
+     (Provider : Crypto_OpenSSL.Provider;
+      Current  : QUIC_Traffic_Keys;
+      Next     : out QUIC_Traffic_Keys);
 
    procedure Clear (Item : out Handshake_Secrets);
    procedure Clear (Item : out Application_Secrets);

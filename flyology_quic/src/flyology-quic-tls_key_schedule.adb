@@ -211,6 +211,7 @@ package body Flyology.QUIC.TLS_Key_Schedule is
    begin
       Clear (Result);
       Clear (Candidate);
+      Candidate.Traffic := Traffic;
       HKDF_Expand_Label
         (Provider, Traffic, "quic key", Empty, Candidate.Key);
       HKDF_Expand_Label
@@ -251,4 +252,25 @@ package body Flyology.QUIC.TLS_Key_Schedule is
          Clear (Next);
          raise;
    end Update_QUIC_Traffic;
+
+   procedure Update_QUIC_Keys
+     (Provider : Crypto_OpenSSL.Provider;
+      Current  : QUIC_Traffic_Keys;
+      Next     : out QUIC_Traffic_Keys)
+   is
+      Next_Traffic : Secret := (others => 0);
+   begin
+      Clear (Next);
+      Update_QUIC_Traffic (Provider, Current.Traffic, Next_Traffic);
+      Derive_QUIC_Keys (Provider, Next_Traffic, Next);
+      --  QUIC key updates rotate packet protection but retain the header
+      --  protection key for the lifetime of the connection.
+      Next.HP := Current.HP;
+      Clear (Next_Traffic);
+   exception
+      when others =>
+         Clear (Next);
+         Clear (Next_Traffic);
+         raise;
+   end Update_QUIC_Keys;
 end Flyology.QUIC.TLS_Key_Schedule;

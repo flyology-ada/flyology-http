@@ -16,10 +16,12 @@ procedure Flyology.QUIC.Application_Space.Smoke is
    end ID;
 
    Client_Keys : constant TLS_Key_Schedule.QUIC_Traffic_Keys :=
-     (Key => (others => 16#11#), IV => (others => 16#22#),
+     (Traffic => (others => 16#01#),
+      Key => (others => 16#11#), IV => (others => 16#22#),
       HP => (others => 16#33#));
    Server_Keys : constant TLS_Key_Schedule.QUIC_Traffic_Keys :=
-     (Key => (others => 16#44#), IV => (others => 16#55#),
+     (Traffic => (others => 16#02#),
+      Key => (others => 16#44#), IV => (others => 16#55#),
       HP => (others => 16#66#));
    Client_ID : constant Long_Header_Policy.Connection_ID :=
      ID ((16#AA#, 16#BB#, 16#CC#, 16#DD#));

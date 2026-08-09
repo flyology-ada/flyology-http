@@ -10,8 +10,8 @@ with Flyology.QUIC.Varint_Policy;
 
 --  Internal connection state for the QUIC application packet-number space.
 --
---  The first application-key epoch uses key phase zero. Key updates will
---  extend this state once loss recovery and retained previous keys exist.
+--  The first application-key epoch uses key phase zero. Receive key updates
+--  retain the preceding epoch so reordered packets remain authenticatable.
 private package Flyology.QUIC.Application_Connection is
    use type Ada.Streams.Stream_Element_Array;
 
@@ -102,11 +102,15 @@ private
       Backend     : Crypto_OpenSSL.Provider;
       Sending     : TLS_Key_Schedule.QUIC_Traffic_Keys;
       Receiving   : TLS_Key_Schedule.QUIC_Traffic_Keys;
+      Next_Receiving : TLS_Key_Schedule.QUIC_Traffic_Keys;
+      Previous_Receiving : TLS_Key_Schedule.QUIC_Traffic_Keys;
       Destination : Long_Header_Policy.Connection_ID;
       Local_ID    : Long_Header_Policy.Connection_ID;
       Send_State    : Connection_State_Policy.Connection_State;
       Receive_State : Connection_State_Policy.Connection_State;
-      Key_Phase     : Boolean := False;
+      Sending_Key_Phase   : Boolean := False;
+      Receiving_Key_Phase : Boolean := False;
+      Has_Previous_Receiving : Boolean := False;
       Initialized   : Boolean := False;
    end record;
 end Flyology.QUIC.Application_Connection;
