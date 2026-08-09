@@ -99,12 +99,16 @@ Latency values are milliseconds. All requests succeeded.
 | H3, 1 Python worker, baseline | 13,768 | 10.320 | 18.111 | 19.454 | 16 connections x 16 streams |
 | H3, 1 server loop saturated, baseline | 25,725 | 36.64 | — | — | 4 workers, 64 connections x 16 streams |
 | H3, 1 server loop, ACK candidate | 26,827 | 35.25 | — | — | same; +4.3% rate, -3.8% p50 |
+| H3, 1 loop, pre-QPACK median | 27,310 | 32.8 | — | — | 4 workers, 64 connections x 16 streams |
+| H3, 1 loop, QPACK median | **30,097** | 29.6 | — | — | same; +10.2% rate, about -10% p50 |
 | H1, 16 loops, baseline median | 98,299 | 0.459 | 1.700 | 3.285 | 64 connections |
 | H2, 16 loops, baseline median | 32,035 | 1.946 | 2.552 | 2.795 | 4 connections x 16 streams |
 | H3, 16 loops, baseline | 54,123 | — | — | — | 8 workers, 128 connections x 16 streams |
-| H3, 16 loops, final | **58,935** | 24.896 | 51.082 | 78.762 | 8 workers, 128 connections x 16 streams; reuse 6,250x |
+| H3, 16 loops, pre-QPACK best | **58,935** | 24.896 | 51.082 | 78.762 | 8 workers, 128 connections x 16 streams; reuse 6,250x |
+| H3, 16 loops, QPACK median | 57,222 | 26.617 | 46.145 | 65.833 | same; neutral within run noise |
 
-The final H3 wall time was 13.574 s for 800,000 requests. Handshake latency was
+The pre-QPACK 58.9k H3 run took 13.574 s for 800,000 requests. Handshake
+latency was
 55.118 ms mean, 54.984 ms p50, 58.172 ms p95, and 97.680 ms max. The final H1
 and H2 spot checks after the long qualification session were 79,340 and 29,091
 requests/s respectively; both were below their earlier controlled medians, so
@@ -115,9 +119,27 @@ The original approximately 13.9k H3 result is reproducible, but it measures a
 single aioquic process: the Python client was about 98.5% of one core while the
 server was about 66% of one core. Multiprocess load exposes server capacity.
 With 16 positively probed Flyology loops, sustained H3 crossed 50k and peaked
-in the final clean run at 58.9k. Scaling saturated around 8 client workers:
+in a clean run at 58.9k. Scaling saturated around 8 client workers:
 16 workers regressed to about 42k because handshake/process/packet pressure
 grew faster than useful server work.
+
+### H3 client concurrency
+
+The one-loop stream sweep held the client at four Python processes and 64
+total QUIC connections. Maximum in-flight request concurrency is therefore
+`connections x streams`:
+
+| Streams/connection | Maximum in flight | Requests/s | p50 (ms) |
+| ---: | ---: | ---: | ---: |
+| 1 | 64 | 15,231 | 4.271 |
+| 4 | 256 | 19,824 | — |
+| 8 | 512 | 23,482 | — |
+| 16 | 1,024 | 24,804 | — |
+
+This is why a one-loop result can be either about 15k or 25k without a server
+change: 64 in-flight requests do not saturate the same path as 1,024. The
+16-loop final campaign used eight Python processes, 128 total connections,
+and 16 streams per connection, for a maximum of 2,048 in-flight requests.
 
 ### Size sensitivity
 
@@ -157,7 +179,22 @@ builds were excluded from all reported rates.
    call. Caching verified local endpoint data and packet batching are plausible
    upstream work. This crate was not changed to work around Flyology core.
 
-2. **ACK processing copied large retransmission tables per packet.** The
+2. **QPACK response encoding repeatedly constructed static-table names.** At
+   one-loop server saturation, the encoder's exact lookup called the static
+   table `Name` function for up to 99 entries per response header. Returning
+   unconstrained strings drove secondary-stack allocation and lightweight-task
+   lookup work. A direct name matcher plus one combined exact/name pass keeps
+   the canonical table API and wire representation unchanged. Three controlled
+   200,000-request medians improved from 27,310 to 30,097 requests/s (+10.2%).
+   A 1,000,000-request pair improved from 29,436 to 32,646 requests/s (+10.9%).
+   In comparable active samples, secondary-stack allocation samples fell from
+   125 to 42, scheduler current-task samples from 392 to 231, and static `Name`
+   disappeared. Differing sample totals make those counts mechanism evidence,
+   not exact time percentages. Three 16-loop repetitions were 57.22k, 57.38k,
+   and 55.65k, neutral relative to the previous 58.94k best once client and
+   packet I/O dominate.
+
+3. **ACK processing copied large retransmission tables per packet.** The
    application-space packet transaction copied a roughly 72 KiB
    retransmittable table plus packet-frame table before applying ACK events.
    The accepted change stages only the bounded packet-event resolution log,
@@ -166,7 +203,7 @@ builds were excluded from all reported rates.
    25,725 to 26,827 requests/s (+4.3%); 16-loop results were neutral within
    noise, so no multi-loop gain is attributed to this change.
 
-3. **The Ada H3 client allocated a large event object twice per request.** A
+4. **The Ada H3 client allocated a large event object twice per request.** A
    pooled connection now retains one event object and frees it with the
    transport. In a 640,000-request, 64-connection optimized Ada-client run,
    rate improved from 31,543 to 35,284 requests/s (+11.9%) and mean latency
@@ -177,7 +214,7 @@ builds were excluded from all reported rates.
    totals differed, so counts support the allocation mechanism rather than an
    exact percentage claim.
 
-4. **Eager per-connection request header slots inflated server memory.** Eight
+5. **Eager per-connection request header slots inflated server memory.** Eight
    bounded slots embedded full header blocks even when unused. Header blocks
    are now allocated on first slot use, retained for the connection, and freed
    during cleanup. At 64 H3 connections peak physical memory fell from 309.9
@@ -185,12 +222,14 @@ builds were excluded from all reported rates.
    MB (about 22%). Throughput remained in the 50k+ band. This is a capacity
    improvement, not a claimed request-rate win.
 
-5. **Single-process aioquic is an oracle bottleneck.** One worker stayed near
+6. **Single-process aioquic is an oracle bottleneck.** One worker stayed near
    13k even against 16 loops. Four workers sustained about 50k; eight reached
    54-59k. The benchmark now records workers explicitly so “single client” is
    not confused with “single Flyology loop.”
 
-Timer scans, QPACK, routing, and cryptography were not leading server samples.
+Timer scans, routing, and cryptography were not leading server samples. QPACK
+was material only in the saturated one-loop profile; it was small in the
+16-loop packet-I/O-dominated profile.
 `kevent` and scheduler samples show normal waits/wakeups, but no lock hotspot
 larger than packet I/O was found. A 2,000,000-request eight-worker run declined
 to 43.1k requests/s with worse tails; client time was 46.97 s real, 168.03 s
@@ -210,6 +249,15 @@ lifecycle pressure.
 - Increasing workers beyond eight and repeatedly opening new 128-connection
   generations worsened handshake latency and throughput. Those runs are useful
   saturation evidence, not accepted tuning changes.
+- Raising the default bidirectional-stream flow-credit refill threshold from
+  one-half to three-quarters measured 25.742k, 25.809k, and 26.387k requests/s
+  versus a reverse-order baseline median of 27.310k (-5.5%). Reverted.
+- Adding direct static-table value matching after the accepted QPACK name
+  matcher measured a 29.752k median versus 30.097k (-1.1%). Reverted.
+- A round-robin HTTP/3 request-slot polling cursor was rejected before code:
+  completed streams are released immediately, so the common path reuses the
+  first free transport entry; retaining a cursor would keep more bounded
+  request state live without evidence of scan pressure.
 
 ## Correctness qualification
 
@@ -232,7 +280,9 @@ FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE=16 \
 - H2: Go, Node, and nghttpd peers passed in native and lightweight models;
   fault campaign and bounded soak passed; h2spec 146/146 passed.
 - H3: aioquic and quic-go passed in both Ada client and Ada server roles.
-- h3spec 0.1.13: 49/49 passed.
+- h3spec 0.1.13: a first run passed all HTTP/3 and QPACK cases but was 48/49
+  because one randomized QUIC Handshake reserved-bit case did not observe its
+  expected exception; an immediate fresh-server rerun passed 49/49.
 - Bounded H3 stress: hostile UDP and 64 malformed cases passed; server load
   passed through 128 connections and 128-way concurrency; Ada client passed
   1,024/1,024 requests. One preceding identical run had one 60-second aioquic
@@ -242,7 +292,12 @@ FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE=16 \
 ## Remaining bottlenecks
 
 - Minimize or batch one-datagram-at-a-time output and cache safe source/local
-  endpoint metadata in Flyology core; reproduce upstream before changing it.
+  endpoint metadata in Flyology core. The minimal upstream profile is an
+  optimized 16-loop server, tracing off, eight aioquic processes, 128 QUIC
+  connections and 16 streams each: the send stack configures descriptor/socket
+  state, obtains the local endpoint for source-selected datagrams, then issues
+  one `sendmsg`. `fcntl`, `setsockopt`, and `getsockname` all remain visible
+  beside `sendmsg`. This repository deliberately does not modify Flyology core.
 - Investigate delayed retirement of old H3 connection generations and long-run
   throughput decay with a lifecycle-focused diagnostic build.
 - Reduce multi-process client scheduling and packet receive overhead before
