@@ -1053,10 +1053,10 @@ package body Flyology.QUIC.Application_Space is
       Local_Uni_Opened : constant Stream_ID_Policy.Stream_Count :=
         Stream_ID_Policy.Opened_Count
           (Item.Allocator, Stream_ID_Policy.Unidirectional);
-      --  The stream table dominates connection-state size, so validate every
-      --  frame before changing it and reserve a full table transaction for
-      --  the uncommon packet that changes multiple streams. The smaller
-      --  policy tables remain staged until all packet effects succeed.
+      --  Validate every frame before changing the stream table. Policy state
+      --  remains staged until all packet effects succeed. Retransmission
+      --  payloads are much larger than the sent-packet ledger, so retain only
+      --  the bounded ACK resolutions and apply them at commit.
       Candidate_Streams : Stream_Table_Policy.Stream_Table
         renames Item.Streams;
       Candidate_Receive : Receive_Flow_Control_Policy.State :=
@@ -1064,10 +1064,8 @@ package body Flyology.QUIC.Application_Space is
       Candidate_Flow : Flow_Control_Policy.State := Item.Flow;
       Candidate_Sent : Sent_Packet_Policy.Ledger := Item.Sent;
       Candidate_Recovery : Recovery_Policy.State := Item.Recovery;
-      Candidate_Retransmittable : Retransmittable_Table
-        := Item.Retransmittable;
-      Candidate_Packet_Frames : Packet_Frame_Table
-        := Item.Packet_Frames;
+      Pending_Resolutions : Sent_Packet_Policy.Packet_Event_Array;
+      Pending_Resolution_Count : Sent_Packet_Policy.Sent_Count := 0;
       Candidate_Peer_Bidi : Varint_Policy.Value_Type := Item.Peer_Bidi;
       Candidate_Peer_Uni : Varint_Policy.Value_Type := Item.Peer_Uni;
       Active_Stream_Frame_Count : Natural := 0;
@@ -1277,11 +1275,12 @@ package body Flyology.QUIC.Application_Space is
             Sampled := False;
             ACKed_Ack_Eliciting := False;
             for Index in 1 .. Applied.Count loop
-               Resolve_Retransmittable_Frame
-                 (Candidate_Retransmittable, Candidate_Packet_Frames,
-                  Applied.Events (Index).Packet.Number,
-                  Applied.Events (Index).Kind =
-                    Sent_Packet_Policy.Acknowledged);
+               pragma Assert
+                 (Pending_Resolution_Count <
+                    Sent_Packet_Policy.Max_Sent_Packets);
+               Pending_Resolution_Count := Pending_Resolution_Count + 1;
+               Pending_Resolutions (Pending_Resolution_Count) :=
+                 Applied.Events (Index);
                if Applied.Events (Index).Kind =
                  Sent_Packet_Policy.Acknowledged
                  and then Applied.Events (Index).Packet.ACK_Eliciting
@@ -1369,12 +1368,17 @@ package body Flyology.QUIC.Application_Space is
          return;
       end if;
 
+      for Index in 1 .. Pending_Resolution_Count loop
+         Resolve_Retransmittable_Frame
+           (Item.Retransmittable, Item.Packet_Frames,
+            Pending_Resolutions (Index).Packet.Number,
+            Pending_Resolutions (Index).Kind =
+              Sent_Packet_Policy.Acknowledged);
+      end loop;
       Item.Receive_Flow := Candidate_Receive;
       Item.Flow := Candidate_Flow;
       Item.Sent := Candidate_Sent;
       Item.Recovery := Candidate_Recovery;
-      Item.Retransmittable := Candidate_Retransmittable;
-      Item.Packet_Frames := Candidate_Packet_Frames;
       Item.Peer_Bidi := Candidate_Peer_Bidi;
       Item.Peer_Uni := Candidate_Peer_Uni;
       Result.Status := Processed;
