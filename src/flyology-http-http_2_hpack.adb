@@ -686,18 +686,85 @@ package body Flyology.HTTP.HTTP_2_HPACK is
       Flyology.Bytes.Append_Byte_String (Item.Data, Value);
    end Encode_String;
 
-   function Static_Index
-     (Name : String; Value : String; Exact : Boolean) return Natural is
+   function Matches_Static_Name
+     (Index : Positive; Name : String) return Boolean
+   is
+     (case Index is
+        when 1 => Name = ":authority",
+        when 2 | 3 => Name = ":method",
+        when 4 | 5 => Name = ":path",
+        when 6 | 7 => Name = ":scheme",
+        when 8 .. 14 => Name = ":status",
+        when 15 => Name = "accept-charset",
+        when 16 => Name = "accept-encoding",
+        when 17 => Name = "accept-language",
+        when 18 => Name = "accept-ranges",
+        when 19 => Name = "accept",
+        when 20 => Name = "access-control-allow-origin",
+        when 21 => Name = "age",
+        when 22 => Name = "allow",
+        when 23 => Name = "authorization",
+        when 24 => Name = "cache-control",
+        when 25 => Name = "content-disposition",
+        when 26 => Name = "content-encoding",
+        when 27 => Name = "content-language",
+        when 28 => Name = "content-length",
+        when 29 => Name = "content-location",
+        when 30 => Name = "content-range",
+        when 31 => Name = "content-type",
+        when 32 => Name = "cookie",
+        when 33 => Name = "date",
+        when 34 => Name = "etag",
+        when 35 => Name = "expect",
+        when 36 => Name = "expires",
+        when 37 => Name = "from",
+        when 38 => Name = "host",
+        when 39 => Name = "if-match",
+        when 40 => Name = "if-modified-since",
+        when 41 => Name = "if-none-match",
+        when 42 => Name = "if-range",
+        when 43 => Name = "if-unmodified-since",
+        when 44 => Name = "last-modified",
+        when 45 => Name = "link",
+        when 46 => Name = "location",
+        when 47 => Name = "max-forwards",
+        when 48 => Name = "proxy-authenticate",
+        when 49 => Name = "proxy-authorization",
+        when 50 => Name = "range",
+        when 51 => Name = "referer",
+        when 52 => Name = "refresh",
+        when 53 => Name = "retry-after",
+        when 54 => Name = "server",
+        when 55 => Name = "set-cookie",
+        when 56 => Name = "strict-transport-security",
+        when 57 => Name = "transfer-encoding",
+        when 58 => Name = "user-agent",
+        when 59 => Name = "vary",
+        when 60 => Name = "via",
+        when 61 => Name = "www-authenticate",
+        when others => False);
+
+   procedure Static_Indexes
+     (Name  : String;
+      Value : String;
+      Exact : out Natural;
+      Named : out Natural)
+   is
    begin
+      Exact := 0;
+      Named := 0;
       for Index in 1 .. Static_Count loop
-         if Static_Name (Index) = Name
-           and then (not Exact or else Static_Value (Index) = Value)
-         then
-            return Index;
+         if Matches_Static_Name (Index, Name) then
+            if Named = 0 then
+               Named := Index;
+            end if;
+            if Static_Value (Index) = Value then
+               Exact := Index;
+               return;
+            end if;
          end if;
       end loop;
-      return 0;
-   end Static_Index;
+   end Static_Indexes;
 
    procedure Clear (Item : in out Builder) is
    begin
@@ -716,9 +783,10 @@ package body Flyology.HTTP.HTTP_2_HPACK is
       Never_Indexed : Boolean := False)
    is
       Lower : constant String := Ada.Characters.Handling.To_Lower (Name);
-      Exact : constant Natural := Static_Index (Lower, Value, True);
-      Named : constant Natural := Static_Index (Lower, "", False);
+      Exact : Natural;
+      Named : Natural;
    begin
+      Static_Indexes (Lower, Value, Exact, Named);
       if Name = "" or else Name /= Lower then
          raise Constraint_Error with "HTTP/2 field names must be lowercase";
       elsif Exact > 0 and then not Never_Indexed then
