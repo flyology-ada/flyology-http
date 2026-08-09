@@ -30,6 +30,9 @@ procedure HTTP3_Client_Stress_Probe is
      (if Ada.Command_Line.Argument_Count < 4 then 1
       else Flyology.Execution_Groups.Loop_Pool_Size'Value
         (Ada.Command_Line.Argument (4)));
+   Max_Idle : constant Natural :=
+     (if Ada.Command_Line.Argument_Count < 5 then 1
+      else Natural'Value (Ada.Command_Line.Argument (5)));
 
    function Decimal (Value : Positive) return String is
       Image : constant String := Positive'Image (Value);
@@ -160,7 +163,8 @@ begin
       Flyology.HTTP.Parse_Origin
         ("https://127.0.0.1:" & Decimal (Port)),
       Client.Require_HTTP_3,
-      HTTP_3_Certificate_DER => Fixtures.Server_Certificate);
+      HTTP_3_Certificate_DER => Fixtures.Server_Certificate,
+      Pool => (Max_Idle => Max_Idle, others => <>));
    Started := Ada.Real_Time.Clock;
    declare
       type Worker_Array is array (Positive range <>) of Worker;
@@ -174,6 +178,8 @@ begin
       Wall : constant Duration :=
         Ada.Real_Time.To_Duration (Ada.Real_Time.Clock - Started);
       Passed : constant Natural := Results.Successes;
+      Pool_State : constant Client.Client_Diagnostics :=
+        Client.Diagnostics (HTTP);
    begin
       Ada.Text_IO.Put_Line
         ("workers=" & Decimal (Worker_Count)
@@ -186,6 +192,11 @@ begin
                else Long_Float (Passed) / Long_Float (Wall)))
          & " mean_s=" & Duration'Image (Results.Mean)
          & " max_s=" & Duration'Image (Results.Maximum));
+      Ada.Text_IO.Put_Line
+        ("pool_created=" & Natural'Image (Pool_State.Transports_Created)
+         & " pool_reused=" & Natural'Image (Pool_State.Transport_Reuses)
+         & " pool_idle=" & Natural'Image (Pool_State.Reusable_Transports)
+         & " pool_closed=" & Natural'Image (Pool_State.Transports_Closed));
       if Results.Failures > 0 then
          Ada.Text_IO.Put_Line ("first_error=" & Results.First_Error);
       end if;
