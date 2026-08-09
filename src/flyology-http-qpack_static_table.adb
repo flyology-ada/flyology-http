@@ -215,6 +215,37 @@ is
    begin
       Exact := (others => <>);
       Named := (others => <>);
+      if Field_Name = ":status" then
+         Named := (Found => True, Index => 24);
+         for Index in Static_Index range 24 .. 28 loop
+            if Value (Index) = Field_Value then
+               Exact := (Found => True, Index => Index);
+               return;
+            end if;
+         end loop;
+         for Index in Static_Index range 63 .. 71 loop
+            if Value (Index) = Field_Value then
+               Exact := (Found => True, Index => Index);
+               return;
+            end if;
+         end loop;
+         return;
+      elsif Field_Name = "content-length" then
+         Named := (Found => True, Index => 4);
+         if Field_Value = "0" then
+            Exact := Named;
+         end if;
+         return;
+      elsif Field_Name = "content-type" then
+         Named := (Found => True, Index => 44);
+         for Index in Static_Index range 44 .. 54 loop
+            if Value (Index) = Field_Value then
+               Exact := (Found => True, Index => Index);
+               return;
+            end if;
+         end loop;
+         return;
+      end if;
       for Index in Static_Index loop
          if Matches_Name (Index, Field_Name) then
             if not Named.Found then
