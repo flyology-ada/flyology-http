@@ -2,9 +2,41 @@
 set -eu
 
 crate_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+http_root=$(CDPATH= cd -- "$crate_root/.." && pwd)
+
+if [ -n "${FLYOLOGY_QUIC_TEST_RTS:-}" ]; then
+  test_rts=$FLYOLOGY_QUIC_TEST_RTS
+elif [ -d "$http_root/build/rts/adainclude" ]; then
+  test_rts="$http_root/build/rts"
+elif [ -n "${FLYOLOGY_ROOT:-}" ] \
+  && [ -d "$FLYOLOGY_ROOT/build/rts/adainclude" ]
+then
+  test_rts="$FLYOLOGY_ROOT/build/rts"
+else
+  printf '%s\n' \
+    "Flyology QUIC tests require FLYOLOGY_QUIC_TEST_RTS; refusing the default RTS" \
+    >&2
+  exit 2
+fi
+
+run_gprbuild () {
+  if [ "$(uname -s)" = Darwin ]; then
+    compiler_sysroot=$(alr exec -- gcc -print-sysroot)
+    if [ -z "$compiler_sysroot" ] || [ ! -d "$compiler_sysroot" ]; then
+      current_sysroot=$(xcrun --sdk macosx --show-sdk-path)
+      alr exec -- env -u GPR_CONFIG gprbuild "$@" \
+        -largs "-Wl,-syslibroot,$current_sysroot" -nodefaultrpaths
+      return
+    fi
+    alr exec -- env -u GPR_CONFIG gprbuild "$@" \
+      -largs -nodefaultrpaths
+    return
+  fi
+  alr exec -- env -u GPR_CONFIG gprbuild "$@"
+}
 
 cd "$crate_root/tests"
-alr build
+run_gprbuild --RTS="$test_rts" -f -p -j0 -P flyology_quic_tests.gpr
 
 for test in \
   flyology-quic-ack_frame_policy-smoke \

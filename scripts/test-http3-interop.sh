@@ -9,6 +9,7 @@ ada_aioquic_port=${FLYOLOGY_HTTP3_ADA_AIOQUIC_PORT:-4434}
 quic_go_server_port=${FLYOLOGY_HTTP3_QUIC_GO_SERVER_PORT:-4435}
 ada_quic_go_port=${FLYOLOGY_HTTP3_ADA_QUIC_GO_PORT:-4436}
 oracle_python=${FLYOLOGY_HTTP3_ORACLE_PYTHON:-}
+qualification_rts="$http_root/build/http3-qualification-rts"
 
 case "$mode" in
   aioquic|quic-go|all) ;;
@@ -19,6 +20,35 @@ case "$mode" in
 esac
 
 mkdir -p "$http_root/build/oracle"
+
+prepare_qualification_rts () {
+  if [ -n "${FLYOLOGY_ROOT:-}" ]; then
+    flyology_root=$FLYOLOGY_ROOT
+  elif [ -x "$http_root/../scripts/prepare-rts.sh" ]; then
+    flyology_root=$(CDPATH= cd -- "$http_root/.." && pwd)
+  elif flyology_root=$("$alr" exec -- sh -c \
+    'printf "%s\n" "$FLYOLOGY_ROOT"') \
+    && [ -n "$flyology_root" ] \
+    && [ -d "$flyology_root" ]
+  then
+    :
+  else
+    printf '%s\n' "Flyology's source is unavailable; run: alr build" >&2
+    exit 2
+  fi
+
+  if [ ! -x "$flyology_root/scripts/prepare-rts.sh" ]; then
+    printf '%s\n' \
+      'Flyology cannot prepare the HTTP/3 qualification runtime' >&2
+    exit 2
+  fi
+
+  "$alr" exec -- env \
+    FLYOLOGY_RTS_DIR="$qualification_rts" \
+    FLYOLOGY_DEFAULT=native \
+    FLYOLOGY_LOOP_POOL_SIZE=1 \
+    "$flyology_root/scripts/prepare-rts.sh" >/dev/null
+}
 
 prepare_aioquic () {
   if [ -z "$oracle_python" ]; then
@@ -43,7 +73,9 @@ prepare_quic_go () {
 }
 
 cd "$http_root"
-"$alr" exec -- gprbuild -p -P tests/http_tests.gpr \
+prepare_qualification_rts
+"$alr" exec -- env -u GPR_CONFIG gprbuild \
+  --RTS="$qualification_rts" -p -P tests/http_tests.gpr \
   http3_interop_client.adb http3_interop_server.adb
 
 oracle_pid=

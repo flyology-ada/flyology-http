@@ -6,6 +6,36 @@ alr=$("$http_root/scripts/find-alr.sh")
 port=${FLYOLOGY_H3SPEC_PORT:-4437}
 h3spec=${FLYOLOGY_H3SPEC:-}
 version=0.1.13
+qualification_rts="$http_root/build/http3-qualification-rts"
+
+prepare_qualification_rts () {
+  if [ -n "${FLYOLOGY_ROOT:-}" ]; then
+    flyology_root=$FLYOLOGY_ROOT
+  elif [ -x "$http_root/../scripts/prepare-rts.sh" ]; then
+    flyology_root=$(CDPATH= cd -- "$http_root/.." && pwd)
+  elif flyology_root=$("$alr" exec -- sh -c \
+    'printf "%s\n" "$FLYOLOGY_ROOT"') \
+    && [ -n "$flyology_root" ] \
+    && [ -d "$flyology_root" ]
+  then
+    :
+  else
+    printf '%s\n' "Flyology's source is unavailable; run: alr build" >&2
+    exit 2
+  fi
+
+  if [ ! -x "$flyology_root/scripts/prepare-rts.sh" ]; then
+    printf '%s\n' \
+      'Flyology cannot prepare the HTTP/3 qualification runtime' >&2
+    exit 2
+  fi
+
+  "$alr" exec -- env \
+    FLYOLOGY_RTS_DIR="$qualification_rts" \
+    FLYOLOGY_DEFAULT=native \
+    FLYOLOGY_LOOP_POOL_SIZE=1 \
+    "$flyology_root/scripts/prepare-rts.sh" >/dev/null
+}
 
 if [ -z "$h3spec" ]; then
   platform=$(uname -s)-$(uname -m)
@@ -42,7 +72,9 @@ if [ -z "$h3spec" ]; then
 fi
 
 cd "$http_root"
-"$alr" exec -- gprbuild -p -P tests/http_tests.gpr \
+prepare_qualification_rts
+"$alr" exec -- env -u GPR_CONFIG gprbuild \
+  --RTS="$qualification_rts" -p -P tests/http_tests.gpr \
   http3_h3spec_server.adb
 
 server_log="$http_root/build/oracle/ada-h3-h3spec.log"
