@@ -1,11 +1,13 @@
 with Flyology.QUIC.ACK_Frame_Policy;
 with Flyology.QUIC.ACK_Range_Policy;
 with Flyology.QUIC.Application_Frame_Policy;
+with Flyology.QUIC.Debug;
 with Flyology.QUIC.Initial_Frame_Policy;
 with Flyology.QUIC.Stream_Frame_Policy;
 with Interfaces;
 
 package body Flyology.QUIC.Application_Space is
+   package Debug renames Flyology.QUIC.Debug;
    use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
    use type Interfaces.Unsigned_64;
@@ -506,6 +508,12 @@ package body Flyology.QUIC.Application_Space is
       if Sent_Packet_Policy.Retained (Item.Sent) =
         Sent_Packet_Policy.Max_Sent_Packets
       then
+         if Debug.Enabled then
+            Debug.Log
+              ("quic", "tracked-frame-recovery-capacity",
+               "retained=" & Sent_Packet_Policy.Sent_Count'Image
+                 (Sent_Packet_Policy.Retained (Item.Sent)));
+         end if;
          Result.Status := Recovery_Capacity_Exceeded;
          return;
       elsif Retain_Frame
@@ -520,6 +528,16 @@ package body Flyology.QUIC.Application_Space is
         (Item.Recovery,
          Sent_Packet_Policy.Packet_Byte_Count (Max_Datagram_Length))
       then
+         if Debug.Enabled then
+            Debug.Log
+              ("quic", "tracked-frame-congestion-blocked",
+               "flight=" & Recovery_Policy.Byte_Count'Image
+                 (Recovery_Policy.Bytes_In_Flight (Item.Recovery)) &
+               " window=" & Recovery_Policy.Byte_Count'Image
+                 (Recovery_Policy.Congestion_Window (Item.Recovery)) &
+               " retained=" & Sent_Packet_Policy.Sent_Count'Image
+                 (Sent_Packet_Policy.Retained (Item.Sent)));
+         end if;
          Result.Status := Congestion_Blocked;
          return;
       end if;

@@ -59,6 +59,13 @@ package body Flyology.QUIC.Application_Connection is
       end if;
       Number := Connection_State_Policy.Next_To_Send (Item.Send_State);
       Result.Number := Number;
+      if Debug.Enabled
+        and then Number in 127 | 128 | 32_767 | 32_768
+      then
+         Debug.Log
+           ("quic", "send-packet-number-length-boundary",
+            "packet=" & Connection_State_Policy.Packet_Number'Image (Number));
+      end if;
       if not Packet_Number_Policy.Is_Representable (Number, False, 0) then
          Result.Status := Packet_Number_Unrepresentable;
          return;
