@@ -133,8 +133,18 @@ shown above. `Certificate_DER` is an Ed25519 certificate and `Private_Key` is
 its 32-byte raw private key for QUIC; deployments should supply the same server
 identity in the PEM representation used by TLS/TCP.
 
-The maintained `showcases/http3_application_server.adb` loads both identity
-representations and runs the unified server. Lower-level
+The maintained `showcases/http3_application_server.adb` generates a temporary
+self-signed Ed25519 localhost identity when run with no identity arguments:
+
+```sh
+./showcases/bin/http3_application_server 4433
+```
+
+It uses the generated identity's PEM representation for TLS/TCP and its DER
+certificate and raw key for QUIC, then removes the temporary files as soon as
+the TLS provider loads them. Passing
+`TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw`
+retains the explicit stable-identity form. Lower-level
 `Serve_HTTP_3_Listener` and single-connection `Serve_HTTP_3` adapters remain
 available when an application owns the UDP listener itself.
 
