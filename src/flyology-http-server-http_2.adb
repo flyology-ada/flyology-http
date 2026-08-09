@@ -1905,6 +1905,8 @@ package body Flyology.HTTP.Server.HTTP_2 is
 
       task type Handler_Task (Slot : Positive) is
          pragma Task_Info (Flyology.Lightweight_Task);
+         entry Run;
+         entry Shutdown;
       end Handler_Task;
       type Handler_Access is access Handler_Task;
       type Handler_Array is array
@@ -1912,37 +1914,50 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Handlers : Handler_Array := (others => null);
 
       task body Handler_Task is
-         Backend : Stream_Backend renames Backends_By_Slot (Slot).all;
-         X : Applications.Exchange := Applications.Internals.Create
-           (Backend.Request_Value, Backend'Access, Peer,
-            Backend.Token'Access, Backend.Deadline, Scheme);
       begin
-         begin
-            Handle (Context, X);
-            if X.Response = Applications.Not_Started then
-               X.No_Content;
-            elsif X.Response in
-              Applications.Streaming_Response | Applications.Streaming_SSE |
-              Applications.Upgraded | Applications.Failed
-            then
-               X.Mark_Failed;
-            end if;
-         exception
-            when others =>
-               if not X.Wire_Response_Started then
-                  begin
-                     X.Problem
-                       (500, "internal-server-error",
-                        "Internal server error");
-                  exception
-                     when others => X.Mark_Failed;
-                  end;
-               else
-                  X.Mark_Failed;
-               end if;
-         end;
-         State.Streams.Handler_Finished (Slot);
-         Drivers.Signal (State.Outbound);
+         loop
+            select
+               accept Run;
+            or
+               accept Shutdown;
+               exit;
+            end select;
+            declare
+               Backend : Stream_Backend renames
+                 Backends_By_Slot (Slot).all;
+               X : Applications.Exchange := Applications.Internals.Create
+                 (Backend.Request_Value, Backend'Access, Peer,
+                  Backend.Token'Access, Backend.Deadline, Scheme);
+            begin
+               begin
+                  Handle (Context, X);
+                  if X.Response = Applications.Not_Started then
+                     X.No_Content;
+                  elsif X.Response in
+                    Applications.Streaming_Response |
+                    Applications.Streaming_SSE |
+                    Applications.Upgraded | Applications.Failed
+                  then
+                     X.Mark_Failed;
+                  end if;
+               exception
+                  when others =>
+                     if not X.Wire_Response_Started then
+                        begin
+                           X.Problem
+                             (500, "internal-server-error",
+                              "Internal server error");
+                        exception
+                           when others => X.Mark_Failed;
+                        end;
+                     else
+                        X.Mark_Failed;
+                     end if;
+               end;
+            end;
+            State.Streams.Handler_Finished (Slot);
+            Drivers.Signal (State.Outbound);
+         end loop;
       end Handler_Task;
 
       procedure Free_Handler is new Ada.Unchecked_Deallocation
@@ -1953,10 +1968,10 @@ package body Flyology.HTTP.Server.HTTP_2 is
       procedure Reap is
       begin
          for Slot in Handlers'Range loop
-            if Handlers (Slot) /= null and then Handlers (Slot).all'Terminated
+            if Handlers (Slot) /= null
+              and then Backends_By_Slot (Slot) /= null
               and then State.Streams.Can_Reap (Slot)
             then
-               Free_Handler (Handlers (Slot));
                Free_Backend (Backends_By_Slot (Slot));
                State.Streams.Release_Stream (Slot);
             end if;
@@ -1997,7 +2012,10 @@ package body Flyology.HTTP.Server.HTTP_2 is
                "Host: " & Authority & CRLF);
          end if;
          Backends_By_Slot (Slot) := Backend;
-         Handlers (Slot) := new Handler_Task (Slot);
+         if Handlers (Slot) = null then
+            Handlers (Slot) := new Handler_Task (Slot);
+         end if;
+         Handlers (Slot).Run;
       end Start_Handler;
 
       Output : Stream_Element_Array
@@ -2571,9 +2589,9 @@ package body Flyology.HTTP.Server.HTTP_2 is
       end loop;
       for Slot in Handlers'Range loop
          if Handlers (Slot) /= null then
-            --  Dynamic Ada tasks must terminate before their task object and
-            --  backend are deallocated. A handler may still be unwinding
-            --  application code after connection cancellation reaches it.
+            --  Shutdown queues behind any handler still unwinding application
+            --  code after connection cancellation reaches it.
+            Handlers (Slot).Shutdown;
             while not Handlers (Slot).all'Terminated loop
                delay 0.001;
             end loop;
