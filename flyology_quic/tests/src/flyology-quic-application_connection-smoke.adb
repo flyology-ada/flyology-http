@@ -78,11 +78,14 @@ begin
 
       declare
          Backend : Crypto_OpenSSL.Provider;
-         Next_Keys, Next_Next_Keys : TLS_Key_Schedule.QUIC_Traffic_Keys;
+         Next_Keys, Next_Next_Keys, Third_Keys :
+           TLS_Key_Schedule.QUIC_Traffic_Keys;
          Old_Packet, Updated_Packet :
            Ada.Streams.Stream_Element_Array (1 .. 64);
          Old_Built : Build_Result;
          Updated : One_RTT_Sender.Send_Result;
+         Response_Packet : Ada.Streams.Stream_Element_Array (1 .. 64);
+         Response_Built : Build_Result;
       begin
          Crypto_OpenSSL.Initialize_Provider (Backend);
          Build_One_RTT (Client, Plaintext, Old_Packet, Old_Built);
@@ -102,6 +105,20 @@ begin
             Updated_Packet
               (1 .. Ada.Streams.Stream_Element_Offset
                       (Updated.Packet_Length)),
+            Decoded, Processed_Packet);
+         pragma Assert
+           (Processed_Packet.Status = Processed
+            and then Processed_Packet.Packet.Key_Phase);
+         Build_One_RTT
+           (Server, Plaintext, Response_Packet, Response_Built);
+         pragma Assert
+           (Response_Built.Status = Built
+            and then Server.Sending_Key_Phase);
+         Process_One_RTT
+           (Client,
+            Response_Packet
+              (1 .. Ada.Streams.Stream_Element_Offset
+                      (Response_Built.Packet_Length)),
             Decoded, Processed_Packet);
          pragma Assert
            (Processed_Packet.Status = Processed
@@ -135,6 +152,62 @@ begin
          pragma Assert
            (Processed_Packet.Status = Processed
             and then not Processed_Packet.Packet.Key_Phase);
+         Build_One_RTT
+           (Server, Plaintext, Response_Packet, Response_Built);
+         pragma Assert
+           (Response_Built.Status = Built
+            and then not Server.Sending_Key_Phase);
+         Process_One_RTT
+           (Client,
+            Response_Packet
+              (1 .. Ada.Streams.Stream_Element_Offset
+                      (Response_Built.Packet_Length)),
+            Decoded, Processed_Packet);
+         pragma Assert
+           (Processed_Packet.Status = Processed
+            and then not Processed_Packet.Packet.Key_Phase);
+
+         declare
+            Next_Server_Sending : TLS_Key_Schedule.QUIC_Traffic_Keys;
+         begin
+            TLS_Key_Schedule.Update_QUIC_Keys
+              (Backend, Server.Sending, Next_Server_Sending);
+            TLS_Key_Schedule.Clear (Server.Sending);
+            Server.Sending := Next_Server_Sending;
+            TLS_Key_Schedule.Clear (Next_Server_Sending);
+            Server.Sending_Key_Phase := True;
+         end;
+         TLS_Key_Schedule.Update_QUIC_Keys
+           (Backend, Next_Next_Keys, Third_Keys);
+         One_RTT_Sender.Send
+           (Backend, Third_Keys.Key, Third_Keys.IV, Third_Keys.HP,
+            Server_ID, 4, 1, Key_Phase => True, Spin => False,
+            Plaintext => Plaintext, Packet => Updated_Packet,
+            Result => Updated);
+         pragma Assert (Updated.Status = One_RTT_Sender.Sent);
+         Process_One_RTT
+           (Server,
+            Updated_Packet
+              (1 .. Ada.Streams.Stream_Element_Offset
+                      (Updated.Packet_Length)),
+            Decoded, Processed_Packet);
+         pragma Assert
+           (Processed_Packet.Status = Processed
+            and then Processed_Packet.Packet.Key_Phase);
+         Build_One_RTT
+           (Server, Plaintext, Response_Packet, Response_Built);
+         pragma Assert
+           (Response_Built.Status = Built
+            and then Server.Sending_Key_Phase);
+         Process_One_RTT
+           (Client,
+            Response_Packet
+              (1 .. Ada.Streams.Stream_Element_Offset
+                      (Response_Built.Packet_Length)),
+            Decoded, Processed_Packet);
+         pragma Assert
+           (Processed_Packet.Status = Processed
+            and then Processed_Packet.Packet.Key_Phase);
       end;
 
       declare
