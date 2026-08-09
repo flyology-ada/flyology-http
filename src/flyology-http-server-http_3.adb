@@ -328,11 +328,13 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Packet : QUIC.Datagram;
       Sent   : QUIC.Send_Status;
    begin
-      Debug.Log
-        ("h3", "application-close",
-         "status=" & H3.Operation_Status'Image (Status) &
-         " code=" & QUIC.Stream_Offset'Image
-           (Application_Error_For (Status)));
+      if Debug.Enabled then
+         Debug.Log
+           ("h3", "application-close",
+            "status=" & H3.Operation_Status'Image (Status) &
+            " code=" & QUIC.Stream_Offset'Image
+              (Application_Error_For (Status)));
+      end if;
       QUIC.Build_Application_Close_Datagram
         (Item.Transport, Application_Error_For (Status), Packet, Sent);
       if Sent /= QUIC.Sent then
@@ -446,9 +448,11 @@ package body Flyology.HTTP.Server.HTTP_3 is
          when QUIC.Succeeded | QUIC.Waiting_For_More =>
             Send (Item, Flight, Timeout);
             if QUIC.State (Item.Transport) = QUIC.Failed then
-               Debug.Log
-                 ("h3", "transport-failed",
-                  "operation=" & QUIC.Operation_Status'Image (Status));
+               if Debug.Enabled then
+                  Debug.Log
+                    ("h3", "transport-failed",
+                     "operation=" & QUIC.Operation_Status'Image (Status));
+               end if;
                Item.Closed := True;
             end if;
          when QUIC.Connection_Closed =>
@@ -1283,6 +1287,17 @@ package body Flyology.HTTP.Server.HTTP_3 is
                end if;
          end;
          Served := Served + 1;
+         if Debug.Enabled
+           and then
+             (Served <= 4
+              or else Served mod 256 = 0)
+         then
+            Debug.Log
+              ("h3", "request-progress",
+               "served=" & Natural'Image (Served) &
+               " stream=" & QUIC.Stream_ID'Image
+                 (Requests (Slot).Stream));
+         end if;
       end Dispatch_Request;
 
       procedure Return_Request_Credit is
@@ -1566,9 +1581,11 @@ package body Flyology.HTTP.Server.HTTP_3 is
                         Max_Connection_Age, Max_Requests, Token);
                   exception
                      when Error : others =>
-                        Debug.Log
-                          ("h3", "worker-exception",
-                           Ada.Exceptions.Exception_Information (Error));
+                        if Debug.Enabled then
+                           Debug.Log
+                             ("h3", "worker-exception",
+                              Ada.Exceptions.Exception_Information (Error));
+                        end if;
                   end;
                   Registry.Release (Slot);
                end if;
