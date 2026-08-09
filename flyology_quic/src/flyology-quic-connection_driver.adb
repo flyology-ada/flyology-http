@@ -245,6 +245,24 @@ package body Flyology.QUIC.Connection_Driver is
    end Fail_Initial_With_Close;
 
    function Transport_Error_For
+     (Status : Initial_Space.Process_Status)
+      return Varint_Policy.Value_Type
+   is
+     (case Status is
+         when Initial_Space.Invalid_Reserved_Bits
+            | Initial_Space.Frame_Not_Allowed
+            | Initial_Space.Conflicting_Crypto_Data => 16#0A#,
+         when Initial_Space.Frame_Truncated
+            | Initial_Space.Frame_Value_Too_Large
+            | Initial_Space.Invalid_ACK_Range => 16#07#,
+         when Initial_Space.Crypto_Data_Too_Large => 16#0D#,
+         when Initial_Space.Processed
+            | Initial_Space.Duplicate_Packet
+            | Initial_Space.Packet_Too_Old
+            | Initial_Space.Envelope_Rejected
+            | Initial_Space.Authentication_Failed => 16#01#);
+
+   function Transport_Error_For
      (Status : Handshake_Space.Process_Status)
       return Varint_Policy.Value_Type
    is
@@ -328,11 +346,13 @@ package body Flyology.QUIC.Connection_Driver is
       Packet : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
       Built  : Application_Space.Send_Result;
    begin
-      Debug.Log
-        ("quic", "transport-close",
-         "state=" & Connection_State'Image (Item.Current) &
-         " error=" & Varint_Policy.Value_Type'Image (Error_Code) &
-         " frame=" & Varint_Policy.Value_Type'Image (Frame_Type));
+      if Debug.Enabled then
+         Debug.Log
+           ("quic", "transport-close",
+            "state=" & Connection_State'Image (Item.Current) &
+            " error=" & Varint_Policy.Value_Type'Image (Error_Code) &
+            " frame=" & Varint_Policy.Value_Type'Image (Frame_Type));
+      end if;
       Application_Space.Build_Transport_Close_Packet
         (Item.Application, Error_Code, Frame_Type, Packet, Built);
       Item.Current := Failed;
@@ -606,11 +626,28 @@ package body Flyology.QUIC.Connection_Driver is
       Initial_Space.Process_Packet (Item.Initial, Packet, Processed);
       if Processed.Status in
         Initial_Space.Duplicate_Packet | Initial_Space.Packet_Too_Old
+          | Initial_Space.Envelope_Rejected
+          | Initial_Space.Authentication_Failed
       then
+         if Debug.Enabled
+           and then Processed.Status in
+             Initial_Space.Envelope_Rejected
+               | Initial_Space.Authentication_Failed
+         then
+            Debug.Log
+              ("quic", "initial-packet-discarded",
+               "status=" & Initial_Space.Process_Status'Image
+                 (Processed.Status));
+         end if;
+         --  Packets that cannot be authenticated are indistinguishable from
+         --  off-path traffic and are discarded without closing the
+         --  connection, as required for unauthenticated QUIC packets.
          Result.Status := Succeeded;
          return;
       elsif Processed.Status /= Initial_Space.Processed then
-         Result.Status := Packet_Error;
+         Fail_Initial_With_Close
+           (Item, Transport_Error_For (Processed.Status),
+            Frame_Type => 16#06#, Output => Output, Result => Result);
          return;
       end if;
       Length := Message_Length (Item.Initial);
@@ -745,7 +782,19 @@ package body Flyology.QUIC.Connection_Driver is
       Handshake_Space.Process_Packet (Item.Handshake, Packet, Processed);
       if Processed.Status in
         Handshake_Space.Duplicate_Packet | Handshake_Space.Packet_Too_Old
+          | Handshake_Space.Envelope_Rejected
+          | Handshake_Space.Authentication_Failed
       then
+         if Debug.Enabled
+           and then Processed.Status in
+             Handshake_Space.Envelope_Rejected
+               | Handshake_Space.Authentication_Failed
+         then
+            Debug.Log
+              ("quic", "handshake-packet-discarded",
+               "status=" & Handshake_Space.Process_Status'Image
+                 (Processed.Status));
+         end if;
          Result.Status := Succeeded;
          return;
       elsif Processed.Status /= Handshake_Space.Processed then
@@ -915,29 +964,50 @@ package body Flyology.QUIC.Connection_Driver is
                if Application_Result.Status = Application_Space.Processed
                  and then Application_Result.Frame_Count = 0
                then
-                  Debug.Log
-                    ("quic", "application-packet-rejected",
-                     "status=" & Application_Space.Process_Status'Image
-                       (Application_Result.Status) &
-                     " frame=" & Varint_Policy.Value_Type'Image
-                       (Application_Result.Triggering_Frame_Type) &
-                     " packet=" & Application_Space.Packet_Number'Image
-                       (Application_Result.Number));
+                  if Debug.Enabled then
+                     Debug.Log
+                       ("quic", "application-packet-rejected",
+                        "status=" & Application_Space.Process_Status'Image
+                          (Application_Result.Status) &
+                        " frame=" & Varint_Policy.Value_Type'Image
+                          (Application_Result.Triggering_Frame_Type) &
+                        " packet=" & Application_Space.Packet_Number'Image
+                          (Application_Result.Number));
+                  end if;
                   Fail_Application_With_Close
                     (Item, Error_Code => 16#0A#, Frame_Type => 0,
                      Output => Output, Result => Result);
+               elsif Application_Result.Status in
+                 Application_Space.Envelope_Rejected
+                   | Application_Space.Authentication_Failed
+               then
+                  if Debug.Enabled then
+                     Debug.Log
+                       ("quic", "application-packet-discarded",
+                        "status=" & Application_Space.Process_Status'Image
+                          (Application_Result.Status) &
+                        " packet=" & Application_Space.Packet_Number'Image
+                          (Application_Result.Number));
+                  end if;
+                  --  Invalid header protection or AEAD authentication is a
+                  --  packet discard, not a transport error. Closing here
+                  --  lets stray or corrupted UDP traffic tear down a live
+                  --  connection and prevents normal retransmission.
+                  Result.Status := Succeeded;
                elsif Application_Result.Status not in
                  Application_Space.Processed | Application_Space.Duplicate
                    | Application_Space.Too_Old
                then
-                  Debug.Log
-                    ("quic", "application-packet-rejected",
-                     "status=" & Application_Space.Process_Status'Image
-                       (Application_Result.Status) &
-                     " frame=" & Varint_Policy.Value_Type'Image
-                       (Application_Result.Triggering_Frame_Type) &
-                     " packet=" & Application_Space.Packet_Number'Image
-                       (Application_Result.Number));
+                  if Debug.Enabled then
+                     Debug.Log
+                       ("quic", "application-packet-rejected",
+                        "status=" & Application_Space.Process_Status'Image
+                          (Application_Result.Status) &
+                        " frame=" & Varint_Policy.Value_Type'Image
+                          (Application_Result.Triggering_Frame_Type) &
+                        " packet=" & Application_Space.Packet_Number'Image
+                          (Application_Result.Number));
+                  end if;
                   Fail_Application_With_Close
                     (Item,
                      Transport_Error_For (Application_Result.Status),

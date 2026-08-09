@@ -425,6 +425,24 @@ begin
         (Public_Client, Public_Stream, 0, True, (16#68#, 16#33#), 100,
          Stream_Packet, Sent);
       pragma Assert (Sent = Connections.Sent);
+      declare
+         Tampered : Connections.Datagram := Stream_Packet;
+      begin
+         Tampered.Data
+           (Ada.Streams.Stream_Element_Offset (Tampered.Length)) :=
+             Tampered.Data
+               (Ada.Streams.Stream_Element_Offset (Tampered.Length)) xor 1;
+         Connections.Process_Datagram
+           (Public_Server,
+            Tampered.Data
+              (1 .. Ada.Streams.Stream_Element_Offset (Tampered.Length)),
+            Server_Flight, Server_Status, Now => 101);
+         pragma Assert
+           (Server_Status = Connections.Succeeded
+            and then Connections.Is_Connected (Public_Server)
+            and then Server_Flight.Count = 0
+            and then Connections.Stream_Count (Public_Server) = 0);
+      end;
       pragma Assert (Connections.Has_Recovery_Timeout (Public_Client));
       Deadline := Connections.Recovery_Deadline (Public_Client);
       pragma Assert (Deadline = 1_024_100);
