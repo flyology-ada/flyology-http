@@ -1303,8 +1303,12 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Streams (Slot).Receive_Window :=
            Policy.Window_Size (Settings.Advertised_Initial_Window_Size);
          Streams (Slot).Pending_Receive_Credit := 0;
-         if Flyology.Wake_Sources.Descriptor (Streams (Slot).Wake) >= 0 then
-            Flyology.Wake_Sources.Release (Streams (Slot).Wake);
+         --  Keep the bounded per-slot descriptor generation across stream
+         --  reuse.  Recreating its pipe for every request is unnecessary,
+         --  but a pending notification must not wake the next stream that
+         --  occupies this slot.
+         if Streams (Slot).Wake_Signalled then
+            Flyology.Wake_Sources.Consume (Streams (Slot).Wake);
          end if;
          Streams (Slot).Wake_Signalled := False;
       end Release_Stream;
