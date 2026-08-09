@@ -445,7 +445,8 @@ is
             Name_Text  : constant String := Field_Name (Item);
             Value_Text : constant String := Field_Value (Item);
          begin
-            Exact := QPACK_Static_Table.Find_Exact (Name_Text, Value_Text);
+            QPACK_Static_Table.Find
+              (Name_Text, Value_Text, Exact, Named);
             if Exact.Found then
                pragma Assert
                  ((Ada.Streams.Stream_Element'(16#C0#)
@@ -453,7 +454,6 @@ is
                Append_Integer
                  (QPACK_Integer_Policy.Value_Type (Exact.Index), 6, 16#C0#);
             else
-               Named := QPACK_Static_Table.Find_Name (Name_Text);
                if Named.Found then
                   pragma Assert
                     ((Ada.Streams.Stream_Element'(16#50#)

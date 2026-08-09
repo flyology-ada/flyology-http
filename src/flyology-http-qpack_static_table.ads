@@ -27,4 +27,11 @@ is
 
    function Find_Name (Field_Name : String) return Lookup_Result
    with Global => null;
+
+   procedure Find
+     (Field_Name  : String;
+      Field_Value : String;
+      Exact       : out Lookup_Result;
+      Named       : out Lookup_Result)
+   with Global => null;
 end Flyology.HTTP.QPACK_Static_Table;
