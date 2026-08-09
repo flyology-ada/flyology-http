@@ -258,6 +258,24 @@ lifecycle pressure.
   completed streams are released immediately, so the common path reuses the
   first free transport entry; retaining a cursor would keep more bounded
   request state live without evidence of scan pressure.
+- Replacing response-validation and QPACK-encoding string results with
+  variable-bound slice renames measured 25.644k and 21.295k requests/s versus
+  a fresh-server baseline median of 28.484k. Tail latency also worsened. The
+  generated variable-slice path was more expensive than the compiler's
+  existing scalarized string-result path. Reverted.
+- Copying only meaningful HTTP/3 field bytes across the public/internal QPACK
+  boundary stalled one load run and measured 23.428k on a clean repeat. Fixed
+  bounded-record assignment was cheaper than the added variable-length work.
+  Reverted.
+- Removing redundant-looking QPACK decoder buffer and record clears measured
+  28.219k, 28.281k, and 28.443k requests/s (28.281k median, -0.7%). Reverted.
+- Additive indexed name/value accessors avoided returning a complete bounded
+  field record but measured 26.241k and 26.486k requests/s. Cross-package
+  string-result overhead outweighed the saved copy. The API addition was
+  removed.
+- Collapsing four high-level request-header searches into one positional pass
+  measured 28.588k, 26.826k, and 29.309k requests/s (28.588k median, +0.36%).
+  The result was inside noise with worse variance, so it was reverted.
 
 ## Correctness qualification
 
