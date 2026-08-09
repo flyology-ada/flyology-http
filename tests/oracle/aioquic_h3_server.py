@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import socket
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -54,7 +55,7 @@ class OracleProtocol(QuicConnectionProtocol):
                 self.transmit()
 
 
-async def main(port: int) -> None:
+async def main(port: int, receive_buffer: int) -> None:
     configuration = QuicConfiguration(
         alpn_protocols=H3_ALPN,
         cipher_suites=[CipherSuite.AES_128_GCM_SHA256],
@@ -69,7 +70,16 @@ async def main(port: int) -> None:
         create_protocol=OracleProtocol,
         retry=False,
     )
-    print(f"aioquic HTTP/3 oracle listening on 127.0.0.1:{port}", flush=True)
+    server_socket = server._transport.get_extra_info("socket")
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+    actual_receive_buffer = server_socket.getsockopt(
+        socket.SOL_SOCKET, socket.SO_RCVBUF
+    )
+    print(
+        f"aioquic HTTP/3 oracle listening on 127.0.0.1:{port} "
+        f"receive_buffer={actual_receive_buffer}",
+        flush=True,
+    )
     try:
         await asyncio.Future()
     finally:
@@ -79,5 +89,6 @@ async def main(port: int) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=4433)
+    parser.add_argument("--receive-buffer", type=int, default=4 * 1024 * 1024)
     arguments = parser.parse_args()
-    asyncio.run(main(arguments.port))
+    asyncio.run(main(arguments.port, arguments.receive_buffer))
