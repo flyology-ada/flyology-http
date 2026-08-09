@@ -6,14 +6,17 @@ FIXTURES="$ROOT/tests/fixtures/tls"
 CERTIFICATE="$FIXTURES/server-cert.pem"
 PRIVATE_KEY="$FIXTURES/server-key.pem"
 
-if [ -s "$CERTIFICATE" ] && [ -s "$PRIVATE_KEY" ]; then
-  exit 0
-fi
-
 command -v openssl >/dev/null 2>&1 || {
   echo "openssl is required to prepare the TLS test fixture" >&2
   exit 1
 }
+
+if [ -s "$CERTIFICATE" ] \
+  && [ -s "$PRIVATE_KEY" ] \
+  && openssl x509 -checkend 3600 -noout -in "$CERTIFICATE" >/dev/null 2>&1
+then
+  exit 0
+fi
 
 umask 077
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
