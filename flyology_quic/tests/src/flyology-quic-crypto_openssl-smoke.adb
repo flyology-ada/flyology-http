@@ -274,7 +274,13 @@ begin
          Authenticated);
       pragma Assert (not Authenticated);
       pragma Assert (Decoded = (Decoded'Range => 0));
+      Unprotect
+        (Backend, Keys.Client_Key, Nonce, Header, Ciphertext, Decoded,
+         Authenticated);
+      pragma Assert (Authenticated and then Decoded = Plaintext);
 
+      Make_Header_Mask (Backend, Keys.Client_HP, Sample, Mask);
+      pragma Assert (Mask = Hex ("437b9aec36"));
       Make_Header_Mask (Backend, Keys.Client_HP, Sample, Mask);
       pragma Assert (Mask = Hex ("437b9aec36"));
       Protected_Header (Protected_Header'First) :=
