@@ -147,24 +147,103 @@ is
          when 97 => "deny",
          when 98 => "sameorigin");
 
+   function Matches_Name
+     (Index : Static_Index; Field_Name : String) return Boolean
+   is
+     (case Index is
+         when 0 => Field_Name = ":authority",
+         when 1 => Field_Name = ":path",
+         when 2 => Field_Name = "age",
+         when 3 => Field_Name = "content-disposition",
+         when 4 => Field_Name = "content-length",
+         when 5 => Field_Name = "cookie",
+         when 6 => Field_Name = "date",
+         when 7 => Field_Name = "etag",
+         when 8 => Field_Name = "if-modified-since",
+         when 9 => Field_Name = "if-none-match",
+         when 10 => Field_Name = "last-modified",
+         when 11 => Field_Name = "link",
+         when 12 => Field_Name = "location",
+         when 13 => Field_Name = "referer",
+         when 14 => Field_Name = "set-cookie",
+         when 15 .. 21 => Field_Name = ":method",
+         when 22 .. 23 => Field_Name = ":scheme",
+         when 24 .. 28 => Field_Name = ":status",
+         when 29 .. 30 => Field_Name = "accept",
+         when 31 => Field_Name = "accept-encoding",
+         when 32 => Field_Name = "accept-ranges",
+         when 33 .. 34 => Field_Name = "access-control-allow-headers",
+         when 35 => Field_Name = "access-control-allow-origin",
+         when 36 .. 41 => Field_Name = "cache-control",
+         when 42 .. 43 => Field_Name = "content-encoding",
+         when 44 .. 54 => Field_Name = "content-type",
+         when 55 => Field_Name = "range",
+         when 56 .. 58 => Field_Name = "strict-transport-security",
+         when 59 .. 60 => Field_Name = "vary",
+         when 61 => Field_Name = "x-content-type-options",
+         when 62 => Field_Name = "x-xss-protection",
+         when 63 .. 71 => Field_Name = ":status",
+         when 72 => Field_Name = "accept-language",
+         when 73 .. 74 => Field_Name = "access-control-allow-credentials",
+         when 75 => Field_Name = "access-control-allow-headers",
+         when 76 .. 78 => Field_Name = "access-control-allow-methods",
+         when 79 => Field_Name = "access-control-expose-headers",
+         when 80 => Field_Name = "access-control-request-headers",
+         when 81 .. 82 => Field_Name = "access-control-request-method",
+         when 83 => Field_Name = "alt-svc",
+         when 84 => Field_Name = "authorization",
+         when 85 => Field_Name = "content-security-policy",
+         when 86 => Field_Name = "early-data",
+         when 87 => Field_Name = "expect-ct",
+         when 88 => Field_Name = "forwarded",
+         when 89 => Field_Name = "if-range",
+         when 90 => Field_Name = "origin",
+         when 91 => Field_Name = "purpose",
+         when 92 => Field_Name = "server",
+         when 93 => Field_Name = "timing-allow-origin",
+         when 94 => Field_Name = "upgrade-insecure-requests",
+         when 95 => Field_Name = "user-agent",
+         when 96 => Field_Name = "x-forwarded-for",
+         when 97 .. 98 => Field_Name = "x-frame-options");
+
+   procedure Find
+     (Field_Name  : String;
+      Field_Value : String;
+      Exact       : out Lookup_Result;
+      Named       : out Lookup_Result)
+   is
+   begin
+      Exact := (others => <>);
+      Named := (others => <>);
+      for Index in Static_Index loop
+         if Matches_Name (Index, Field_Name) then
+            if not Named.Found then
+               Named := (Found => True, Index => Index);
+            end if;
+            if Value (Index) = Field_Value then
+               Exact := (Found => True, Index => Index);
+               return;
+            end if;
+         end if;
+      end loop;
+   end Find;
+
    function Find_Exact
      (Field_Name  : String;
       Field_Value : String) return Lookup_Result
    is
+      Exact : Lookup_Result;
+      Named : Lookup_Result;
    begin
-      for Index in Static_Index loop
-         if Name (Index) = Field_Name and then Value (Index) = Field_Value then
-            return (Found => True, Index => Index);
-         end if;
-      end loop;
-      return (others => <>);
+      Find (Field_Name, Field_Value, Exact, Named);
+      return Exact;
    end Find_Exact;
 
    function Find_Name (Field_Name : String) return Lookup_Result
    is
    begin
       for Index in Static_Index loop
-         if Name (Index) = Field_Name then
+         if Matches_Name (Index, Field_Name) then
             return (Found => True, Index => Index);
          end if;
       end loop;
