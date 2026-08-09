@@ -43,20 +43,7 @@ if [ "$loop_pool_size" -gt 128 ]; then
 fi
 
 prepare_stress_rts () {
-  if [ -n "${FLYOLOGY_ROOT:-}" ]; then
-    flyology_root=$FLYOLOGY_ROOT
-  elif [ -x "$http_root/../scripts/prepare-rts.sh" ]; then
-    flyology_root=$(CDPATH= cd -- "$http_root/.." && pwd)
-  elif flyology_root=$("$alr" exec -- sh -c \
-    'printf "%s\n" "$FLYOLOGY_ROOT"') \
-    && [ -n "$flyology_root" ] \
-    && [ -d "$flyology_root" ]
-  then
-    :
-  else
-    printf '%s\n' "Flyology's source is unavailable; run: alr build" >&2
-    exit 2
-  fi
+  flyology_root=$("$http_root/scripts/resolve-flyology-root.sh")
 
   "$alr" exec -- env \
     FLYOLOGY_RTS_DIR="$stress_rts" \
@@ -129,7 +116,8 @@ await_ready () {
 
 server_log="$http_root/build/oracle/ada-h3-stress.log"
 "$http_root/tests/bin/http3_h3spec_server" \
-  "$port" "$peak_concurrency" "$loop_pool_size" >"$server_log" 2>&1 &
+  "$port" "$peak_concurrency" "$loop_pool_size" 2.0 \
+  >"$server_log" 2>&1 &
 server_pid=$!
 await_ready "$server_pid" "$server_log" 'Ada HTTP/3 h3spec server listening'
 "$oracle_python" "$http_root/tests/oracle/aioquic_h3_stress.py" \

@@ -23,6 +23,9 @@ procedure HTTP3_H3Spec_Server is
      (if Ada.Command_Line.Argument_Count < 3 then 1
       else Flyology.Execution_Groups.Loop_Pool_Size'Value
         (Ada.Command_Line.Argument (3)));
+   Max_Connection_Age : constant Duration :=
+     (if Ada.Command_Line.Argument_Count < 4 then 15.0
+      else Duration'Value (Ada.Command_Line.Argument (4)));
 
    type Context is limited null record;
    package Routing is new Flyology.HTTP.Server.Routing (Context);
@@ -60,7 +63,7 @@ begin
       Capacity => Capacity,
       Timeout => 5.0,
       Handshake_Timeout => 5.0,
-      Max_Connection_Age => 15.0,
+      Max_Connection_Age => Max_Connection_Age,
       Max_Requests => 5,
       Token => Stop'Access);
 end HTTP3_H3Spec_Server;
