@@ -6,12 +6,12 @@ with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Flyology.Cancellation;
 with Flyology.HTTP.Server.Applications;
+with Flyology.HTTP.Server.Development_Certificates;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Sockets;
 with Flyology.IO.TLS.ALPN;
 with Flyology.IO.TLS.OpenSSL;
 with Flyology.QUIC.Connections;
-with HTTP3_Development_Identity;
 
 procedure HTTP3_Application_Server is
    package App renames Flyology.HTTP.Server.Applications;
@@ -20,6 +20,8 @@ procedure HTTP3_Application_Server is
    package OpenSSL renames Flyology.IO.TLS.OpenSSL;
    package QUIC renames Flyology.QUIC.Connections;
    package Sockets renames Flyology.IO.Sockets;
+   package Development_Certificates renames
+     Flyology.HTTP.Server.Development_Certificates;
    use type Ada.Streams.Stream_Element_Offset;
    use type Files.Count;
 
@@ -71,7 +73,7 @@ procedure HTTP3_Application_Server is
    State : aliased Context;
    Backend : aliased OpenSSL.OpenSSL_Provider;
    Stop : aliased Flyology.Cancellation.Token;
-   Generated : aliased HTTP3_Development_Identity.Identity;
+   Generated : aliased Development_Certificates.Identity;
 
    procedure Serve
      (Certificate_PEM : String;
@@ -79,7 +81,7 @@ procedure HTTP3_Application_Server is
       Certificate_DER : Ada.Streams.Stream_Element_Array;
       Private_Key     : QUIC.Ed25519_Private_Key;
       Port            : Sockets.Port;
-      Temporary_Identity : access HTTP3_Development_Identity.Identity := null)
+      Temporary_Identity : access Development_Certificates.Identity := null)
    is
       Port_Text : constant String :=
         Ada.Strings.Fixed.Trim (Sockets.Port'Image (Port), Ada.Strings.Both);
@@ -90,7 +92,7 @@ procedure HTTP3_Application_Server is
          Private_Key_File => Private_Key_PEM,
          Protocols => ALPN."&" (ALPN.Offer ("h2"), "http/1.1"));
       if Temporary_Identity /= null then
-         HTTP3_Development_Identity.Discard (Temporary_Identity.all);
+         Development_Certificates.Discard (Temporary_Identity.all);
       end if;
       Ada.Text_IO.Put_Line
         ("HTTP/1.1, HTTP/2, and HTTP/3 route ready on port " & Port_Text);
@@ -121,15 +123,15 @@ begin
 
    Routes.Get ("/hello/{name}", Hello'Access, Name => "hello");
    if Ada.Command_Line.Argument_Count <= 1 then
-      HTTP3_Development_Identity.Generate (Generated);
+      Development_Certificates.Generate (Generated);
       Ada.Text_IO.Put_Line
         ("Generated temporary self-signed localhost identities " &
          "for TLS and QUIC");
       Serve
-        (HTTP3_Development_Identity.Certificate_PEM (Generated),
-         HTTP3_Development_Identity.Private_Key_PEM (Generated),
-         HTTP3_Development_Identity.Certificate_DER (Generated),
-         HTTP3_Development_Identity.Private_Key (Generated),
+        (Development_Certificates.TLS_Certificate_File (Generated),
+         Development_Certificates.TLS_Private_Key_File (Generated),
+         Development_Certificates.QUIC_Certificate_DER (Generated),
+         Development_Certificates.QUIC_Private_Key (Generated),
          (if Ada.Command_Line.Argument_Count = 1
           then Sockets.Port'Value (Ada.Command_Line.Argument (1))
           else 4_433),

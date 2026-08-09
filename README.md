@@ -130,28 +130,61 @@ HTTP/1.1 and HTTP/2 responses. The advertised port follows the bound endpoint,
 and `Alt_Svc_Max_Age` configures the lifetime. HTTP/3 responses omit this
 discovery header. The TLS provider must be initialized for server-side ALPN as
 shown above. `Certificate_DER` is an Ed25519 certificate and `Private_Key` is
-its 32-byte raw private key for QUIC; deployments should supply the same server
-identity in the PEM representation used by TLS/TCP.
+its 32-byte raw private key for QUIC. TLS/TCP may use a distinct certificate,
+but clients must be able to validate both identities for the requested host.
 
-The maintained `showcases/http3_application_server.adb` generates temporary
-self-signed localhost identities when run with no identity arguments:
+For local development, the public
+`Flyology.HTTP.Server.Development_Certificates` package generates both forms:
+
+```ada
+package Certificates renames
+  Flyology.HTTP.Server.Development_Certificates;
+
+Credentials : Certificates.Identity;
+
+Certificates.Generate (Credentials);
+declare
+   Certificate_DER : constant Ada.Streams.Stream_Element_Array :=
+     Certificates.QUIC_Certificate_DER (Credentials);
+   Private_Key : constant Flyology.QUIC.Connections.Ed25519_Private_Key :=
+     Certificates.QUIC_Private_Key (Credentials);
+begin
+   OpenSSL.Initialize_Server
+     (Backend,
+      Certificates.TLS_Certificate_File (Credentials),
+      Certificates.TLS_Private_Key_File (Credentials),
+      Protocols => ALPN."&" (ALPN.Offer ("h2"), "http/1.1"));
+   Certificates.Discard (Credentials);
+
+   Routes.Serve
+     (State, Sockets.Network_Endpoint (Sockets.Any_IPv4, 4_433), Backend,
+      Certificate_DER => Certificate_DER,
+      Private_Key     => Private_Key,
+      Token           => Stop'Access);
+end;
+```
+
+The package uses RSA for compatibility with common TLS/TCP clients and the
+Ed25519 DER certificate and raw key required by the current QUIC profile. It
+removes any remaining files when the limited identity object finalizes;
+`Discard` removes them earlier after the TLS provider and QUIC values have
+loaded them. Because the certificates are self-signed, development clients
+must explicitly disable certificate verification or trust them.
+
+The maintained `showcases/http3_application_server.adb` uses this API when run
+with no identity arguments:
 
 ```sh
 ./showcases/bin/http3_application_server 4433
 ```
 
-It uses RSA for compatibility with common TLS/TCP clients and the Ed25519 DER
-certificate and raw key required by the current QUIC profile, then removes the
-temporary files as soon as the TLS provider loads them. Because the certificates
-are self-signed, development clients must explicitly disable certificate
-verification or trust them. Passing
-`TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw`
-retains the explicit stable-identity form. Lower-level
+Passing `TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw` retains the
+explicit stable-identity form. Lower-level
 `Serve_HTTP_3_Listener` and single-connection `Serve_HTTP_3` adapters remain
 available when an application owns the UDP listener itself.
 
 Automatic generation requires an OpenSSL command with Ed25519 support. The
-showcase recognizes conventional OpenSSL 3 installation paths and the
+package recognizes conventional OpenSSL 3 installation paths and the
 `FLYOLOGY_HTTP_OPENSSL` environment variable before falling back to `PATH`.
 The certificates are self-signed, so use an HTTP/3-enabled curl and explicitly
 accept them when testing the H3 listener:

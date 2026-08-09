@@ -44,6 +44,7 @@ project Flyology_HTTP is
             "flyology-http-methods.ads",
             "flyology-http-server.ads",
             "flyology-http-server-applications.ads",
+            "flyology-http-server-development_certificates.ads",
             "flyology-http-server-exchange_backends.ads",
             "flyology-http-server-connection_handlers.ads",
             "flyology-http-server-connections.ads",
