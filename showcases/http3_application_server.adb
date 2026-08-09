@@ -81,6 +81,8 @@ procedure HTTP3_Application_Server is
       Port            : Sockets.Port;
       Temporary_Identity : access HTTP3_Development_Identity.Identity := null)
    is
+      Port_Text : constant String :=
+        Ada.Strings.Fixed.Trim (Sockets.Port'Image (Port), Ada.Strings.Both);
    begin
       OpenSSL.Initialize_Server
         (Backend,
@@ -91,8 +93,13 @@ procedure HTTP3_Application_Server is
          HTTP3_Development_Identity.Discard (Temporary_Identity.all);
       end if;
       Ada.Text_IO.Put_Line
-        ("HTTP/1.1, HTTP/2, and HTTP/3 route ready on port " &
-         Ada.Strings.Fixed.Trim (Sockets.Port'Image (Port), Ada.Strings.Both));
+        ("HTTP/1.1, HTTP/2, and HTTP/3 route ready on port " & Port_Text);
+      Ada.Text_IO.Put_Line
+        ("TLS test: curl -k https://127.0.0.1:" & Port_Text &
+         "/hello/test");
+      Ada.Text_IO.Put_Line
+        ("H3 test: curl -k --http3-only https://127.0.0.1:" & Port_Text &
+         "/hello/test");
 
       Routes.Serve
         (State,
@@ -116,7 +123,8 @@ begin
    if Ada.Command_Line.Argument_Count <= 1 then
       HTTP3_Development_Identity.Generate (Generated);
       Ada.Text_IO.Put_Line
-        ("Generated a temporary self-signed Ed25519 identity for localhost");
+        ("Generated temporary self-signed localhost identities " &
+         "for TLS and QUIC");
       Serve
         (HTTP3_Development_Identity.Certificate_PEM (Generated),
          HTTP3_Development_Identity.Private_Key_PEM (Generated),

@@ -8,9 +8,9 @@ package HTTP3_Development_Identity is
 
    type Identity is limited private;
 
-   --  Generate one Ed25519 localhost identity with the OpenSSL command-line
-   --  tool. The PEM files support TLS/TCP; the same certificate and key are
-   --  exposed in the DER and raw forms used by the current QUIC profile.
+   --  Generate self-signed localhost identities with the OpenSSL command-line
+   --  tool. TLS/TCP uses a broadly compatible RSA identity; QUIC uses the
+   --  Ed25519 certificate and raw key required by the current profile.
    procedure Generate (Item : in out Identity);
 
    --  Remove generated files after the TLS provider has loaded its PEM input.

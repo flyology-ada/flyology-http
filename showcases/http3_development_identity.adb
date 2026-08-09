@@ -100,6 +100,33 @@ package body HTTP3_Development_Identity is
          raise;
    end Write_Configuration;
 
+   function Locate_OpenSSL return OS.String_Access is
+   begin
+      if Ada.Environment_Variables.Exists ("FLYOLOGY_HTTP_OPENSSL") then
+         return new String'
+           (Ada.Environment_Variables.Value ("FLYOLOGY_HTTP_OPENSSL"));
+      end if;
+
+      --  The system /usr/bin/openssl on older macOS releases is LibreSSL and
+      --  cannot generate the Ed25519 key required by the QUIC profile. Prefer
+      --  conventional OpenSSL 3 installation paths before searching PATH.
+      if Ada.Directories.Exists
+        ("/opt/homebrew/opt/openssl@3/bin/openssl")
+      then
+         return new String'("/opt/homebrew/opt/openssl@3/bin/openssl");
+      elsif Ada.Directories.Exists
+        ("/usr/local/opt/openssl@3/bin/openssl")
+      then
+         return new String'("/usr/local/opt/openssl@3/bin/openssl");
+      elsif Ada.Directories.Exists
+        ("/opt/local/libexec/openssl3/bin/openssl")
+      then
+         return new String'("/opt/local/libexec/openssl3/bin/openssl");
+      else
+         return OS.Locate_Exec_On_Path ("openssl");
+      end if;
+   end Locate_OpenSSL;
+
    overriding procedure Finalize (Item : in out Identity) is
       Directory : constant String := Unbounded.To_String (Item.Directory);
    begin
@@ -132,11 +159,13 @@ package body HTTP3_Development_Identity is
       Directory : constant String :=
         Temporary_Root & Separator & "flyology-http3-" & Unique'Image;
       Configuration : constant String := Directory & "/openssl.cnf";
-      Certificate : constant String := Directory & "/server-cert.pem";
-      Private_Key : constant String := Directory & "/server-key.pem";
-      Certificate_DER : constant String := Directory & "/server-cert.der";
-      Private_Key_DER : constant String := Directory & "/server-key.der";
-      OpenSSL : OS.String_Access := OS.Locate_Exec_On_Path ("openssl");
+      Certificate : constant String := Directory & "/tls-cert.pem";
+      Private_Key : constant String := Directory & "/tls-key.pem";
+      QUIC_Certificate : constant String := Directory & "/quic-cert.pem";
+      QUIC_Private_Key : constant String := Directory & "/quic-key.pem";
+      Certificate_DER : constant String := Directory & "/quic-cert.der";
+      Private_Key_DER : constant String := Directory & "/quic-key.der";
+      OpenSSL : OS.String_Access := Locate_OpenSSL;
    begin
       if OpenSSL = null then
          raise Program_Error with
@@ -154,9 +183,10 @@ package body HTTP3_Development_Identity is
       Write_Configuration (Configuration);
 
       declare
-         Arguments : OS.Argument_List (1 .. 5) :=
+         Arguments : OS.Argument_List (1 .. 7) :=
            (new String'("genpkey"), new String'("-algorithm"),
-            new String'("ED25519"), new String'("-out"),
+            new String'("RSA"), new String'("-pkeyopt"),
+            new String'("rsa_keygen_bits:2048"), new String'("-out"),
             new String'(Private_Key));
       begin
          Run (OpenSSL.all, Arguments);
@@ -172,9 +202,27 @@ package body HTTP3_Development_Identity is
          Run (OpenSSL.all, Arguments);
       end;
       declare
+         Arguments : OS.Argument_List (1 .. 5) :=
+           (new String'("genpkey"), new String'("-algorithm"),
+            new String'("ED25519"), new String'("-out"),
+            new String'(QUIC_Private_Key));
+      begin
+         Run (OpenSSL.all, Arguments);
+      end;
+      declare
+         Arguments : OS.Argument_List (1 .. 11) :=
+           (new String'("req"), new String'("-new"), new String'("-x509"),
+            new String'("-key"), new String'(QUIC_Private_Key),
+            new String'("-out"), new String'(QUIC_Certificate),
+            new String'("-days"), new String'("1"),
+            new String'("-config"), new String'(Configuration));
+      begin
+         Run (OpenSSL.all, Arguments);
+      end;
+      declare
          Arguments : OS.Argument_List (1 .. 7) :=
            (new String'("x509"), new String'("-in"),
-            new String'(Certificate), new String'("-outform"),
+            new String'(QUIC_Certificate), new String'("-outform"),
             new String'("DER"), new String'("-out"),
             new String'(Certificate_DER));
       begin
@@ -183,7 +231,7 @@ package body HTTP3_Development_Identity is
       declare
          Arguments : OS.Argument_List (1 .. 7) :=
            (new String'("pkey"), new String'("-in"),
-            new String'(Private_Key), new String'("-outform"),
+            new String'(QUIC_Private_Key), new String'("-outform"),
             new String'("DER"), new String'("-out"),
             new String'(Private_Key_DER));
       begin

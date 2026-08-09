@@ -133,20 +133,37 @@ shown above. `Certificate_DER` is an Ed25519 certificate and `Private_Key` is
 its 32-byte raw private key for QUIC; deployments should supply the same server
 identity in the PEM representation used by TLS/TCP.
 
-The maintained `showcases/http3_application_server.adb` generates a temporary
-self-signed Ed25519 localhost identity when run with no identity arguments:
+The maintained `showcases/http3_application_server.adb` generates temporary
+self-signed localhost identities when run with no identity arguments:
 
 ```sh
 ./showcases/bin/http3_application_server 4433
 ```
 
-It uses the generated identity's PEM representation for TLS/TCP and its DER
-certificate and raw key for QUIC, then removes the temporary files as soon as
-the TLS provider loads them. Passing
+It uses RSA for compatibility with common TLS/TCP clients and the Ed25519 DER
+certificate and raw key required by the current QUIC profile, then removes the
+temporary files as soon as the TLS provider loads them. Because the certificates
+are self-signed, development clients must explicitly disable certificate
+verification or trust them. Passing
 `TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw`
 retains the explicit stable-identity form. Lower-level
 `Serve_HTTP_3_Listener` and single-connection `Serve_HTTP_3` adapters remain
 available when an application owns the UDP listener itself.
+
+Automatic generation requires an OpenSSL command with Ed25519 support. The
+showcase recognizes conventional OpenSSL 3 installation paths and the
+`FLYOLOGY_HTTP_OPENSSL` environment variable before falling back to `PATH`.
+The certificates are self-signed, so use an HTTP/3-enabled curl and explicitly
+accept them when testing the H3 listener:
+
+```sh
+curl --version  # The Features line must include HTTP3.
+curl -k --http3-only https://127.0.0.1:4433/hello/test
+```
+
+macOS's system curl currently lacks HTTP/3 support. A normal H2-capable curl
+will negotiate HTTP/2 instead. Use the IPv4 address because this showcase
+listener binds `Any_IPv4`.
 
 ## HTTP/3 client
 
