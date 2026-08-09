@@ -89,7 +89,7 @@ connection-retirement/lifecycle pressure signal, not a steady-state result.
 ## Baselines and final measurements
 
 The baseline table uses medians of three controlled trials where available.
-The final row is the last clean 16-loop post-change run after qualification.
+The final H3 row is the last clean 16-loop post-change run after qualification.
 Latency values are milliseconds. All requests succeeded.
 
 | Configuration | Requests/s | p50 | p95 | p99 | Concurrency and reuse |
@@ -98,6 +98,7 @@ Latency values are milliseconds. All requests succeeded.
 | H2, 1 loop, baseline | 19,783 | 3.17 | 4.09 | 4.54 | 4 connections x 16 streams |
 | H2, 1 loop, reusable handlers median | **29,002** | 1.929 | 3.198 | 6.005 | same; +49.2% against fresh 19,444 median |
 | H2, 1 loop, direct HPACK match median | **39,187** | 1.637 | 1.710 | 1.891 | same; +35.1% over reusable handlers |
+| H2, 1 loop, retained wake sources median | **44,804** | 1.4 | 1.5 | 1.6 | same; +14.3% over direct HPACK match |
 | H3, 1 Python worker, baseline | 13,768 | 10.320 | 18.111 | 19.454 | 16 connections x 16 streams |
 | H3, 1 server loop saturated, baseline | 25,725 | 36.64 | — | — | 4 workers, 64 connections x 16 streams |
 | H3, 1 server loop, ACK candidate | 26,827 | 35.25 | — | — | same; +4.3% rate, -3.8% p50 |
@@ -107,6 +108,7 @@ Latency values are milliseconds. All requests succeeded.
 | H2, 16 loops, baseline median | 32,035 | 1.946 | 2.552 | 2.795 | 4 connections x 16 streams |
 | H2, 16 loops, reusable handlers median | **89,856** | 0.533 | 0.987 | 5.762 | same; +180.5% |
 | H2, 16 loops, direct HPACK match median | 90,237 | 0.540 | 0.855 | 3.927 | same; +0.4%, neutral |
+| H2, 16 loops, retained wake sources median | **147,435** | 0.3 | 0.6 | 3.0 | same; +63.4% over direct HPACK match |
 | H3, 16 loops, baseline | 54,123 | — | — | — | 8 workers, 128 connections x 16 streams |
 | H3, 16 loops, pre-QPACK best | **58,935** | 24.896 | 51.082 | 78.762 | 8 workers, 128 connections x 16 streams; reuse 6,250x |
 | H3, 16 loops, QPACK median | 57,222 | 26.617 | 46.145 | 65.833 | same; neutral within run noise |
@@ -174,6 +176,29 @@ sampled throughput increased by about 26%. At 16 loops, three trials were
 90.629k, 89.036k, and 90.237k (90.237k median, +0.4%); the change is neutral
 once other work limits throughput.
 
+The next profile showed that stream teardown still called `close` 181 times
+and `pipe` 136 times in the sample, beside `fcntl` 301. Each completed request
+released the wake source owned by its bounded stream slot, so the next stream
+occupying that slot recreated and configured a pipe pair. The controller now
+drains any pending notification but retains the descriptor generation until
+the connection's controlled finalization. Ownership remains bounded to at
+most 32 lazy wake sources per H2 connection.
+
+With the identical one-loop command, three retained-source trials were
+44.804k, 44.862k, and 43.991k requests/s (44.804k median, +14.3% over
+39.187k). The median p50 was 1.4 ms, p95 1.5 ms, and p99 1.6 ms. In the
+candidate sample, `pipe`, `close`, and `fcntl` disappeared from the leading
+list while sampled throughput rose; the remaining named leaders included
+socket `write` 678, scheduler current-task 421, task-local lookup 301, socket
+`read` 275, `memcmp` 263, and HPACK static lookup 110.
+
+A clean 16-loop build, positively probed as 16, measured 147.643k, 143.649k,
+and 147.435k requests/s (147.435k median, +63.4%). A longer 30-second run
+sustained 149.576k requests/s and validated 4,489,030 responses before the
+time deadline. These short-body localhost results are machine-local and show
+that descriptor lifecycle had also limited scaling; they are not a portable
+server rating.
+
 The post-change 16-loop connection sweep held streams per connection at 16
 and sent 100,000 validated requests per point:
 
@@ -187,6 +212,24 @@ and sent 100,000 validated requests per point:
 
 Throughput saturates around 128 in flight. Doubling concurrency beyond that
 reduces rate and sharply worsens tail latency.
+
+A second post-change sweep held total maximum concurrency at 64 while trading
+connections against streams per connection. This separates useful parallel
+connection ownership from merely adding more in-flight work:
+
+| Connections x streams | Maximum in flight | Requests/s |
+| ---: | ---: | ---: |
+| 2 x 32 | 64 | 93,273 |
+| 4 x 16 | 64 | **146,961** |
+| 8 x 8 | 64 | 127,019 |
+| 16 x 4 | 64 | 71,391 |
+| 32 x 2 | 64 | 38,779 |
+| 64 x 1 | 64 | 22,923 |
+
+Four reused connections were the local optimum. Two connections expose
+per-connection controller serialization; eight or more add TLS/socket and
+scheduling work faster than they add useful parallelism. Consequently, the
+147k result is not evidence that connection count itself should be maximized.
 
 ### H3 client concurrency
 
@@ -252,7 +295,17 @@ builds were excluded from all reported rates.
    The independent 500-case HPACK and 1,000-case Huffman differential suites,
    full repository tests, and complete H2 qualification passed.
 
-3. **Packet output and descriptor/source-address work dominate the H3
+3. **HTTP/2 stream-slot reuse recreated wake descriptors per request.** Each
+   released slot destroyed its lazy wake source, so reuse paid for pipe
+   creation, descriptor configuration, and close even though the controller
+   and its 32 slots remained alive. Completed slots now drain pending wakeups
+   and retain their source until connection finalization. One-loop median
+   throughput improved from 39.187k to 44.804k requests/s (+14.3%), and the
+   16-loop median improved from 90.237k to 147.435k (+63.4%). `pipe`, `close`,
+   and `fcntl` disappeared from the leading post-change sample. Full repository
+   tests and the complete H2 qualification passed again.
+
+4. **Packet output and descriptor/source-address work dominate the H3
    server.** In the active 16-loop server sample the leading stacks included
    `sendmsg` (56,142 samples), `kevent` (7,759), `memmove` (4,822), `fcntl`
    (3,052), `memset` (1,684), `setsockopt` (1,364), scheduler current-fiber
@@ -263,7 +316,7 @@ builds were excluded from all reported rates.
    call. Caching verified local endpoint data and packet batching are plausible
    upstream work. This crate was not changed to work around Flyology core.
 
-4. **QPACK response encoding repeatedly constructed static-table names.** At
+5. **QPACK response encoding repeatedly constructed static-table names.** At
    one-loop server saturation, the encoder's exact lookup called the static
    table `Name` function for up to 99 entries per response header. Returning
    unconstrained strings drove secondary-stack allocation and lightweight-task
@@ -278,7 +331,7 @@ builds were excluded from all reported rates.
    and 55.65k, neutral relative to the previous 58.94k best once client and
    packet I/O dominate.
 
-5. **ACK processing copied large retransmission tables per packet.** The
+6. **ACK processing copied large retransmission tables per packet.** The
    application-space packet transaction copied a roughly 72 KiB
    retransmittable table plus packet-frame table before applying ACK events.
    The accepted change stages only the bounded packet-event resolution log,
@@ -287,7 +340,7 @@ builds were excluded from all reported rates.
    25,725 to 26,827 requests/s (+4.3%); 16-loop results were neutral within
    noise, so no multi-loop gain is attributed to this change.
 
-6. **The Ada H3 client allocated a large event object twice per request.** A
+7. **The Ada H3 client allocated a large event object twice per request.** A
    pooled connection now retains one event object and frees it with the
    transport. In a 640,000-request, 64-connection optimized Ada-client run,
    rate improved from 31,543 to 35,284 requests/s (+11.9%) and mean latency
@@ -298,7 +351,7 @@ builds were excluded from all reported rates.
    totals differed, so counts support the allocation mechanism rather than an
    exact percentage claim.
 
-7. **Eager per-connection request header slots inflated server memory.** Eight
+8. **Eager per-connection request header slots inflated server memory.** Eight
    bounded slots embedded full header blocks even when unused. Header blocks
    are now allocated on first slot use, retained for the connection, and freed
    during cleanup. At 64 H3 connections peak physical memory fell from 309.9
@@ -306,7 +359,7 @@ builds were excluded from all reported rates.
    MB (about 22%). Throughput remained in the 50k+ band. This is a capacity
    improvement, not a claimed request-rate win.
 
-8. **Single-process aioquic is an oracle bottleneck.** One worker stayed near
+9. **Single-process aioquic is an oracle bottleneck.** One worker stayed near
    13k even against 16 loops. Four workers sustained about 50k; eight reached
    54-59k. The benchmark now records workers explicitly so “single client” is
    not confused with “single Flyology loop.”
@@ -365,6 +418,13 @@ lifecycle pressure.
   itself to eight fields and 1,024 input bytes. It measured 27.250k and
   27.947k requests/s versus a fresh 28.484k baseline median. The lookup and
   retained state cost more than encoding the small response; reverted.
+- Replacing the HTTP/3 datagram channel's fixed-record copies with a bounded
+  preallocated handle pool targeted the leading one-loop `memmove` stack. A
+  clean explicit-custom-RTS baseline measured 30.801k requests/s and the
+  candidate measured 30.837k (+0.12%) with `--requests 400000 --workers 4
+  --connections 64 --streams 16 --timeout 20`. P50/p95/p99 latency was
+  effectively unchanged. The extra ownership machinery had no material
+  benefit, so it was reverted.
 
 ## Correctness qualification
 
@@ -386,7 +446,7 @@ FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE=16 \
 - Full repository behavioral suite: pass, including all 42 QUIC checks.
 - H2: Go, Node, and nghttpd peers passed in native and lightweight models;
   fault campaign and bounded soak passed; h2spec 146/146 passed. The full H2
-  qualification was repeated after both accepted H2 changes. The HPACK and
+  qualification was repeated after all three accepted H2 changes. The HPACK and
   Huffman differential suites passed 500 and 1,000 cases respectively.
 - H3: aioquic and quic-go passed in both Ada client and Ada server roles.
 - h3spec 0.1.13: a first run passed all HTTP/3 and QPACK cases but was 48/49
@@ -411,9 +471,12 @@ FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE=16 \
   throughput decay with a lifecycle-focused diagnostic build.
 - Reduce multi-process client scheduling and packet receive overhead before
   treating 59k as a server ceiling.
-- The post-HPACK H2 profile is led by TLS/socket calls, scheduler/task-local
-  lookup, byte comparison, and remaining bounded header construction. The
-  16-loop sweep saturates around 128 in flight, where client/TLS/socket work
-  limits another codec-only gain.
+- The post-wake-source H2 profile is led by TLS/socket calls,
+  scheduler/task-local lookup, byte comparison, and remaining bounded header
+  construction. One loop reached a 44.8k median and 16 loops a 147.4k median
+  with four connections x 16 streams. At the same total concurrency, both
+  fewer and additional connections regress, locating the next scaling work in
+  per-connection serialization versus TLS/socket/scheduler overhead rather
+  than another indiscriminate concurrency increase.
 - Repeat on a quiescent, thermally controlled machine and on Linux before
   making cross-platform claims.
