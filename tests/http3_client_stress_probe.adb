@@ -4,6 +4,7 @@ with Ada.Real_Time;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology.Bytes;
+with Flyology.Execution_Groups;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
 with Flyology.QUIC.Test_Connections;
@@ -25,6 +26,10 @@ procedure HTTP3_Client_Stress_Probe is
    Port : constant Positive :=
      (if Ada.Command_Line.Argument_Count < 3 then 4_433
       else Positive'Value (Ada.Command_Line.Argument (3)));
+   Expected_Loops : constant Flyology.Execution_Groups.Loop_Pool_Size :=
+     (if Ada.Command_Line.Argument_Count < 4 then 1
+      else Flyology.Execution_Groups.Loop_Pool_Size'Value
+        (Ada.Command_Line.Argument (4)));
 
    function Decimal (Value : Positive) return String is
       Image : constant String := Positive'Image (Value);
@@ -32,9 +37,11 @@ procedure HTTP3_Client_Stress_Probe is
       return Image (Image'First + 1 .. Image'Last);
    end Decimal;
 
-   HTTP : aliased Client.Client (Capacity => 32);
+   HTTP : aliased Client.Client (Capacity => Worker_Count);
 
    protected Results is
+      procedure Start;
+      entry Await_Start;
       procedure Succeed (Elapsed : Duration);
       procedure Fail (Message : String);
       procedure Finish;
@@ -45,6 +52,7 @@ procedure HTTP3_Client_Stress_Probe is
       function Maximum return Duration;
       function First_Error return String;
    private
+      Released : Boolean := False;
       Completed : Natural := 0;
       Passed : Natural := 0;
       Failed : Natural := 0;
@@ -54,6 +62,16 @@ procedure HTTP3_Client_Stress_Probe is
    end Results;
 
    protected body Results is
+      procedure Start is
+      begin
+         Released := True;
+      end Start;
+
+      entry Await_Start when Released is
+      begin
+         null;
+      end Await_Start;
+
       procedure Succeed (Elapsed : Duration) is
       begin
          Passed := Passed + 1;
@@ -91,6 +109,7 @@ procedure HTTP3_Client_Stress_Probe is
 
    task body Worker is
    begin
+      Results.Await_Start;
       for Iteration in 1 .. Requests_Per_Worker loop
          declare
             Value : Client.Request;
@@ -129,8 +148,12 @@ procedure HTTP3_Client_Stress_Probe is
 
    Started : Ada.Real_Time.Time;
 begin
-   if Worker_Count > 32 then
-      raise Constraint_Error with "worker count exceeds client capacity";
+   if Flyology.Execution_Groups.Configured_Pool_Size /= Expected_Loops then
+      raise Program_Error with
+        "HTTP/3 stress client linked an unexpected loop-pool size";
+   end if;
+   if Worker_Count > 256 then
+      raise Constraint_Error with "worker count exceeds stress ceiling";
    end if;
    Client.Configure
      (HTTP,
@@ -144,6 +167,7 @@ begin
       Group : Worker_Array (1 .. Worker_Count);
       pragma Unreferenced (Group);
    begin
+      Results.Start;
       Results.Wait;
    end;
    declare

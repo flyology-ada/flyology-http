@@ -5,8 +5,83 @@ http_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 alr=$("$http_root/scripts/find-alr.sh")
 port=${FLYOLOGY_HTTP3_STRESS_PORT:-4438}
 oracle_port=${FLYOLOGY_HTTP3_CLIENT_STRESS_PORT:-4439}
+peak_concurrency=${FLYOLOGY_HTTP3_STRESS_PEAK_CONCURRENCY:-256}
+client_workers=${FLYOLOGY_HTTP3_CLIENT_STRESS_WORKERS:-256}
+client_requests=${FLYOLOGY_HTTP3_CLIENT_STRESS_REQUESTS:-4}
+loop_pool_size=${FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE:-16}
+stress_rts="$http_root/build/http3-stress-rts"
 oracle_venv="$http_root/build/oracle/aioquic"
 oracle_python=${FLYOLOGY_HTTP3_ORACLE_PYTHON:-$oracle_venv/bin/python}
+flyology_root=
+
+require_positive () {
+  name=$1
+  value=$2
+  case "$value" in
+    ''|*[!0-9]*)
+      printf '%s\n' "$name must be a positive integer" >&2
+      exit 2
+      ;;
+  esac
+  if [ "$value" -lt 1 ]; then
+    printf '%s\n' "$name must be a positive integer" >&2
+    exit 2
+  fi
+}
+
+require_positive FLYOLOGY_HTTP3_STRESS_PEAK_CONCURRENCY "$peak_concurrency"
+require_positive FLYOLOGY_HTTP3_CLIENT_STRESS_WORKERS "$client_workers"
+require_positive FLYOLOGY_HTTP3_CLIENT_STRESS_REQUESTS "$client_requests"
+require_positive FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE "$loop_pool_size"
+if [ "$peak_concurrency" -gt 256 ] || [ "$client_workers" -gt 256 ]; then
+  printf '%s\n' 'HTTP/3 stress concurrency cannot exceed 256' >&2
+  exit 2
+fi
+if [ "$loop_pool_size" -gt 128 ]; then
+  printf '%s\n' 'HTTP/3 stress loop pool cannot exceed 128' >&2
+  exit 2
+fi
+
+prepare_stress_rts () {
+  if [ -n "${FLYOLOGY_ROOT:-}" ]; then
+    flyology_root=$FLYOLOGY_ROOT
+  elif [ -x "$http_root/../scripts/prepare-rts.sh" ]; then
+    flyology_root=$(CDPATH= cd -- "$http_root/.." && pwd)
+  elif flyology_root=$("$alr" exec -- sh -c \
+    'printf "%s\n" "$FLYOLOGY_ROOT"') \
+    && [ -n "$flyology_root" ] \
+    && [ -d "$flyology_root" ]
+  then
+    :
+  else
+    printf '%s\n' "Flyology's source is unavailable; run: alr build" >&2
+    exit 2
+  fi
+
+  "$alr" exec -- env \
+    FLYOLOGY_RTS_DIR="$stress_rts" \
+    FLYOLOGY_DEFAULT=lightweight \
+    FLYOLOGY_LOOP_POOL_SIZE="$loop_pool_size" \
+    "$flyology_root/scripts/prepare-rts.sh" >/dev/null
+
+  default_execution="$stress_rts/adainclude/s-fldeex.ads"
+  pool_configuration="$stress_rts/adainclude/s-flpoco.ads"
+  if ! grep -q 'Lightweight : constant Boolean := True;' \
+      "$default_execution"
+  then
+    printf '%s\n' \
+      'HTTP/3 stress RTS is not configured for lightweight tasks' >&2
+    exit 2
+  fi
+  if ! grep -q \
+      "Automatic_Pool_Size : constant Positive := $loop_pool_size;" \
+      "$pool_configuration"
+  then
+    printf '%s\n' \
+      'HTTP/3 stress RTS does not have the requested loop-pool size' >&2
+    exit 2
+  fi
+}
 
 mkdir -p "$http_root/build/oracle"
 if [ ! -x "$oracle_python" ]; then
@@ -17,8 +92,12 @@ if ! "$oracle_python" -c 'import aioquic' >/dev/null 2>&1; then
 fi
 
 cd "$http_root"
-"$alr" exec -- gprbuild -p -P tests/http_tests.gpr \
-  http3_h3spec_server.adb http3_client_stress_probe.adb
+prepare_stress_rts
+"$alr" exec -- env -u GPR_CONFIG gprbuild \
+  --RTS="$stress_rts" -p -P tests/http_tests.gpr \
+  http3_stress_runtime_probe.adb http3_h3spec_server.adb \
+  http3_client_stress_probe.adb
+"$http_root/tests/bin/http3_stress_runtime_probe" "$loop_pool_size"
 
 server_pid=
 cleanup () {
@@ -49,10 +128,12 @@ await_ready () {
 }
 
 server_log="$http_root/build/oracle/ada-h3-stress.log"
-"$http_root/tests/bin/http3_h3spec_server" "$port" >"$server_log" 2>&1 &
+"$http_root/tests/bin/http3_h3spec_server" \
+  "$port" "$peak_concurrency" "$loop_pool_size" >"$server_log" 2>&1 &
 server_pid=$!
 await_ready "$server_pid" "$server_log" 'Ada HTTP/3 h3spec server listening'
-"$oracle_python" "$http_root/tests/oracle/aioquic_h3_stress.py" --port "$port"
+"$oracle_python" "$http_root/tests/oracle/aioquic_h3_stress.py" \
+  --port "$port" --peak-concurrency "$peak_concurrency"
 kill "$server_pid" 2>/dev/null || :
 wait "$server_pid" 2>/dev/null || :
 server_pid=
@@ -62,6 +143,7 @@ oracle_log="$http_root/build/oracle/aioquic-h3-stress-server.log"
   --port "$oracle_port" >"$oracle_log" 2>&1 &
 server_pid=$!
 await_ready "$server_pid" "$oracle_log" 'aioquic HTTP/3 oracle listening'
-"$http_root/tests/bin/http3_client_stress_probe" 8 100 "$oracle_port"
+"$http_root/tests/bin/http3_client_stress_probe" \
+  "$client_workers" "$client_requests" "$oracle_port" "$loop_pool_size"
 
 printf '%s\n' 'HTTP/3 stress: PASS hostile input, server churn, and client concurrency'

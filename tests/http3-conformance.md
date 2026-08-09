@@ -75,12 +75,17 @@ Run the reproducible adverse-input and concurrency check:
 
 It sends 10,000 deterministic random UDP datagrams through the full 1,350-byte
 boundary, mutates 64 HTTP/3 streams over authenticated aioquic connections,
-checks a valid request after each hostile phase, and drives 1,202 valid
-requests through connection churn at up to eight concurrent connections. It
-then drives 800 concurrent requests from the Ada client against aioquic. Any
-valid request failure fails the command. The seed and counts are fixed so the
-campaign is reproducible; this is mutation/load testing, not coverage-guided
-fuzzing or a portable performance benchmark.
+checks a valid request after each hostile phase, and drives 1,459 valid
+requests through connection churn, including 256 simultaneous connections at
+the server's documented capacity ceiling. It then releases 256 synchronized
+Ada client workers against aioquic; each worker completes four requests, for
+1,024 successful exchanges. Any valid request failure fails the command. The
+seed and default counts are fixed and may be overridden through the
+`FLYOLOGY_HTTP3_*_STRESS_*` environment variables. The campaign builds an
+owned lightweight-task runtime with 16 event loops by default; its loop pool
+is independently configurable through
+`FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE`. This is reproducible mutation/load
+testing, not coverage-guided fuzzing or a portable performance benchmark.
 
 ## Evidence boundary
 

@@ -204,7 +204,9 @@ def udp_noise(port: int, cases: int, seed: int):
     )
 
 
-async def main(port: int, noise: int, malformed: int, seed: int):
+async def main(
+    port: int, noise: int, malformed: int, seed: int, peak_concurrency: int
+):
     udp_noise(port, noise, seed)
     await asyncio.sleep(0.1)
     await load_case(port, 1, 1, 1)
@@ -212,6 +214,7 @@ async def main(port: int, noise: int, malformed: int, seed: int):
     await load_case(port, 1, 1, 1)
     for connections, concurrency in ((16, 1), (32, 4), (64, 8), (128, 8)):
         await load_case(port, connections, concurrency, 5)
+    await load_case(port, peak_concurrency, peak_concurrency, 1)
     await load_case(port, 1, 1, 1)
 
 
@@ -221,5 +224,14 @@ if __name__ == "__main__":
     parser.add_argument("--noise", type=int, default=10000)
     parser.add_argument("--malformed", type=int, default=64)
     parser.add_argument("--seed", type=lambda value: int(value, 0), default=0x9114)
+    parser.add_argument("--peak-concurrency", type=int, default=256)
     args = parser.parse_args()
-    asyncio.run(main(args.port, args.noise, args.malformed, args.seed))
+    asyncio.run(
+        main(
+            args.port,
+            args.noise,
+            args.malformed,
+            args.seed,
+            args.peak_concurrency,
+        )
+    )
