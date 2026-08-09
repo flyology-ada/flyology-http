@@ -1630,6 +1630,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
         new Connection_Registry (Capacity);
 
       task type Worker is
+         pragma Task_Info (Handler_Model);
          entry Start (Index : Slot_Index);
       end Worker;
       for Worker'Storage_Size use 4 * 1_024 * 1_024;

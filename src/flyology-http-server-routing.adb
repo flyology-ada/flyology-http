@@ -1404,7 +1404,9 @@ package body Flyology.HTTP.Server.Routing is
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
       Drain_Timeout        : Duration := 30.0;
-      Token                : not null access Flyology.Cancellation.Token)
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
    is
       package Sockets renames Flyology.IO.Sockets;
       package Connection_TLS renames Flyology.IO.Connections.TLS;
@@ -1457,7 +1459,8 @@ package body Flyology.HTTP.Server.Routing is
 
       package TCP_Servers is new Flyology.IO.Structured_Servers
         (Handler_Context => TCP_Context,
-         Handle          => Handle_TCP);
+         Handle          => Handle_TCP,
+         Handler_Model   => Handler_Model);
 
       procedure Dispatch_HTTP_3
         (State : in out App_Context;
@@ -1467,7 +1470,8 @@ package body Flyology.HTTP.Server.Routing is
       end Dispatch_HTTP_3;
 
       package HTTP_3_Engine is new
-        Flyology.HTTP.Server.HTTP_3 (App_Context, Dispatch_HTTP_3);
+        Flyology.HTTP.Server.HTTP_3
+          (App_Context, Dispatch_HTTP_3, Handler_Model);
 
       protected Outcome is
          procedure Record_Failure (Message : String);
@@ -1635,7 +1639,9 @@ package body Flyology.HTTP.Server.Routing is
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
       Drain_Timeout        : Duration := 30.0;
-      Token                : not null access Flyology.Cancellation.Token)
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
    is
       IPv4_TCP_Capacity : constant Positive :=
         TCP_Capacity / 2 + TCP_Capacity rem 2;
@@ -1705,6 +1711,7 @@ package body Flyology.HTTP.Server.Routing is
                   TLS_Backend          => TLS_Backend,
                   Certificate_DER      => Certificate_DER,
                   Private_Key          => Private_Key,
+                  Handler_Model        => Handler_Model,
                   TCP_Capacity         => IPv4_TCP_Capacity,
                   HTTP_3_Capacity      => IPv4_H3_Capacity,
                   Transport_Settings   => Transport_Settings,
@@ -1735,6 +1742,7 @@ package body Flyology.HTTP.Server.Routing is
                   TLS_Backend          => TLS_Backend,
                   Certificate_DER      => Certificate_DER,
                   Private_Key          => Private_Key,
+                  Handler_Model        => Handler_Model,
                   TCP_Capacity         => IPv6_TCP_Capacity,
                   HTTP_3_Capacity      => IPv6_H3_Capacity,
                   Transport_Settings   => Transport_Settings,

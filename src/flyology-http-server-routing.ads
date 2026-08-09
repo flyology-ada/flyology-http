@@ -500,6 +500,7 @@ package Flyology.HTTP.Server.Routing is
    --  @param Alt_Svc_Max_Age Alt-Svc lifetime in seconds
    --  @param Drain_Timeout TCP handler drain after shutdown
    --  @param Token Required unified server shutdown source
+   --  @param Handler_Model Fixed lightweight or native handler designation
    procedure Serve
      (Item                 : aliased in out Router;
       Context              : aliased in out App_Context;
@@ -521,7 +522,9 @@ package Flyology.HTTP.Server.Routing is
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
       Drain_Timeout        : Duration := 30.0;
-      Token                : not null access Flyology.Cancellation.Token)
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
    with Pre => Endpoint.Port /= Flyology.IO.Sockets.Any_Port
      and then Certificate_DER'Length in 1 .. 4_096
      and then HTTP_3_Capacity <= 256
@@ -558,6 +561,7 @@ package Flyology.HTTP.Server.Routing is
    --  @param Alt_Svc_Max_Age Alt-Svc lifetime in seconds
    --  @param Drain_Timeout TCP handler drain after shutdown
    --  @param Token Required unified server shutdown source
+   --  @param Handler_Model Fixed lightweight or native handler designation
    procedure Serve
      (Item                 : aliased in out Router;
       Context              : aliased in out App_Context;
@@ -580,7 +584,9 @@ package Flyology.HTTP.Server.Routing is
       Ingress              : access Ingress_Budget := null;
       Alt_Svc_Max_Age      : Natural := 86_400;
       Drain_Timeout        : Duration := 30.0;
-      Token                : not null access Flyology.Cancellation.Token)
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
    with Pre => IPv4_Endpoint.Family = Flyology.IO.Sockets.IPv4
      and then IPv6_Endpoint.Family = Flyology.IO.Sockets.IPv6
      and then IPv4_Endpoint.Port /= Flyology.IO.Sockets.Any_Port

@@ -13,8 +13,8 @@ with Flyology.Cancellation;
 with Flyology.Execution_Groups;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
-with Flyology.HTTP.Server.Connections;
 with Flyology.HTTP.Server.CORS;
+with Flyology.HTTP.Server.Development_Certificates;
 with Flyology.HTTP.Server.Logging;
 with Flyology.HTTP.Server.Metrics;
 with Flyology.HTTP.Server.Middleware_Authentication;
@@ -33,13 +33,14 @@ with Flyology.HTTP.Server.Routing;
 with Flyology.HTTP.Server.SSE_Handlers;
 with Flyology.HTTP.Server.WebSocket_Handlers;
 with Flyology.HTTP.Server.WebSocket_Handlers.Lifecycle;
-with Flyology.IO.Connections;
 with Flyology.IO.Files;
 with Flyology.IO.Sockets;
-with Flyology.IO.Structured_Servers;
+with Flyology.IO.TLS.ALPN;
+with Flyology.IO.TLS.OpenSSL;
 with Flyology.IO.Timers;
 with Flyology.Native_Executors;
 with Flyology.Observability;
+with Flyology.QUIC.Connections;
 with UUIDs;
 with UUIDs.V7;
 
@@ -59,7 +60,11 @@ procedure HTTP_Application_Server is
    package Observation renames Flyology.Observability;
    package Request_Helpers renames Flyology.HTTP.Server.Requests;
    package Sockets renames Flyology.IO.Sockets;
-   package Owned renames Flyology.IO.Connections;
+   package ALPN renames Flyology.IO.TLS.ALPN;
+   package OpenSSL renames Flyology.IO.TLS.OpenSSL;
+   package QUIC renames Flyology.QUIC.Connections;
+   package Development_Certificates renames
+     Flyology.HTTP.Server.Development_Certificates;
 
    --  Keep the command line compatible with the benchmark showcases. A zero
    --  request goal leaves the interactive server running until it is stopped.
@@ -78,6 +83,9 @@ procedure HTTP_Application_Server is
    Project_Root : constant String :=
      (if Ada.Command_Line.Argument_Count >= 5
       then Ada.Command_Line.Argument (5) else ".");
+   HTTP_3_Capacity : constant Positive :=
+     (if Ada.Command_Line.Argument_Count >= 6
+      then Positive'Value (Ada.Command_Line.Argument (6)) else 128);
    Showcase_Root : constant String :=
      Project_Root & "/showcases/http_application";
 
@@ -133,7 +141,7 @@ procedure HTTP_Application_Server is
    end JSON_Quote;
 
    Origin : constant String :=
-     "http://127.0.0.1:" & Compact (Natural (Port));
+     "https://127.0.0.1:" & Compact (Natural (Port));
 
    --  Instantiate the same application once per execution model. Handler code
    --  below remains ordinary synchronous Ada in either instantiation.
@@ -203,7 +211,6 @@ procedure HTTP_Application_Server is
       end UUIDv7_Request_ID_Source;
 
       type Application_Context is limited record
-         Calls         : Natural := 0;
          Introspection : Ada.Strings.Unbounded.Unbounded_String;
          Request_IDs   : UUIDv7_Request_ID_Source;
       end record;
@@ -827,8 +834,8 @@ procedure HTTP_Application_Server is
       --  Count only requests that reached an application handler. Rejections
       --  performed before dispatch remain visible through metrics instead.
       procedure Complete (State : in out Application_Context) is
+         pragma Unreferenced (State);
       begin
-         State.Calls := State.Calls + 1;
          Requests.Completed;
       end Complete;
 
@@ -841,7 +848,7 @@ procedure HTTP_Application_Server is
          Pool_Size  : constant Natural :=
            Natural (Groups.Configured_Pool_Size);
          Expected_Origin : constant String :=
-           "http://"
+           "https://"
            & Ada.Characters.Handling.To_Lower
                (Request_Helpers.Authority (X));
       begin
@@ -1003,7 +1010,8 @@ procedure HTTP_Application_Server is
       begin
          Serve_File
            (State, X,
-            Project_Root & "/assets/brand/flyology-mark-transparent.svg",
+            Project_Root
+            & "/website/assets/brand/flyology-mark-transparent.svg",
             "image/svg+xml");
       end Brand_Mark;
 
@@ -1014,7 +1022,8 @@ procedure HTTP_Application_Server is
          Serve_File
            (State, X,
             Project_Root
-            & "/website/assets/fonts/geologica-latin-variable.woff2",
+            & "/vendor/website-kit/assets/fonts/"
+            & "geologica-latin-variable.woff2",
             "font/woff2");
       end Geologica_Font;
 
@@ -1450,7 +1459,7 @@ procedure HTTP_Application_Server is
          --  request authority so both localhost and 127.0.0.1 remain exact
          --  same-origin deployments rather than weakening this to Allow_Any.
          Expected_Origin : constant String :=
-           "http://"
+           "https://"
            & Ada.Characters.Handling.To_Lower
                (Request_Helpers.Authority (X));
       begin
@@ -1577,46 +1586,18 @@ procedure HTTP_Application_Server is
       end Admin_Status;
 
       type Context is limited record
-         Application : Application_Context;
-         Routes      : Routing.Router
+         Application : aliased Application_Context;
+         Routes      : aliased Routing.Router
            (Capacity => 30, Slashes => Routing.Strict_Slashes);
          Budget      : aliased HTTP.Ingress_Budget
            (Limit => 64 * 1_024 * 1_024);
       end record;
-
-      procedure Handle
-        (State        : in out Context;
-         Connection   : in out Owned.Connection;
-         Peer         : Sockets.Endpoint;
-         Cancellation : not null access Owned.Cancellation_Token)
-      is
-         --  Connection_Transport borrows the structured server's owning
-         --  connection. HTTP.Connection adds protocol state without taking
-         --  closing ownership away from the structured server.
-         Channel : aliased HTTP.Connections.Connection_Transport
-           (Connection'Unchecked_Access);
-         Client : aliased HTTP.Connection (Channel'Access);
-      begin
-         --  Every connection charges buffered or retained request bytes to the
-         --  same 64 MiB ingress budget before application body consumption.
-         HTTP.Configure_Ingress_Budget (Client, State.Budget'Access);
-         State.Routes.Serve
-           (State.Application, Client, Peer,
-            Timeout        => 120.0,
-            Token          => Cancellation,
-            Header_Timeout => 10.0);
-      end Handle;
-
-      package Server_Instance is new Flyology.IO.Structured_Servers
-        (Handler_Context => Context,
-         Handle          => Handle,
-         Handler_Model   => Model);
-
-      Server   : aliased Server_Instance.Server (Capacity => Capacity);
       State    : aliased Context;
       Admin_Routes : Routing.Router
         (Capacity => 2, Slashes => Routing.Strict_Slashes);
-      Listener : Sockets.Socket_Type;
+      Backend  : aliased OpenSSL.OpenSSL_Provider;
+      Stop     : aliased Flyology.Cancellation.Token;
+      Generated : aliased Development_Certificates.Identity;
    begin
       --  Registration order is execution order around the route. Error
       --  mapping is outermost so failures in later components are contained.
@@ -1756,38 +1737,74 @@ procedure HTTP_Application_Server is
       --  a cooperative event-loop pthread when the first request arrives.
       State.Application.Request_IDs.Initialize;
 
-      Sockets.Create_Socket (Listener);
-      Sockets.Set_Socket_Option
-        (Listener, Sockets.Socket_Level, (Sockets.Reuse_Address, True));
-      Sockets.Bind_Socket
-        (Listener,
-         Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Port));
-      Sockets.Listen_Socket (Listener, Length => Capacity);
-
-      --  Start workers only after listener setup succeeds. A bind or listen
-      --  failure therefore cannot leave a partially initialized executor.
-      Native_Work.Start (Native_Pool);
-
-      Ada.Text_IO.Put_Line
-        ("READY " & Lane & " http://127.0.0.1:"
-         & Compact (Natural (Port)) & "/");
-      Ada.Text_IO.Flush;
-
+      Development_Certificates.Generate (Generated);
       declare
-         --  Shutdown coordination is native and independent of the selected
-         --  handler model. Goal zero keeps this entry closed indefinitely.
-         task Stopper is
-            pragma Task_Info (Flyology.Native_Task);
-         end Stopper;
-
-         task body Stopper is
-         begin
-            Requests.Await_Goal;
-            Server_Instance.Request_Shutdown (Server);
-         end Stopper;
+         Certificate_DER : constant Ada.Streams.Stream_Element_Array :=
+           Development_Certificates.QUIC_Certificate_DER (Generated);
+         Private_Key : constant QUIC.Ed25519_Private_Key :=
+           Development_Certificates.QUIC_Private_Key (Generated);
       begin
-         Server_Instance.Serve
-           (Server, Listener, State, Drain_Timeout => 0.050);
+         OpenSSL.Initialize_Server
+           (Backend,
+            Certificate_File =>
+              Development_Certificates.TLS_Certificate_File (Generated),
+            Private_Key_File =>
+              Development_Certificates.TLS_Private_Key_File (Generated),
+            Protocols => ALPN."&" (ALPN.Offer ("h2"), "http/1.1"));
+         Development_Certificates.Discard (Generated);
+
+         --  Start application-owned native work only after identity setup
+         --  succeeds. The unified server owns its TCP and UDP listeners.
+         Native_Work.Start (Native_Pool);
+
+         Ada.Text_IO.Put_Line
+           ("READY " & Lane & " https://127.0.0.1:"
+            & Compact (Natural (Port)) & "/ (h1, h2, h3)");
+         Ada.Text_IO.Put_Line
+           ("TLS test: curl -k --http2 https://127.0.0.1:"
+            & Compact (Natural (Port)) & "/");
+         Ada.Text_IO.Put_Line
+           ("H3 test: curl -k --http3-only https://127.0.0.1:"
+            & Compact (Natural (Port)) & "/");
+         Ada.Text_IO.Flush;
+
+         declare
+            --  Shutdown coordination is native and independent of the
+            --  selected handler model. Goal zero keeps this entry closed.
+            task Stopper is
+               pragma Task_Info (Flyology.Native_Task);
+            end Stopper;
+
+            task body Stopper is
+            begin
+               loop
+                  select
+                     Requests.Await_Goal;
+                     Stop.Request;
+                     exit;
+                  or
+                     delay 0.100;
+                  end select;
+                  exit when Stop.Requested;
+               end loop;
+            end Stopper;
+         begin
+            State.Routes.Serve
+              (State.Application,
+               Endpoint =>
+                 Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Port),
+               TLS_Backend          => Backend,
+               Certificate_DER      => Certificate_DER,
+               Private_Key          => Private_Key,
+               Handler_Model        => Model,
+               TCP_Capacity         => Capacity,
+               HTTP_3_Capacity      => HTTP_3_Capacity,
+               Timeout              => 120.0,
+               Header_Timeout       => 10.0,
+               Ingress              => State.Budget'Access,
+               Drain_Timeout        => 0.050,
+               Token                => Stop'Access);
+         end;
       end;
       Native_Work.Shutdown (Native_Pool);
 

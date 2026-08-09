@@ -10,11 +10,13 @@ with Flyology.QUIC.Connections;
 --  owns QUIC and HTTP/3 protocol state until the connection ends.
 --  @formal App_Context Application-owned context shared by request handlers
 --  @formal Handle Synchronous application dispatcher for one request stream
+--  @formal Handler_Model Fixed lightweight or native worker designation
 generic
    type App_Context is limited private;
    with procedure Handle
      (Context : in out App_Context;
       X       : in out Flyology.HTTP.Server.Applications.Exchange);
+   Handler_Model : Flyology.Execution_Model := Flyology.Project_Default;
 package Flyology.HTTP.Server.HTTP_3 is
 
    --  Default listener capacity for the task-per-connection profile.

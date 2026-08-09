@@ -94,7 +94,7 @@ package Flyology.HTTP.Server.Applications is
 
    --  Return the negotiated protocol carrying this request.
    --  @param Item Request exchange
-   --  @return HTTP/1.1 or HTTP/2
+   --  @return HTTP/1.1, HTTP/2, or HTTP/3
    function Request_Protocol (Item : Exchange) return Protocol;
 
    --  Return a case-insensitive request header value. Repeated fields retain
