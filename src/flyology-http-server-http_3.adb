@@ -35,7 +35,6 @@ package body Flyology.HTTP.Server.HTTP_3 is
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    ALPN : constant Stream_Element_Array :=
      (1 => Character'Pos ('h'), 2 => Character'Pos ('3'));
-   Maximum_Events : constant Positive := 32;
    Maximum_Request_Streams : constant Positive := 8;
    Response_Chunk_Size : constant Positive := 1_024;
 
@@ -140,38 +139,6 @@ package body Flyology.HTTP.Server.HTTP_3 is
       end Release;
    end Connection_Registry;
 
-   type Event_Array is array (Positive range 1 .. Maximum_Events) of H3.Event;
-   type Event_Queue is record
-      Values : Event_Array;
-      First  : Positive := 1;
-      Count  : Natural range 0 .. Maximum_Events := 0;
-   end record;
-
-   procedure Push (Item : in out Event_Queue; Value : H3.Event) is
-      Index : Positive;
-   begin
-      if Item.Count = Maximum_Events then
-         raise Resource_Exhausted with "HTTP/3 pending event queue is full";
-      end if;
-      Index := ((Item.First - 1 + Item.Count) mod Maximum_Events) + 1;
-      Item.Values (Index) := Value;
-      Item.Count := Item.Count + 1;
-   end Push;
-
-   procedure Pop
-     (Item : in out Event_Queue; Value : out H3.Event; Present : out Boolean)
-   is
-   begin
-      Present := Item.Count > 0;
-      if not Present then
-         Value := (others => <>);
-         return;
-      end if;
-      Value := Item.Values (Item.First);
-      Item.First := Item.First mod Maximum_Events + 1;
-      Item.Count := Item.Count - 1;
-   end Pop;
-
    type Connection_State;
    type Connection_State_Access is access all Connection_State;
 
@@ -184,8 +151,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Epoch     : Ada.Real_Time.Time := Ada.Real_Time.Clock;
       Transport : QUIC.Connection;
       Session   : H3.Session;
-      Pending   : Event_Queue;
+      Response_Headers : H3.Header_Block;
       H3_Started : Boolean := False;
+      ACK_Pending : Boolean := False;
       Closed    : Boolean := False;
    end record;
 
@@ -345,22 +313,6 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Item.Closed := True;
    end Close_For_H3_Error;
 
-   procedure Drain_Events
-     (Item : in out Connection_State; Timeout : Duration) is
-      Value  : H3.Event;
-      Status : H3.Operation_Status;
-   begin
-      loop
-         H3.Poll (Item.Session, Item.Transport, Value, Status);
-         exit when Status = H3.No_Event;
-         if Status /= H3.Succeeded then
-            Close_For_H3_Error (Item, Status, Timeout);
-            return;
-         end if;
-         Push (Item.Pending, Value);
-      end loop;
-   end Drain_Events;
-
    procedure Process_Recovery
      (Item : in out Connection_State; Timeout : Duration)
    is
@@ -379,6 +331,31 @@ package body Flyology.HTTP.Server.HTTP_3 is
       end case;
    end Process_Recovery;
 
+   procedure Flush_Pending_ACK
+     (Item : in out Connection_State; Timeout : Duration)
+   is
+      Packet : QUIC.Datagram;
+      Status : QUIC.Send_Status;
+   begin
+      if not Item.ACK_Pending or else not QUIC.Is_Connected (Item.Transport)
+      then
+         return;
+      end if;
+      QUIC.Build_ACK_Datagram
+        (Item.Transport, ACK_Delay => 0, Now => Now (Item),
+         Packet => Packet, Status => Status);
+      case Status is
+         when QUIC.Sent =>
+            Send (Item, Packet, Timeout);
+            Item.ACK_Pending := False;
+         when QUIC.Nothing_To_ACK =>
+            Item.ACK_Pending := False;
+         when others =>
+            raise Flyology.IO.Device_Error with
+              "QUIC deferred ACK failed: " & QUIC.Send_Status'Image (Status);
+      end case;
+   end Flush_Pending_ACK;
+
    procedure Receive_One
      (Item : in out Connection_State; Timeout : Duration)
    is
@@ -386,6 +363,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Last   : Stream_Element_Offset;
       Flight : QUIC.Datagram_Batch;
       Status : QUIC.Operation_Status;
+      ACK_Deferred : Boolean := False;
       Wait   : constant Duration := Receive_Timeout (Item, Timeout);
 
       procedure Receive is
@@ -426,6 +404,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
          end if;
       end Receive;
    begin
+      Flush_Pending_ACK (Item, Timeout);
       begin
          Receive;
       exception
@@ -441,9 +420,17 @@ package body Flyology.HTTP.Server.HTTP_3 is
       if Last < Packet'First then
          return;
       end if;
-      QUIC.Process_Datagram
-        (Item.Transport, Packet (Packet'First .. Last), Flight, Status,
-         Now (Item));
+      if Item.H3_Started and then QUIC.Is_Connected (Item.Transport) then
+         QUIC.Process_Datagram
+           (Item.Transport, Packet (Packet'First .. Last), Flight, Status,
+            Now (Item), Defer_Application_ACK => True,
+            ACK_Deferred => ACK_Deferred);
+         Item.ACK_Pending := Item.ACK_Pending or else ACK_Deferred;
+      else
+         QUIC.Process_Datagram
+           (Item.Transport, Packet (Packet'First .. Last), Flight, Status,
+            Now (Item));
+      end if;
       case Status is
          when QUIC.Succeeded | QUIC.Waiting_For_More =>
             Send (Item, Flight, Timeout);
@@ -461,12 +448,6 @@ package body Flyology.HTTP.Server.HTTP_3 is
             raise Protocol_Error with
               "QUIC receive failed: " & QUIC.Operation_Status'Image (Status);
       end case;
-      if QUIC.Is_Connected (Item.Transport)
-        and then Item.H3_Started
-        and then not Item.Closed
-      then
-         Drain_Events (Item, Timeout);
-      end if;
    end Receive_One;
 
    type Stream_Backend is limited new Backends.Backend with record
@@ -687,6 +668,40 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Item.Response_Ended := Fin;
    end Send_Data;
 
+   procedure Try_Send_Response
+     (Item     : in out Stream_Backend;
+      Fields   : H3.Header_Block;
+      Data     : Stream_Element_Array;
+      Combined : out Boolean)
+   is
+      Packet : QUIC.Datagram;
+      Status : H3.Operation_Status;
+      ACK_Included : Boolean;
+   begin
+      loop
+         H3.Send_Response
+           (Item.Owner.Session, Item.Owner.Transport, Item.Stream, Fields,
+            Data, Now (Item.Owner.all), Packet, Status, ACK_Included);
+         exit when Status in H3.Succeeded | H3.Frame_Too_Large;
+         if Status /= H3.Transport_Blocked then
+            raise Flyology.IO.Device_Error with
+              "HTTP/3 complete response failed: " &
+              H3.Operation_Status'Image (Status);
+         end if;
+         Wait_For_Transport (Item);
+      end loop;
+      Combined := Status = H3.Succeeded;
+      if not Combined then
+         return;
+      end if;
+      Send (Item.Owner.all, Packet, Remaining (Item.Deadline));
+      if ACK_Included then
+         Item.Owner.ACK_Pending := False;
+      end if;
+      Item.Response_Begun := True;
+      Item.Response_Ended := True;
+   end Try_Send_Response;
+
    procedure Append_Field
      (Fields : in out H3.Header_Block; Name, Value : String) is
    begin
@@ -745,16 +760,15 @@ package body Flyology.HTTP.Server.HTTP_3 is
       end loop;
    end Add_Extra_Headers;
 
-   procedure Send_Response_Head
-     (Item : in out Stream_Backend; Status : Positive;
+   procedure Build_Response_Fields
+     (Fields : in out H3.Header_Block; Status : Positive;
       Content_Type, Extra_Headers : String;
-      Has_Content_Length : Boolean; Content_Length : Natural;
-      Fin : Boolean)
+      Has_Content_Length : Boolean; Content_Length : Natural)
    is
-      Fields : H3.Header_Block;
       Status_Text : constant String :=
         Ada.Strings.Fixed.Trim (Positive'Image (Status), Ada.Strings.Both);
    begin
+      H3.Clear (Fields);
       if Status not in Status_Code then
          raise Constraint_Error with "invalid HTTP/3 response status";
       end if;
@@ -769,6 +783,19 @@ package body Flyology.HTTP.Server.HTTP_3 is
               (Natural'Image (Content_Length), Ada.Strings.Both));
       end if;
       Add_Extra_Headers (Fields, Extra_Headers);
+   end Build_Response_Fields;
+
+   procedure Send_Response_Head
+     (Item : in out Stream_Backend; Status : Positive;
+      Content_Type, Extra_Headers : String;
+      Has_Content_Length : Boolean; Content_Length : Natural;
+      Fin : Boolean)
+   is
+      Fields : H3.Header_Block renames Item.Owner.Response_Headers;
+   begin
+      Build_Response_Fields
+        (Fields, Status, Content_Type, Extra_Headers,
+         Has_Content_Length, Content_Length);
       Send_Headers (Item, Fields, Fin);
    end Send_Response_Head;
 
@@ -808,13 +835,28 @@ package body Flyology.HTTP.Server.HTTP_3 is
       if Forbidden and then Payload /= "" then
          raise Program_Error with "HTTP status does not permit content";
       end if;
-      Send_Response_Head
-        (Item, Status, Content_Type, Extra_Headers,
-         Has_Content_Length => Status not in 204 | 304,
-         Content_Length => Payload'Length, Fin => not Has_Data);
       if Has_Data then
-         Send_All_Data
-           (Item, Bytes.To_Array (Bytes.From_Byte_String (Payload)));
+         declare
+            Fields   : H3.Header_Block renames Item.Owner.Response_Headers;
+            Data     : constant Stream_Element_Array :=
+              Bytes.To_Array (Bytes.From_Byte_String (Payload));
+            Combined : Boolean;
+         begin
+            Build_Response_Fields
+              (Fields, Status, Content_Type, Extra_Headers,
+               Has_Content_Length => True,
+               Content_Length => Payload'Length);
+            Try_Send_Response (Item, Fields, Data, Combined);
+            if not Combined then
+               Send_Headers (Item, Fields, Fin => False);
+               Send_All_Data (Item, Data);
+            end if;
+         end;
+      else
+         Send_Response_Head
+           (Item, Status, Content_Type, Extra_Headers,
+            Has_Content_Length => Status not in 204 | 304,
+            Content_Length => Payload'Length, Fin => True);
       end if;
    end Respond;
 
@@ -1179,6 +1221,17 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Control : QUIC.Datagram;
       Requests : Request_Array_Access := new Request_Array;
       Served : Natural := 0;
+      Value : H3.Event;
+      Poll_Status : H3.Operation_Status;
+      Last_Credit_Data : QUIC.Stream_Offset := 0;
+      Stream_Credit_Interval : constant Positive :=
+        Positive
+          (QUIC.Stream_Offset'Min
+             (QUIC.Stream_Offset (Positive'Last),
+              QUIC.Stream_Offset'Max
+                (1, Transport_Settings.Max_Streams_Bidi / 2)));
+      Data_Credit_Interval : constant QUIC.Stream_Offset :=
+        QUIC.Stream_Offset'Max (1, Transport_Settings.Max_Data / 2);
       Connection_Deadline : constant Ada.Real_Time.Time :=
         (if Max_Connection_Age < 0.0 then Ada.Real_Time.Time_Last
          else State.Epoch + Ada.Real_Time.To_Time_Span (Max_Connection_Age));
@@ -1325,13 +1378,23 @@ package body Flyology.HTTP.Server.HTTP_3 is
             Receive_One (State.all, Remaining (Connection_Deadline));
          end loop;
          Send (State.all, Packet, Remaining (Connection_Deadline));
+         Last_Credit_Data := QUIC.Received_Data (State.Transport);
       end Return_Request_Credit;
+
+      function Request_Credit_Due return Boolean is
+         Current : constant QUIC.Stream_Offset :=
+           QUIC.Received_Data (State.Transport);
+      begin
+         return Served mod Stream_Credit_Interval = 0
+           or else Current - Last_Credit_Data >= Data_Credit_Interval;
+      end Request_Credit_Due;
 
       procedure Release (Slot : Positive) is
       begin
          Requests (Slot).Occupied := False;
          Requests (Slot).Stream := 0;
          Requests (Slot).Saw_Headers := False;
+         H3.Clear (Requests (Slot).Headers);
          Requests (Slot).Started := Ada.Real_Time.Time_Last;
          Bytes.Clear (Requests (Slot).Payload_Bytes);
       end Release;
@@ -1356,7 +1419,12 @@ package body Flyology.HTTP.Server.HTTP_3 is
                   Requests (Slot).Started := Ada.Real_Time.Clock;
                end if;
                if not Requests (Slot).Saw_Headers then
-                  Requests (Slot).Headers := Value.Headers;
+                  H3.Clear (Requests (Slot).Headers);
+                  for Index in 1 .. H3.Header_Count (Value.Headers) loop
+                     H3.Append
+                       (Requests (Slot).Headers,
+                        H3.Field_At (Value.Headers, Index));
+                  end loop;
                   Requests (Slot).Saw_Headers := True;
                end if;
             when H3.Data_Received =>
@@ -1389,7 +1457,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
                     H3.Operation_Status'Image (H3_Status);
                end if;
                Release (Positive (Slot));
-               if Served < Max_Requests then
+               if Served < Max_Requests and then Request_Credit_Due then
                   Return_Request_Credit;
                end if;
             when H3.Stream_Reset =>
@@ -1468,16 +1536,18 @@ package body Flyology.HTTP.Server.HTTP_3 is
         and then Served < Max_Requests
         and then Remaining (Connection_Deadline) /= 0.0
       loop
-         declare
-            Value : H3.Event;
-            Present : Boolean;
          begin
-            Pop (State.Pending, Value, Present);
-            if Present then
-               Process_Event (Value);
-            else
-               Receive_One (State.all, Remaining (Connection_Deadline));
-            end if;
+            H3.Poll (State.Session, State.Transport, Value, Poll_Status);
+            case Poll_Status is
+               when H3.Succeeded =>
+                  Process_Event (Value);
+               when H3.No_Event =>
+                  Receive_One (State.all, Remaining (Connection_Deadline));
+               when others =>
+                  Close_For_H3_Error
+                    (State.all, Poll_Status,
+                     Remaining (Connection_Deadline));
+            end case;
          exception
             when Flyology.IO.Timeout_Error =>
                exit when Remaining (Connection_Deadline) = 0.0;

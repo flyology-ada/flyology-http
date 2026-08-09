@@ -118,7 +118,7 @@ is
      (Connection : in out Connection_State;
       Stream     : in out Stream_State;
       Data       : Ada.Streams.Stream_Element_Array;
-      Result     : out Receive_Result)
+      Result     : out Compact_Receive_Result)
    is
       Decoded : Varint_Policy.Decode_Result;
    begin
@@ -139,7 +139,7 @@ is
 
    procedure Process_Push_ID
      (Data   : Ada.Streams.Stream_Element_Array;
-      Result : out Receive_Result)
+      Result : out Compact_Receive_Result)
    is
       Decoded : Varint_Policy.Decode_Result;
    begin
@@ -159,7 +159,7 @@ is
    procedure Process_QPACK
      (Stream : Stream_State;
       Data   : Ada.Streams.Stream_Element_Array;
-      Result : out Receive_Result)
+      Result : out Compact_Receive_Result)
    is
       Decoded : QPACK_Integer_Policy.Decode_Result;
    begin
@@ -196,7 +196,7 @@ is
      (Connection : in out Connection_State;
       Data       : Ada.Streams.Stream_Element_Array;
       Frame      : HTTP_3_Frame_Policy.Parse_Result;
-      Result     : in out Receive_Result)
+      Result     : in out Compact_Receive_Result)
    is
       Status : HTTP_3_Control_Policy.Operation_Status;
    begin
@@ -244,9 +244,11 @@ is
      (Stream : in out Stream_State;
       Data   : Ada.Streams.Stream_Element_Array;
       Frame  : HTTP_3_Frame_Policy.Parse_Result;
-      Result : in out Receive_Result)
+      Headers : in out QPACK_Field_Section_Policy.Header_Block;
+      Result : in out Compact_Receive_Result)
    is
-      Decoded    : QPACK_Field_Section_Policy.Decode_Result;
+      Decode_Status : QPACK_Field_Section_Policy.Decode_Status;
+      Decode_Consumed : QPACK_Field_Section_Policy.Decode_Length;
       Validation : HTTP_3_Header_Policy.Validation_Result;
       Header     : HTTP_3_Message_Policy.Header_Kind :=
         HTTP_3_Message_Policy.Not_Headers;
@@ -274,32 +276,34 @@ is
          return;
       elsif Frame.Frame_Type = HTTP_3_Frame_Policy.Headers_Frame then
          if Frame.Payload_Length = 0 then
-            Decoded := QPACK_Field_Section_Policy.Decode
-              (Ada.Streams.Stream_Element_Array'(1 .. 0 => 0));
+            QPACK_Field_Section_Policy.Decode_Into
+              (Ada.Streams.Stream_Element_Array'(1 .. 0 => 0),
+               Headers, Decode_Status, Decode_Consumed);
          else
-            Decoded := QPACK_Field_Section_Policy.Decode
+            QPACK_Field_Section_Policy.Decode_Into
               (Data
                  (Data'First
                     + Ada.Streams.Stream_Element_Offset (Frame.Payload_Offset)
                   .. Data'First
                        + Ada.Streams.Stream_Element_Offset
-                           (Frame.Payload_Offset + Frame.Payload_Length - 1)));
+                           (Frame.Payload_Offset + Frame.Payload_Length - 1)),
+               Headers, Decode_Status, Decode_Consumed);
          end if;
-         if Decoded.Status /= QPACK_Field_Section_Policy.Decoded then
+         if Decode_Status /= QPACK_Field_Section_Policy.Decoded then
             Result.Status := QPACK_Decompression_Failed;
             return;
          end if;
-         Result.Headers := Decoded.Block;
+         pragma Assert (Decode_Consumed = Natural (Frame.Payload_Length));
          if Stream.Stream_Type = Request_Stream then
             if Stream.Request_State.Phase =
               HTTP_3_Message_Policy.Expecting_Request
             then
                Validation := HTTP_3_Header_Policy.Validate_Request
-                 (Decoded.Block);
+                 (Headers);
                Header := HTTP_3_Message_Policy.Request_Headers;
             else
                Validation := HTTP_3_Header_Policy.Validate_Trailers
-                 (Decoded.Block);
+                 (Headers);
                Header := HTTP_3_Message_Policy.Trailer_Headers;
             end if;
          else
@@ -308,14 +312,14 @@ is
               HTTP_3_Message_Policy.Awaiting_Final
             then
                Validation := HTTP_3_Header_Policy.Validate_Response
-                 (Decoded.Block);
+                 (Headers);
                Header :=
                  (if Validation.Is_Interim
                   then HTTP_3_Message_Policy.Interim_Response_Headers
                   else HTTP_3_Message_Policy.Final_Response_Headers);
             else
                Validation := HTTP_3_Header_Policy.Validate_Trailers
-                 (Decoded.Block);
+                 (Headers);
                Header := HTTP_3_Message_Policy.Trailer_Headers;
             end if;
          end if;
@@ -365,11 +369,12 @@ is
       end if;
    end Process_Message;
 
-   procedure Process
+   procedure Process_Compact
      (Connection : in out Connection_State;
       Stream     : in out Stream_State;
       Data       : Ada.Streams.Stream_Element_Array;
-      Result     : out Receive_Result)
+      Headers    : in out QPACK_Field_Section_Policy.Header_Block;
+      Result     : out Compact_Receive_Result)
    is
       Frame : HTTP_3_Frame_Policy.Parse_Result;
    begin
@@ -408,13 +413,32 @@ is
       elsif Stream.Stream_Type in
         Request_Stream | Response_Stream
       then
-         Process_Message (Stream, Data, Frame, Result);
+         Process_Message (Stream, Data, Frame, Headers, Result);
       else
          Result.Status := Frame_Unexpected;
       end if;
       if Result.Status = Consumed then
          Result.Consumed := Natural (Frame.Consumed);
       end if;
+   end Process_Compact;
+
+   procedure Process
+     (Connection : in out Connection_State;
+      Stream     : in out Stream_State;
+      Data       : Ada.Streams.Stream_Element_Array;
+      Result     : out Receive_Result)
+   is
+      Compact : Compact_Receive_Result;
+   begin
+      Result := (others => <>);
+      Process_Compact
+        (Connection, Stream, Data, Result.Headers, Compact);
+      Result.Status := Compact.Status;
+      Result.Event := Compact.Event;
+      Result.Consumed := Compact.Consumed;
+      Result.Payload_Offset := Compact.Payload_Offset;
+      Result.Payload_Length := Compact.Payload_Length;
+      Result.Identifier := Compact.Identifier;
    end Process;
 
    procedure Finish

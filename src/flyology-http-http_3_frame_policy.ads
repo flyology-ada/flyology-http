@@ -14,7 +14,11 @@ is
    use type Ada.Streams.Stream_Element_Offset;
 
    Max_Frame_Length   : constant := 65_535;
-   Max_Payload_Length : constant := Max_Frame_Length - 16;
+   --  HTTP/3 sends feed a QUIC STREAM payload capped near one datagram.  Keep
+   --  the parser's protocol bound independent from the encoder result so a
+   --  small frame does not materialize a 64 KiB temporary.
+   Max_Encoded_Length : constant := 1_125;
+   Max_Payload_Length : constant := Max_Encoded_Length - 16;
 
    subtype Frame_Offset is
      Ada.Streams.Stream_Element_Offset range 0 .. Max_Frame_Length;
@@ -59,10 +63,10 @@ is
              Parse'Result.Payload_Offset + Parse'Result.Payload_Length
            and then Parse'Result.Consumed <= Frame_Offset (Data'Length));
 
-   subtype Encoded_Length is Natural range 0 .. Max_Frame_Length;
+   subtype Encoded_Length is Natural range 0 .. Max_Encoded_Length;
 
    type Encode_Result is record
-      Data   : Ada.Streams.Stream_Element_Array (1 .. Max_Frame_Length) :=
+      Data   : Ada.Streams.Stream_Element_Array (1 .. Max_Encoded_Length) :=
         (others => 0);
       Length : Encoded_Length := 0;
    end record;

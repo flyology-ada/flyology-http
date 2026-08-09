@@ -114,7 +114,7 @@ is
          for Index in 0 .. Payload_Length - 1 loop
             pragma Loop_Invariant
               (Position + Ada.Streams.Stream_Element_Offset (Index) + 1 <=
-                 Max_Frame_Length);
+                 Max_Encoded_Length);
             Result.Data
               (Position + Ada.Streams.Stream_Element_Offset (Index) + 1) :=
                 Payload

@@ -50,12 +50,14 @@ is
       return Result;
    end Field_Section_Size;
 
-   function Decode
-     (Data : Ada.Streams.Stream_Element_Array) return Decode_Result
+   procedure Decode_Into
+     (Data     : Ada.Streams.Stream_Element_Array;
+      Block    : in out Header_Block;
+      Status   : out Decode_Status;
+      Consumed : out Decode_Length)
    is
       Data_Length : constant Natural := Natural (Data'Length);
       subtype Cursor is Natural range 0 .. Data_Length;
-      Result      : Decode_Result;
       Position    : Cursor := 0;
 
       function Byte_At (Offset : Natural) return Ada.Streams.Stream_Element
@@ -71,9 +73,11 @@ is
       with
         Pre => Position <= Data_Length,
         Post =>
-          (if Success then Position > Position'Old and then Position <= Data_Length
-             and then Position - Position'Old <= 4
-           else Position = Position'Old and Value = 0);
+          (if Success then
+              Position > Position'Old
+                and then Position <= Data_Length
+                and then Position - Position'Old <= 4
+           else Position = Position'Old and then Value = 0);
 
       procedure Read_Integer
         (Bits    : QPACK_Integer_Policy.Prefix_Size;
@@ -114,17 +118,17 @@ is
       procedure Append_Field (Item : Header_Field; Success : out Boolean)
       with
         Post =>
-          (if Success then Result.Block.Count = Result.Block.Count'Old + 1
-           else Result.Block.Count = Result.Block.Count'Old);
+          (if Success then Block.Count = Block.Count'Old + 1
+           else Block.Count = Block.Count'Old);
 
       procedure Append_Field (Item : Header_Field; Success : out Boolean) is
       begin
          Success := False;
-         if Result.Block.Count = Max_Fields then
+         if Block.Count = Max_Fields then
             return;
          end if;
-         Result.Block.Count := Result.Block.Count + 1;
-         Result.Block.Fields (Result.Block.Count) := Item;
+         Block.Count := Block.Count + 1;
+         Block.Fields (Block.Count) := Item;
          Success := True;
       end Append_Field;
 
@@ -231,46 +235,49 @@ is
       String_Status         : Decode_Status;
       Octet                 : Ada.Streams.Stream_Element;
    begin
+      Block.Count := 0;
+      Status := Truncated;
+      Consumed := 0;
       Read_Integer (8, Required_Insert_Count, Success);
       if not Success then
-         return Result;
+         return;
       elsif Required_Insert_Count /= 0 then
-         Result.Status := Unsupported_Dynamic;
-         return Result;
+         Status := Unsupported_Dynamic;
+         return;
       elsif Position >= Data_Length then
-         return Result;
+         return;
       elsif (Byte_At (Position) and 16#80#) /= 0 then
-         Result.Status := Invalid_Prefix;
-         return Result;
+         Status := Invalid_Prefix;
+         return;
       end if;
       Read_Integer (7, Delta_Base, Success);
       if not Success then
-         return Result;
+         return;
       elsif Delta_Base /= 0 then
-         Result.Status := Invalid_Prefix;
-         return Result;
+         Status := Invalid_Prefix;
+         return;
       end if;
 
       while Position < Data_Length loop
          pragma Loop_Invariant (Position <= Data_Length);
-         pragma Loop_Invariant (Result.Block.Count <= Max_Fields);
+         pragma Loop_Invariant (Block.Count <= Max_Fields);
          pragma Loop_Variant (Decreases => Data_Length - Position);
          Octet := Byte_At (Position);
          Item := (others => <>);
 
          if (Octet and 16#80#) /= 0 then
             if (Octet and 16#40#) = 0 then
-               Result.Status := Unsupported_Dynamic;
-               return Result;
+               Status := Unsupported_Dynamic;
+               return;
             end if;
             Read_Integer (6, Index, Success);
             if not Success then
-               return Result;
+               return;
             elsif Index > QPACK_Integer_Policy.Value_Type
                 (QPACK_Static_Table.Static_Index'Last)
             then
-               Result.Status := Invalid_Static_Index;
-               return Result;
+               Status := Invalid_Static_Index;
+               return;
             end if;
             Item :=
               Make_Field
@@ -281,17 +288,17 @@ is
 
          elsif (Octet and 16#C0#) = 16#40# then
             if (Octet and 16#10#) = 0 then
-               Result.Status := Unsupported_Dynamic;
-               return Result;
+               Status := Unsupported_Dynamic;
+               return;
             end if;
             Read_Integer (4, Index, Success);
             if not Success then
-               return Result;
+               return;
             elsif Index > QPACK_Integer_Policy.Value_Type
                 (QPACK_Static_Table.Static_Index'Last)
             then
-               Result.Status := Invalid_Static_Index;
-               return Result;
+               Status := Invalid_Static_Index;
+               return;
             end if;
             declare
                Static_Name : constant String :=
@@ -300,13 +307,14 @@ is
             begin
                Item.Name_Size := Static_Name'Length;
                for Offset in 0 .. Static_Name'Length - 1 loop
-                  Item.Name (Offset + 1) := Static_Name (Static_Name'First + Offset);
+                  Item.Name (Offset + 1) :=
+                    Static_Name (Static_Name'First + Offset);
                end loop;
             end;
             Read_String (Item.Value, Item.Value_Size, String_Status);
             if String_Status /= Decoded then
-               Result.Status := String_Status;
-               return Result;
+               Status := String_Status;
+               return;
             end if;
 
          elsif (Octet and 16#E0#) = 16#20# then
@@ -317,40 +325,48 @@ is
                Prefix_Bits => 3,
                Huffman_Bit => 16#08#);
             if String_Status /= Decoded then
-               Result.Status := String_Status;
-               return Result;
+               Status := String_Status;
+               return;
             elsif Item.Name_Size = 0 then
-               Result.Status := Field_Too_Large;
-               return Result;
+               Status := Field_Too_Large;
+               return;
             end if;
             Read_String (Item.Value, Item.Value_Size, String_Status);
             if String_Status /= Decoded then
-               Result.Status := String_Status;
-               return Result;
+               Status := String_Status;
+               return;
             end if;
 
          else
-            Result.Status := Unsupported_Dynamic;
-            return Result;
+            Status := Unsupported_Dynamic;
+            return;
          end if;
 
          Append_Field (Item, Success);
          if not Success then
-            Result.Status := Too_Many_Fields;
-            return Result;
+            Status := Too_Many_Fields;
+            return;
          end if;
       end loop;
 
       pragma Assert (Position = Data_Length);
-      Result.Status := Decoded;
-      Result.Consumed := Data_Length;
+      Status := Decoded;
+      Consumed := Data_Length;
       pragma Assert
-        (Result.Status = Decoded and then Result.Consumed = Data_Length);
+        (Status = Decoded and then Consumed = Data_Length);
+   end Decode_Into;
+
+   function Decode
+     (Data : Ada.Streams.Stream_Element_Array) return Decode_Result
+   is
+      Result : Decode_Result;
+   begin
+      Decode_Into (Data, Result.Block, Result.Status, Result.Consumed);
       return Result;
    end Decode;
 
    function Encode (Block : Header_Block) return Encode_Result is
-      subtype Output_Cursor is Natural range 2 .. Max_Encoded_Length;
+      subtype Output_Cursor is Natural range 2 .. Max_Encode_Length;
       Result   : Encode_Result;
       Position : Output_Cursor := 2;
       Failed   : Boolean := False;
@@ -360,11 +376,12 @@ is
 
       procedure Append_Byte (Value : Ada.Streams.Stream_Element) is
       begin
-         if Position = Max_Encoded_Length then
+         if Position = Max_Encode_Length then
             Failed := True;
          else
             Position := Position + 1;
-            Result.Data (Ada.Streams.Stream_Element_Offset (Position)) := Value;
+            Result.Data (Ada.Streams.Stream_Element_Offset (Position)) :=
+              Value;
          end if;
       end Append_Byte;
 
@@ -385,13 +402,14 @@ is
          Encoded_Value : constant QPACK_Integer_Policy.Encode_Result :=
            QPACK_Integer_Policy.Encode (Value, Bits, High_Bits);
       begin
-         if Encoded_Value.Length > Max_Encoded_Length - Position then
+         if Encoded_Value.Length > Max_Encode_Length - Position then
             Failed := True;
             return;
          end if;
          for Offset in 1 .. Encoded_Value.Length loop
             Append_Byte
-              (Encoded_Value.Data (Ada.Streams.Stream_Element_Offset (Offset)));
+              (Encoded_Value.Data
+                 (Ada.Streams.Stream_Element_Offset (Offset)));
          end loop;
       end Append_Integer;
 
@@ -403,7 +421,7 @@ is
       begin
          Append_Integer (Value'Length, 7, 0);
          if not Failed and then Value'Length > 0 then
-            if Value'Length > Max_Encoded_Length - Position then
+            if Value'Length > Max_Encode_Length - Position then
                Failed := True;
                return;
             end if;
@@ -421,7 +439,7 @@ is
       Result.Data (1) := 0;
       Result.Data (2) := 0;
       for Field_Number in 1 .. Block.Count loop
-         pragma Loop_Invariant (Position <= Max_Encoded_Length);
+         pragma Loop_Invariant (Position <= Max_Encode_Length);
          declare
             Item       : Header_Field renames Block.Fields (Field_Number);
             Name_Text  : constant String := Field_Name (Item);
@@ -452,7 +470,7 @@ is
                      3,
                      16#20#);
                   if not Failed then
-                     if Name_Text'Length > Max_Encoded_Length - Position then
+                     if Name_Text'Length > Max_Encode_Length - Position then
                         Failed := True;
                      else
                         for Offset in 0 .. Name_Text'Length - 1 loop

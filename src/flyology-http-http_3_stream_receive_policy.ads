@@ -62,6 +62,15 @@ is
       Headers        : QPACK_Field_Section_Policy.Header_Block;
    end record;
 
+   type Compact_Receive_Result is record
+      Status         : Receive_Status := Need_More_Data;
+      Event          : Event_Kind := No_Event;
+      Consumed       : Input_Offset := 0;
+      Payload_Offset : Input_Offset := 0;
+      Payload_Length : Input_Offset := 0;
+      Identifier     : Varint_Policy.Value_Type := 0;
+   end record;
+
    type Connection_State is limited private;
    type Stream_State is private;
 
@@ -101,6 +110,22 @@ is
       Stream     : in out Stream_State;
       Data       : Ada.Streams.Stream_Element_Array;
       Result     : out Receive_Result)
+   with
+     Global => null,
+     Pre => Data'Length <= Max_Input_Length,
+     Post => Result.Consumed <= Data'Length
+       and then Result.Payload_Offset <= Data'Length
+       and then Result.Payload_Length <=
+         Data'Length - Result.Payload_Offset
+       and then
+         (if Result.Status = Need_More_Data then Result.Consumed = 0);
+
+   procedure Process_Compact
+     (Connection : in out Connection_State;
+      Stream     : in out Stream_State;
+      Data       : Ada.Streams.Stream_Element_Array;
+      Headers    : in out QPACK_Field_Section_Policy.Header_Block;
+      Result     : out Compact_Receive_Result)
    with
      Global => null,
      Pre => Data'Length <= Max_Input_Length,

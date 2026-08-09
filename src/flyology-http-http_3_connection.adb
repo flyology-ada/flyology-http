@@ -232,17 +232,25 @@ package body Flyology.HTTP.HTTP_3_Connection is
            Headers_Received,
          when HTTP_3_Stream_Receive_Policy.Data_Received => Data_Received);
 
+   procedure Reset_Event (Output : out Event) is
+   begin
+      Output.Kind := No_Event;
+      Output.Stream := 0;
+      Output.Identifier := 0;
+      Output.Headers.Count := 0;
+      Output.Data_Length := 0;
+      Output.Application_Error := 0;
+   end Reset_Event;
+
    procedure Copy_Event
      (ID     : QUIC.Stream_ID;
       Buffer : Ada.Streams.Stream_Element_Array;
-      Result : HTTP_3_Stream_Receive_Policy.Receive_Result;
+      Result : HTTP_3_Stream_Receive_Policy.Compact_Receive_Result;
       Output : out Event) is
    begin
-      Output := (others => <>);
       Output.Kind := Event_For (Result.Event);
       Output.Stream := ID;
       Output.Identifier := Result.Identifier;
-      Output.Headers := Result.Headers;
       Output.Data_Length := Result.Payload_Length;
       if Result.Payload_Length > 0 then
          Output.Data
@@ -263,7 +271,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
       Status    : out Operation_Status)
    is
       Buffer : Ada.Streams.Stream_Element_Array (1 .. Max_Event_Data);
-      Result : HTTP_3_Stream_Receive_Policy.Receive_Result;
+      Result : HTTP_3_Stream_Receive_Policy.Compact_Receive_Result;
       Length : QUIC.Stream_Offset;
       ID     : QUIC.Stream_ID;
       Slot   : Optional_Slot;
@@ -279,7 +287,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
          Kind : constant HTTP_3_Stream_Receive_Policy.Stream_Kind :=
            HTTP_3_Stream_Receive_Policy.Kind (Item.Streams (Slot).State);
       begin
-         Output := (others => <>);
+         Reset_Event (Output);
          Item.Streams (Slot).Finished := True;
          if Kind in
            HTTP_3_Stream_Receive_Policy.Control_Stream |
@@ -301,7 +309,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
          end if;
       end Handle_Reset;
    begin
-      Output := (others => <>);
+      Reset_Event (Output);
       if not QUIC.Is_Connected (Transport) then
          Status := Not_Connected;
          return;
@@ -363,10 +371,10 @@ package body Flyology.HTTP.HTTP_3_Connection is
                  (1 + Ada.Streams.Stream_Element_Offset (Offset)) :=
                    QUIC.Element (Transport, ID, Offset);
             end loop;
-            HTTP_3_Stream_Receive_Policy.Process
+            HTTP_3_Stream_Receive_Policy.Process_Compact
               (Item.Receive, Item.Streams (Slot).State,
                Buffer (1 .. Ada.Streams.Stream_Element_Offset (Length)),
-               Result);
+               Output.Headers, Result);
             Status := Status_For (Result.Status);
             if Result.Consumed > 0 then
                if Result.Event /= HTTP_3_Stream_Receive_Policy.No_Event then
@@ -820,6 +828,135 @@ package body Flyology.HTTP.HTTP_3_Connection is
          end if;
       end if;
    end Build_Headers;
+
+   procedure Build_Response
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : QPACK_Field_Section_Policy.Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
+      Status    : out Operation_Status;
+      ACK_Included : out Boolean)
+   is
+      Slot        : Optional_Slot;
+      Validation  : HTTP_3_Header_Policy.Validation_Result;
+      Head_Update : HTTP_3_Message_Policy.Response_Update;
+      Data_Update : HTTP_3_Message_Policy.Response_Update;
+      Encoded     : QPACK_Field_Section_Policy.Encode_Result;
+      Head_Frame  : HTTP_3_Frame_Policy.Encode_Result;
+      Data_Frame  : HTTP_3_Frame_Policy.Encode_Result;
+      Combined    : Ada.Streams.Stream_Element_Array
+        (1 .. QUIC.Max_Stream_Payload) := (others => 0);
+      Length      : Natural;
+      Sent        : QUIC.Send_Status;
+      Peer        : HTTP_3_Settings_Policy.Settings;
+   begin
+      Packet := (others => <>);
+      ACK_Included := False;
+      if not QUIC.Is_Connected (Transport) then
+         Status := Not_Connected;
+         return;
+      elsif Item.Local_Role /= Server then
+         Status := Wrong_Role;
+         return;
+      elsif Data'Length > HTTP_3_Frame_Policy.Max_Payload_Length then
+         Status := Frame_Too_Large;
+         return;
+      end if;
+
+      if Has_Peer_Settings (Item) then
+         Peer := Peer_Settings (Item);
+         if Peer.Has_Max_Field_Size
+           and then HTTP_3_Settings_Policy.Varint_Policy.Value_Type
+             (QPACK_Field_Section_Policy.Field_Section_Size (Headers)) >
+               Peer.Max_Field_Size
+         then
+            Status := Peer_Field_Section_Too_Large;
+            return;
+         end if;
+      end if;
+
+      Validation := HTTP_3_Header_Policy.Validate_Response (Headers);
+      if Validation.Status /= HTTP_3_Header_Policy.Valid then
+         Status := Header_Error;
+         return;
+      elsif Validation.Is_Interim then
+         Status := Message_Error;
+         return;
+      end if;
+
+      Encoded := QPACK_Field_Section_Policy.Encode (Headers);
+      if Encoded.Status /= QPACK_Field_Section_Policy.Encoded then
+         Status := QPACK_Decompression_Failed;
+         return;
+      end if;
+      Head_Frame := HTTP_3_Frame_Policy.Encode
+        (HTTP_3_Frame_Policy.Headers_Frame,
+         Encoded.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)));
+      Data_Frame := HTTP_3_Frame_Policy.Encode
+        (HTTP_3_Frame_Policy.Data_Frame, Data);
+      Length := Head_Frame.Length + Data_Frame.Length;
+      if Length > QUIC.Max_Stream_Payload then
+         Status := Frame_Too_Large;
+         return;
+      end if;
+
+      Find_Or_Add_Message (Item, Transport, Stream, Slot, Status);
+      if Status /= Succeeded or else Item.Sending (Slot).Finished then
+         if Status = Succeeded then
+            Status := Frame_Unexpected;
+         end if;
+         return;
+      elsif Item.Sending (Slot).Kind /= Response_Message then
+         Status := Frame_Unexpected;
+         return;
+      end if;
+
+      Head_Update := HTTP_3_Message_Policy.On_Response_Frame
+        (Item.Sending (Slot).Response,
+         HTTP_3_Frame_Policy.Headers_Frame,
+         HTTP_3_Message_Policy.Final_Response_Headers,
+         Response_Code => Validation.Response_Code,
+         Has_Content_Length => Validation.Has_Content_Length,
+         Content_Length => Validation.Content_Length);
+      if Head_Update.Status /= HTTP_3_Message_Policy.Accepted then
+         Status := Message_Error;
+         return;
+      end if;
+      Data_Update := HTTP_3_Message_Policy.On_Response_Frame
+        (Head_Update.State, HTTP_3_Frame_Policy.Data_Frame,
+         Data_Length => QUIC.Stream_Offset (Data'Length));
+      if Data_Update.Status /= HTTP_3_Message_Policy.Accepted
+        or else HTTP_3_Message_Policy.Finish_Response (Data_Update.State) /=
+          HTTP_3_Message_Policy.Message_Complete
+      then
+         Status := Message_Error;
+         return;
+      end if;
+
+      Combined
+        (1 .. Ada.Streams.Stream_Element_Offset (Head_Frame.Length)) :=
+          Head_Frame.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Head_Frame.Length));
+      Combined
+        (Ada.Streams.Stream_Element_Offset (Head_Frame.Length + 1)
+           .. Ada.Streams.Stream_Element_Offset (Length)) :=
+          Data_Frame.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Data_Frame.Length));
+      QUIC.Build_Stream_Datagram_With_ACK
+        (Transport, Stream, Item.Sending (Slot).Offset, Fin => True,
+         Data => Combined (1 .. Ada.Streams.Stream_Element_Offset (Length)),
+         Now => Now, Packet => Packet, Status => Sent,
+         ACK_Included => ACK_Included);
+      Status := Send_Status_For (Sent);
+      if Status = Succeeded then
+         Item.Sending (Slot) := (others => <>);
+         Item.Send_Count := Item.Send_Count - 1;
+      end if;
+   end Build_Response;
 
    procedure Build_Data
      (Item      : in out Connection;

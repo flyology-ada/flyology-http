@@ -12,9 +12,12 @@ package body Flyology.HTTP.HTTP_3 is
      Flyology.HTTP.QPACK_Field_Section_Policy;
    package Internal_Settings renames
      Flyology.HTTP.HTTP_3_Settings_Policy;
+   use type Internal.Event_Kind;
 
    type Session_Impl is limited record
-      Value : Internal.Connection;
+      Value      : Internal.Connection;
+      Last_Event : Internal.Event;
+      Send_Headers : Internal_Fields.Header_Block;
    end record;
 
    package Impl_Conversions is new System.Address_To_Access_Conversions
@@ -73,6 +76,11 @@ package body Flyology.HTTP.HTTP_3 is
       Item.Fields (Item.Count) := Value;
    end Append;
 
+   procedure Clear (Item : in out Header_Block) is
+   begin
+      Item.Count := 0;
+   end Clear;
+
    function Header_Count (Item : Header_Block) return Natural is
      (Item.Count);
 
@@ -90,10 +98,10 @@ package body Flyology.HTTP.HTTP_3 is
        Has_Max_Field_Size   => Value.Has_Max_Field_Size,
        Max_Field_Size       => Value.Max_Field_Size));
 
-   function To_Internal
-     (Value : Header_Block) return Internal_Fields.Header_Block
+   procedure To_Internal_Into
+     (Value  : Header_Block;
+      Result : in out Internal_Fields.Header_Block)
    is
-      Result : Internal_Fields.Header_Block;
    begin
       Result.Count := Value.Count;
       for Index in 1 .. Value.Count loop
@@ -101,13 +109,12 @@ package body Flyology.HTTP.HTTP_3 is
            (Field_Name (Value.Fields (Index)),
             Field_Value (Value.Fields (Index)));
       end loop;
-      return Result;
-   end To_Internal;
+   end To_Internal_Into;
 
-   function To_Public
-     (Value : Internal_Fields.Header_Block) return Header_Block
+   procedure To_Public_Into
+     (Value  : Internal_Fields.Header_Block;
+      Result : in out Header_Block)
    is
-      Result : Header_Block;
    begin
       Result.Count := Value.Count;
       for Index in 1 .. Value.Count loop
@@ -115,8 +122,7 @@ package body Flyology.HTTP.HTTP_3 is
            (Internal_Fields.Field_Name (Value.Fields (Index)),
             Internal_Fields.Field_Value (Value.Fields (Index)));
       end loop;
-      return Result;
-   end To_Public;
+   end To_Public_Into;
 
    function Public_Status
      (Value : Internal.Operation_Status) return Operation_Status
@@ -200,30 +206,38 @@ package body Flyology.HTTP.HTTP_3 is
       Output    : out Event;
       Status    : out Operation_Status)
    is
-      Internal_Event  : Internal.Event;
       Internal_Status : Internal.Operation_Status;
    begin
-      Output := (others => <>);
+      Output.Kind := No_Event;
+      Output.Stream := 0;
+      Output.Identifier := 0;
+      Output.Headers.Count := 0;
+      Output.Data_Length := 0;
+      Output.Application_Error := 0;
       if not Is_Initialized (Item) then
          Status := Uninitialized;
          return;
       end if;
       Internal.Poll
-        (Impl (Item).Value, Transport, Internal_Event, Internal_Status);
+        (Impl (Item).Value, Transport, Impl (Item).Last_Event,
+         Internal_Status);
       Status := Public_Status (Internal_Status);
-      Output.Kind := Public_Kind (Internal_Event.Kind);
-      Output.Stream := Internal_Event.Stream;
-      Output.Identifier := Internal_Event.Identifier;
-      Output.Headers := To_Public (Internal_Event.Headers);
-      Output.Data_Length := Internal_Event.Data_Length;
-      Output.Application_Error := Internal_Event.Application_Error;
-      if Internal_Event.Data_Length > 0 then
+      Output.Kind := Public_Kind (Impl (Item).Last_Event.Kind);
+      Output.Stream := Impl (Item).Last_Event.Stream;
+      Output.Identifier := Impl (Item).Last_Event.Identifier;
+      if Impl (Item).Last_Event.Kind = Internal.Headers_Received then
+         To_Public_Into
+           (Impl (Item).Last_Event.Headers, Output.Headers);
+      end if;
+      Output.Data_Length := Impl (Item).Last_Event.Data_Length;
+      Output.Application_Error := Impl (Item).Last_Event.Application_Error;
+      if Impl (Item).Last_Event.Data_Length > 0 then
          Output.Data
            (1 .. Ada.Streams.Stream_Element_Offset
-                   (Internal_Event.Data_Length)) :=
-             Internal_Event.Data
+                   (Impl (Item).Last_Event.Data_Length)) :=
+             Impl (Item).Last_Event.Data
                (1 .. Ada.Streams.Stream_Element_Offset
-                       (Internal_Event.Data_Length));
+                       (Impl (Item).Last_Event.Data_Length));
       end if;
    end Poll;
 
@@ -323,11 +337,38 @@ package body Flyology.HTTP.HTTP_3 is
          Status := Uninitialized;
          return;
       end if;
+      To_Internal_Into (Headers, Impl (Item).Send_Headers);
       Internal.Build_Headers
-        (Impl (Item).Value, Transport, Stream, To_Internal (Headers), Fin,
+        (Impl (Item).Value, Transport, Stream, Impl (Item).Send_Headers, Fin,
          Now, Packet, Result);
       Status := Public_Status (Result);
    end Send_Headers;
+
+   procedure Send_Response
+     (Item      : in out Session;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
+      Status    : out Operation_Status;
+      ACK_Included : out Boolean)
+   is
+      Result : Internal.Operation_Status;
+   begin
+      Packet := (others => <>);
+      ACK_Included := False;
+      if not Is_Initialized (Item) then
+         Status := Uninitialized;
+         return;
+      end if;
+      To_Internal_Into (Headers, Impl (Item).Send_Headers);
+      Internal.Build_Response
+        (Impl (Item).Value, Transport, Stream, Impl (Item).Send_Headers, Data,
+         Now, Packet, Result, ACK_Included);
+      Status := Public_Status (Result);
+   end Send_Response;
 
    procedure Send_Data
      (Item      : in out Session;

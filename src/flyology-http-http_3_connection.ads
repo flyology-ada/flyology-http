@@ -135,6 +135,17 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Packet    : out QUIC.Datagram;
       Status    : out Operation_Status);
 
+   procedure Build_Response
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : QPACK_Field_Section_Policy.Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
+      Status    : out Operation_Status;
+      ACK_Included : out Boolean);
+
    procedure Build_Data
      (Item      : in out Connection;
       Transport : in out QUIC.Connection;

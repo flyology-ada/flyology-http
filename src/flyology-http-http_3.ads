@@ -73,6 +73,10 @@ package Flyology.HTTP.HTTP_3 is
    procedure Append (Item : in out Header_Block; Value : Header_Field)
    with Pre => Header_Count (Item) < Max_Fields;
 
+   --  Remove every field while retaining the block's bounded storage.
+   --  @param Item Field section to reuse
+   procedure Clear (Item : in out Header_Block);
+
    --  Return the number of fields in a field section.
    --  @param Item Field section to inspect
    --  @return Number of retained fields
@@ -308,6 +312,29 @@ package Flyology.HTTP.HTTP_3 is
       Now       : QUIC.Timestamp;
       Packet    : out QUIC.Datagram;
       Status    : out Operation_Status);
+
+   --  Encode final response HEADERS and DATA into one QUIC STREAM packet.
+   --  Frame_Too_Large leaves the response unsent so callers can fall back to
+   --  separate packets.
+   --  @param Item Initialized HTTP/3 session
+   --  @param Transport Connected QUIC connection
+   --  @param Stream Peer request stream identifier
+   --  @param Headers Final response field section
+   --  @param Data Complete response body
+   --  @param Now Monotonic microsecond timestamp
+   --  @param Packet Datagram to send when Status is Succeeded
+   --  @param Status Operation outcome
+   --  @param ACK_Included Whether the datagram also carries a QUIC ACK
+   procedure Send_Response
+     (Item      : in out Session;
+      Transport : in out QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Now       : QUIC.Timestamp;
+      Packet    : out QUIC.Datagram;
+      Status    : out Operation_Status;
+      ACK_Included : out Boolean);
 
    --  Encode and protect one DATA frame.
    --  @param Item Initialized HTTP/3 session
