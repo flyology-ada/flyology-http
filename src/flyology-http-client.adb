@@ -66,6 +66,10 @@ package body Flyology.HTTP.Client is
    --  storage is recycled inside the bounded concurrent-stream profile.
    HTTP_3_Requests_Per_Connection : constant Positive := 100_000;
 
+   type HTTP_3_Event_Access is access H3.Event;
+   procedure Free_HTTP_3_Event is new Ada.Unchecked_Deallocation
+     (H3.Event, HTTP_3_Event_Access);
+
    type Pooled_Connection is limited record
       Channel  : aliased Connections.Connection;
       UDP      : aliased Sockets.Socket_Type;
@@ -75,6 +79,7 @@ package body Flyology.HTTP.Client is
       HTTP_3         : H3.Session;
       HTTP_3_Epoch   : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
       HTTP_3_Goaway  : Boolean := False;
+      HTTP_3_Event   : HTTP_3_Event_Access := null;
    end record;
    type Pooled_Connection_Access is access Pooled_Connection;
 
@@ -430,6 +435,9 @@ package body Flyology.HTTP.Client is
       end;
       if Connection.HTTP_2 /= null then
          H2_Connections.Destroy (Connection.HTTP_2);
+      end if;
+      if Connection.HTTP_3_Event /= null then
+         Free_HTTP_3_Event (Connection.HTTP_3_Event);
       end if;
       Free_Connection (Connection);
    end Dispose_Connection;

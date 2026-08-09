@@ -4,10 +4,6 @@ separate (Flyology.HTTP.Client)
 package body HTTP_3_Internals is
    use Ada.Streams;
 
-   type Event_Access is access H3.Event;
-   procedure Free_Event is new Ada.Unchecked_Deallocation
-     (H3.Event, Event_Access);
-
    ALPN : constant Stream_Element_Array := Byte_Array ("h3");
    Request_Chunk_Size : constant Positive := 1_024;
    Maximum_Retained_Request : constant Natural := 16_384;
@@ -311,7 +307,7 @@ package body HTTP_3_Internals is
       Stream    : QUIC.Stream_ID;
       Packet    : QUIC.Datagram;
       Status    : H3.Operation_Status;
-      Event_Value : Event_Access := new H3.Event;
+      Event_Value : HTTP_3_Event_Access;
 
       procedure Add (Name, Field_Value : String) is
       begin
@@ -331,6 +327,10 @@ package body HTTP_3_Internals is
             Packet => Output, Status => Result);
       end Send_Head;
    begin
+      if Data.Connection.HTTP_3_Event = null then
+         Data.Connection.HTTP_3_Event := new H3.Event;
+      end if;
+      Event_Value := Data.Connection.HTTP_3_Event;
       if Value.Expect_Continue then
          raise Constraint_Error with
            "HTTP/3 Expect: 100-continue is not yet supported";
@@ -478,7 +478,6 @@ package body HTTP_3_Internals is
                   Data.Status_Value := Status_Code (Code);
                   Data.Protocol_Value := HTTP_3_Protocol;
                   Data.Saw_Response_Bytes := True;
-                  Free_Event (Event_Value);
                   return;
                end if;
             elsif Event.Stream = Stream
@@ -492,10 +491,6 @@ package body HTTP_3_Internals is
             end if;
          end;
       end loop;
-   exception
-      when others =>
-         Free_Event (Event_Value);
-         raise;
    end Execute_Request;
 
    procedure Copy_Pending
@@ -540,7 +535,8 @@ package body HTTP_3_Internals is
       Finished : out Boolean;
       Token    : access Flyology.Cancellation.Token)
    is
-      Event_Value : Event_Access := new H3.Event;
+      Event_Value : constant HTTP_3_Event_Access :=
+        Item.Data.Connection.HTTP_3_Event;
       Event  : H3.Event renames Event_Value.all;
       Status : H3.Operation_Status;
    begin
@@ -548,7 +544,6 @@ package body HTTP_3_Internals is
       Finished := False;
       if Flyology.Bytes.Length (Item.Data.HTTP_3_Pending) > 0 then
          Copy_Pending (Item.Data.all, Data, Last);
-         Free_Event (Event_Value);
          return;
       end if;
       loop
@@ -573,7 +568,6 @@ package body HTTP_3_Internals is
                  (Item.Data.HTTP_3_Pending,
                   Event.Data (1 .. Stream_Element_Offset (Event.Data_Length)));
                Copy_Pending (Item.Data.all, Data, Last);
-               Free_Event (Event_Value);
                return;
             end if;
          elsif Event.Stream = Item.Data.HTTP_3_Stream
@@ -600,7 +594,6 @@ package body HTTP_3_Internals is
             Release_Lease
               (Item.Data.all, Is_Usable (Item.Data.Connection));
             Finished := True;
-            Free_Event (Event_Value);
             return;
          elsif Event.Stream = Item.Data.HTTP_3_Stream
            and then Event.Kind = H3.Stream_Reset
@@ -609,9 +602,5 @@ package body HTTP_3_Internals is
             raise Protocol_Error with "HTTP/3 response stream was reset";
          end if;
       end loop;
-   exception
-      when others =>
-         Free_Event (Event_Value);
-         raise;
    end Read_Response_Body;
 end HTTP_3_Internals;
