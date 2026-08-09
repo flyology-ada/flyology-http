@@ -146,9 +146,23 @@ package body Flyology.QUIC.Application_Connection is
               One_RTT_Receiver.Received
                 | One_RTT_Receiver.Invalid_Reserved_Bits
               and then
-                Candidate.Key_Phase /= Item.Receiving_Key_Phase
+               Candidate.Key_Phase /= Item.Receiving_Key_Phase
             then
                if Candidate.Status = One_RTT_Receiver.Received then
+                  if Item.Sending_Key_Phase /= Candidate.Key_Phase then
+                     declare
+                        Next_Sending : TLS_Key_Schedule.QUIC_Traffic_Keys;
+                     begin
+                        --  The next packet can ACK Candidate, so RFC 9001
+                        --  requires the responder's corresponding send phase.
+                        TLS_Key_Schedule.Update_QUIC_Keys
+                          (Item.Backend, Item.Sending, Next_Sending);
+                        TLS_Key_Schedule.Clear (Item.Sending);
+                        Item.Sending := Next_Sending;
+                        TLS_Key_Schedule.Clear (Next_Sending);
+                        Item.Sending_Key_Phase := Candidate.Key_Phase;
+                     end;
+                  end if;
                   Item.Previous_Receiving := Item.Receiving;
                   Item.Has_Previous_Receiving := True;
                   Item.Receiving := Item.Next_Receiving;
