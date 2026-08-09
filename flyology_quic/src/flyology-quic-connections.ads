@@ -474,6 +474,26 @@ package Flyology.QUIC.Connections is
       Status    : out Send_Status)
    with Pre => Is_Connected (Item) and then Maximum <= 2**60;
 
+   --  Return both connection data credit and stream-concurrency credit in one
+   --  protected packet. Connection_Window is maintained beyond all bytes
+   --  received so far; Maximum_Streams is the cumulative MAX_STREAMS limit.
+   --  @param Item Connected endpoint
+   --  @param Connection_Window Receive bytes kept available beyond committed data
+   --  @param Direction Stream direction whose cumulative limit is raised
+   --  @param Maximum_Streams New cumulative stream-count limit
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   procedure Build_Receive_Credit_Datagram
+     (Item              : in out Connection;
+      Connection_Window : Stream_Offset;
+      Direction         : Stream_Direction;
+      Maximum_Streams   : Stream_Offset;
+      Now               : Timestamp;
+      Packet            : out Datagram;
+      Status            : out Send_Status)
+   with Pre => Is_Connected (Item) and then Maximum_Streams <= 2**60;
+
    --  Build one protected ACK-only packet for received application packets.
    --  @param Item Connected endpoint
    --  @param ACK_Delay Peer-visible encoded acknowledgment delay

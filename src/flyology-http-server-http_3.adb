@@ -1310,13 +1310,16 @@ package body Flyology.HTTP.Server.HTTP_3 is
                 + QUIC.Stream_Offset (Served));
       begin
          loop
-            QUIC.Build_Max_Streams_Datagram
-              (State.Transport, QUIC.Bidirectional, Limit, Now (State.all),
-               Packet, Status);
+            QUIC.Build_Receive_Credit_Datagram
+              (State.Transport,
+               Connection_Window => Transport_Settings.Max_Data,
+               Direction => QUIC.Bidirectional,
+               Maximum_Streams => Limit,
+               Now => Now (State.all), Packet => Packet, Status => Status);
             exit when Status = QUIC.Sent;
             if Status /= QUIC.Congestion_Blocked then
                raise Protocol_Error with
-                 "QUIC MAX_STREAMS failed: " &
+                 "QUIC receive-credit update failed: " &
                  QUIC.Send_Status'Image (Status);
             end if;
             Receive_One (State.all, Remaining (Connection_Deadline));

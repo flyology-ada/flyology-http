@@ -543,6 +543,28 @@ package body Flyology.QUIC.Connections is
       Status := Public_Status (Internal_Status);
    end Build_Max_Streams_Datagram;
 
+   procedure Build_Receive_Credit_Datagram
+     (Item              : in out Connection;
+      Connection_Window : Stream_Offset;
+      Direction         : Stream_Direction;
+      Maximum_Streams   : Stream_Offset;
+      Now               : Timestamp;
+      Packet            : out Datagram;
+      Status            : out Send_Status)
+   is
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      Connection_Driver.Build_Receive_Credit_Datagram
+        (Impl (Item).Driver, Varint_Policy.Value_Type (Connection_Window),
+         Direction = Bidirectional,
+         Varint_Policy.Value_Type (Maximum_Streams),
+         Application_Space.Timestamp (Now), Internal_Packet,
+         Internal_Status);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Receive_Credit_Datagram;
+
    procedure Build_ACK_Datagram
      (Item      : in out Connection;
       ACK_Delay : Varint_Policy.Value_Type;

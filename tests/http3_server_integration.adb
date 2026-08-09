@@ -160,7 +160,10 @@ begin
                Handshake_Timeout => 10.0,
                Max_Connection_Age => 20.0,
                TCP_Max_Requests => 10,
-               HTTP_3_Max_Requests => 1_200,
+               --  Keep the pooled-credit regression on one connection.  The
+               --  loop below deliberately crosses the initial MAX_DATA
+               --  window before the server's lifetime request cap.
+               HTTP_3_Max_Requests => 8_100,
                Drain_Timeout => 10.0,
                Token => Stop'Access);
          exception
@@ -327,11 +330,11 @@ begin
          Client.Set_Method (Request, Flyology.HTTP.To_Method ("POST"));
          Client.Set_Target (Request, "/hello/Ada");
          Client.Set_Body (Request, "payload");
-         --  Cross both the 29-stream concurrent table and the former 1,024
-         --  lifetime flow-accounting table on one pooled connection. This
-         --  exercises completed state retirement and MAX_STREAMS credit
-         --  return together through the user-facing client and server APIs.
-         for Exchange in 1 .. 1_050 loop
+         --  Cross the concurrent and former lifetime stream tables, then the
+         --  initial 512 KiB connection receive window, on one pooled
+         --  connection. This exercises MAX_DATA and MAX_STREAMS credit return
+         --  together through the user-facing client and server APIs.
+         for Exchange in 1 .. 8_000 loop
             declare
                Reply : Client.Response :=
                  Client.Execute (HTTP, Request, Timeout => 10.0);

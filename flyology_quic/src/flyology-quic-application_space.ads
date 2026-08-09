@@ -122,6 +122,19 @@ private package Flyology.QUIC.Application_Space is
        and then Maximum <= 2**60
        and then Packet'Length >= Max_Datagram_Length;
 
+   procedure Build_Receive_Credit_Packet
+     (Item              : in out State;
+      Connection_Window : Varint_Policy.Value_Type;
+      Bidirectional     : Boolean;
+      Maximum_Streams   : Varint_Policy.Value_Type;
+      Now               : Timestamp;
+      Packet            : out Ada.Streams.Stream_Element_Array;
+      Result            : out Send_Result)
+   with
+     Pre => Is_Initialized (Item)
+       and then Maximum_Streams <= 2**60
+       and then Packet'Length >= Max_Datagram_Length;
+
    procedure Build_ACK_Packet
      (Item      : in out State;
       ACK_Delay : Varint_Policy.Value_Type;

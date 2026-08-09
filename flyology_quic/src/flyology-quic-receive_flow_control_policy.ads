@@ -79,6 +79,11 @@ is
      Global => null,
      Pre => Limit <= 2**60;
 
+   procedure Raise_Connection_Limit
+     (Item  : in out State;
+      Limit : Value_Type)
+   with Global => null;
+
    procedure Reserve_Stream
      (Item               : in out State;
       ID                 : Stream_ID_Policy.Stream_ID;

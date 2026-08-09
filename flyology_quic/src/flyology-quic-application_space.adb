@@ -587,6 +587,50 @@ package body Flyology.QUIC.Application_Space is
       end if;
    end Build_Max_Streams_Packet;
 
+   procedure Build_Receive_Credit_Packet
+     (Item              : in out State;
+      Connection_Window : Varint_Policy.Value_Type;
+      Bidirectional     : Boolean;
+      Maximum_Streams   : Varint_Policy.Value_Type;
+      Now               : Timestamp;
+      Packet            : out Ada.Streams.Stream_Element_Array;
+      Result            : out Send_Result)
+   is
+      Committed : constant Varint_Policy.Value_Type :=
+        Receive_Flow_Control_Policy.Committed_Data (Item.Receive_Flow);
+      Maximum_Data : constant Varint_Policy.Value_Type :=
+        (if Connection_Window > Varint_Policy.Value_Type'Last - Committed
+         then Varint_Policy.Value_Type'Last
+         else Committed + Connection_Window);
+      Data_Frame : constant Application_Frame_Policy.Max_Data_Encode_Result :=
+        Application_Frame_Policy.Encode_Max_Data (Maximum_Data);
+      Streams_Frame : constant
+        Application_Frame_Policy.Max_Streams_Encode_Result :=
+          Application_Frame_Policy.Encode_Max_Streams
+            (Bidirectional, Maximum_Streams);
+      Plaintext : Ada.Streams.Stream_Element_Array
+        (1 .. Ada.Streams.Stream_Element_Offset
+                (Data_Frame.Length + Streams_Frame.Length));
+   begin
+      Plaintext (1 .. Ada.Streams.Stream_Element_Offset (Data_Frame.Length)) :=
+        Data_Frame.Data
+          (1 .. Ada.Streams.Stream_Element_Offset (Data_Frame.Length));
+      Plaintext
+        (Ada.Streams.Stream_Element_Offset (Data_Frame.Length + 1)
+           .. Plaintext'Last) :=
+          Streams_Frame.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Streams_Frame.Length));
+      Build_Tracked_Frame_Packet
+        (Item, Plaintext, Now, Permit_Probe => False, Retain_Frame => True,
+         Packet => Packet, Result => Result);
+      if Result.Status = Sent then
+         Receive_Flow_Control_Policy.Raise_Connection_Limit
+           (Item.Receive_Flow, Maximum_Data);
+         Receive_Flow_Control_Policy.Raise_Stream_Limit
+           (Item.Receive_Flow, Bidirectional, Maximum_Streams);
+      end if;
+   end Build_Receive_Credit_Packet;
+
    procedure Build_Stream_Abort_Packet
      (Item              : in out State;
       Stream_ID         : Varint_Policy.Value_Type;

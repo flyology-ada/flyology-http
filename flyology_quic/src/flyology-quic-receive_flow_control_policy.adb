@@ -109,6 +109,14 @@ is
       end if;
    end Raise_Stream_Limit;
 
+   procedure Raise_Connection_Limit
+     (Item  : in out State;
+      Limit : Value_Type) is
+   begin
+      Item.Initial.Connection :=
+        Value_Type'Max (Item.Initial.Connection, Limit);
+   end Raise_Connection_Limit;
+
    function Initial_Stream_Limit
      (Item : State; ID : Stream_ID_Policy.Stream_ID) return Value_Type
    is

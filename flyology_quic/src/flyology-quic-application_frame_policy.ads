@@ -123,6 +123,15 @@ is
       Length : Max_Streams_Encode_Length := 0;
    end record;
 
+   subtype Max_Data_Encode_Result is Max_Streams_Encode_Result;
+
+   function Encode_Max_Data
+     (Maximum : Varint_Policy.Value_Type)
+      return Max_Data_Encode_Result
+   with
+     Global => null,
+     Post => Encode_Max_Data'Result.Length in 3 .. Max_Streams_Length;
+
    function Encode_Max_Streams
      (Bidirectional : Boolean;
       Maximum       : Varint_Policy.Value_Type)

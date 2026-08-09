@@ -111,6 +111,20 @@ begin
    end;
 
    declare
+      Encoded : constant Max_Data_Encode_Result :=
+        Encode_Max_Data (Maximum => 524_288);
+      Credit : constant Parse_Result :=
+        Parse_Next
+          (Encoded.Data
+             (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)), 0);
+   begin
+      pragma Assert
+        (Credit.Status = Application_Frame_Policy.Parsed
+         and then Credit.Kind = Max_Data
+         and then Credit.Maximum = 524_288);
+   end;
+
+   declare
       Encoded : constant Max_Streams_Encode_Result :=
         Encode_Max_Streams (Bidirectional => True, Maximum => 30);
       Credit : constant Parse_Result :=

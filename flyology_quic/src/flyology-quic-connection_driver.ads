@@ -182,6 +182,16 @@ private package Flyology.QUIC.Connection_Driver is
       Status        : out Application_Space.Send_Status)
    with Pre => Is_Connected (Item) and then Maximum <= 2**60;
 
+   procedure Build_Receive_Credit_Datagram
+     (Item              : in out Connection;
+      Connection_Window : Varint_Policy.Value_Type;
+      Bidirectional     : Boolean;
+      Maximum_Streams   : Varint_Policy.Value_Type;
+      Now               : Application_Space.Timestamp;
+      Packet            : out Datagram;
+      Status            : out Application_Space.Send_Status)
+   with Pre => Is_Connected (Item) and then Maximum_Streams <= 2**60;
+
    procedure Build_ACK_Datagram
      (Item      : in out Connection;
       ACK_Delay : Varint_Policy.Value_Type;

@@ -72,6 +72,23 @@ is
       return Result;
    end Encode_Max_Streams;
 
+   function Encode_Max_Data
+     (Maximum : Varint_Policy.Value_Type)
+      return Max_Data_Encode_Result
+   is
+      Encoded : constant Varint_Policy.Encoded_Value :=
+        Varint_Policy.Encode (Maximum);
+      Result : Max_Data_Encode_Result;
+   begin
+      Result.Data (1) := 16#10#;
+      Result.Data
+        (2 .. Ada.Streams.Stream_Element_Offset (Encoded.Length + 1)) :=
+          Encoded.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length));
+      Result.Length := Natural'Max (3, Encoded.Length + 1);
+      return Result;
+   end Encode_Max_Data;
+
    function Parse_Next
      (Data   : Ada.Streams.Stream_Element_Array;
       Cursor : Frame_Offset) return Parse_Result
