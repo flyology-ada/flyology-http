@@ -205,6 +205,11 @@ package body Flyology.QUIC.Connections is
      (Item.Backend /= System.Null_Address
       and then Connection_Driver.Is_Connected (Impl (Item).Driver));
 
+   function Received_Data (Item : Connection) return Stream_Offset is
+     (if Item.Backend = System.Null_Address then 0
+      else Stream_Offset
+        (Connection_Driver.Received_Data (Impl (Item).Driver)));
+
    function Handshake_Confirmed (Item : Connection) return Boolean is
      (Item.Backend /= System.Null_Address
       and then Connection_Driver.Handshake_Confirmed (Impl (Item).Driver));
@@ -397,6 +402,26 @@ package body Flyology.QUIC.Connections is
       Status := Public_Status (Result.Status);
    end Process_Datagram;
 
+   procedure Process_Datagram
+     (Item                  : in out Connection;
+      Packet                : Ada.Streams.Stream_Element_Array;
+      Output                : out Datagram_Batch;
+      Status                : out Operation_Status;
+      Now                   : Timestamp;
+      Defer_Application_ACK : Boolean;
+      ACK_Deferred          : out Boolean)
+   is
+      Internal_Output : Connection_Driver.Datagram_Batch;
+      Result          : Connection_Driver.Operation_Result;
+   begin
+      Connection_Driver.Process_Datagram
+        (Impl (Item).Driver, Packet, Internal_Output, Result,
+         Application_Space.Timestamp (Now), Defer_Application_ACK,
+         ACK_Deferred);
+      Copy (Internal_Output, Output);
+      Status := Public_Status (Result.Status);
+   end Process_Datagram;
+
    function Has_Recovery_Timeout (Item : Connection) return Boolean is
      (Item.Backend /= System.Null_Address
       and then Connection_Driver.Has_Recovery_Timeout (Impl (Item).Driver));
@@ -503,6 +528,28 @@ package body Flyology.QUIC.Connections is
       Copy (Internal_Packet, Packet);
       Status := Public_Status (Internal_Status);
    end Build_Stream_Datagram;
+
+   procedure Build_Stream_Datagram_With_ACK
+     (Item         : in out Connection;
+      ID           : Stream_ID;
+      Offset       : Stream_Offset;
+      Fin          : Boolean;
+      Data         : Ada.Streams.Stream_Element_Array;
+      Now          : Timestamp;
+      Packet       : out Datagram;
+      Status       : out Send_Status;
+      ACK_Included : out Boolean)
+   is
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      Connection_Driver.Build_Stream_Datagram_With_ACK
+        (Impl (Item).Driver, ID, Offset, Fin, Data,
+         Application_Space.Timestamp (Now), Internal_Packet, Internal_Status,
+         ACK_Included);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Stream_Datagram_With_ACK;
 
    procedure Build_Stream_Abort_Datagram
      (Item              : in out Connection;

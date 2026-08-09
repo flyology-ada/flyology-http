@@ -28,6 +28,9 @@ package body Flyology.QUIC.Connection_Driver is
    function Is_Connected (Item : Connection) return Boolean is
      (Item.Current = Connected);
 
+   function Received_Data (Item : Connection) return Varint_Policy.Value_Type is
+     (Application_Space.Received_Data (Item.Application));
+
    function Handshake_Confirmed (Item : Connection) return Boolean is
      (Item.Is_Handshake_Confirmed);
 
@@ -134,6 +137,30 @@ package body Flyology.QUIC.Connection_Driver is
          Packet.Length := Built.Packet_Length;
       end if;
    end Build_Stream_Datagram;
+
+   procedure Build_Stream_Datagram_With_ACK
+     (Item         : in out Connection;
+      Stream_ID    : Varint_Policy.Value_Type;
+      Offset       : Varint_Policy.Value_Type;
+      Fin          : Boolean;
+      Data         : Ada.Streams.Stream_Element_Array;
+      Now          : Application_Space.Timestamp;
+      Packet       : out Datagram;
+      Status       : out Application_Space.Send_Status;
+      ACK_Included : out Boolean)
+   is
+      Built : Application_Space.Send_Result;
+   begin
+      Packet := (others => <>);
+      Application_Space.Build_Stream_Packet
+        (Item.Application, Stream_ID, Offset, Fin, Data, Now,
+         Packet.Data, Built, Include_ACK => True);
+      Status := Built.Status;
+      ACK_Included := Built.ACK_Included;
+      if Built.Status = Application_Space.Sent then
+         Packet.Length := Built.Packet_Length;
+      end if;
+   end Build_Stream_Datagram_With_ACK;
 
    procedure Build_Stream_Abort_Datagram
      (Item              : in out Connection;
@@ -941,6 +968,22 @@ package body Flyology.QUIC.Connection_Driver is
       Result : out Operation_Result;
       Now    : Application_Space.Timestamp := 0)
    is
+      ACK_Deferred : Boolean;
+   begin
+      Process_Datagram
+        (Item, Packet, Output, Result, Now,
+         Defer_Application_ACK => False, ACK_Deferred => ACK_Deferred);
+   end Process_Datagram;
+
+   procedure Process_Datagram
+     (Item                  : in out Connection;
+      Packet                : Ada.Streams.Stream_Element_Array;
+      Output                : out Datagram_Batch;
+      Result                : out Operation_Result;
+      Now                   : Application_Space.Timestamp;
+      Defer_Application_ACK : Boolean;
+      ACK_Deferred          : out Boolean)
+   is
       Application_Result : Application_Space.Process_Result;
       Cursor              : Natural := 0;
       Total               : constant Natural := Natural (Packet'Length);
@@ -948,6 +991,7 @@ package body Flyology.QUIC.Connection_Driver is
    begin
       Clear (Output);
       Result := (others => <>);
+      ACK_Deferred := False;
       if Packet'Length = 0 then
          Result.Status := Unsupported_Packet;
          return;
@@ -1046,7 +1090,12 @@ package body Flyology.QUIC.Connection_Driver is
                   elsif Application_Result.Handshake_Done then
                      Item.Is_Handshake_Confirmed := True;
                   end if;
-                  if Application_Result.ACK_Eliciting then
+                  if Application_Result.ACK_Eliciting
+                    and then Defer_Application_ACK
+                  then
+                     ACK_Deferred := True;
+                     Result.Status := Succeeded;
+                  elsif Application_Result.ACK_Eliciting then
                      declare
                         ACK_Packet : Ada.Streams.Stream_Element_Array
                           (1 .. Max_Datagram_Length);

@@ -116,6 +116,9 @@ package body Flyology.QUIC.Application_Space is
    function Committed_Data (Item : State) return Varint_Policy.Value_Type is
      (Flow_Control_Policy.Committed_Data (Item.Flow));
 
+   function Received_Data (Item : State) return Varint_Policy.Value_Type is
+     (Receive_Flow_Control_Policy.Committed_Data (Item.Receive_Flow));
+
    procedure Open_Stream
      (Item      : in out State;
       Direction : Stream_ID_Policy.Stream_Direction;
@@ -395,9 +398,14 @@ package body Flyology.QUIC.Application_Space is
       Data      : Ada.Streams.Stream_Element_Array;
       Now       : Timestamp;
       Packet    : out Ada.Streams.Stream_Element_Array;
-      Result    : out Send_Result)
+      Result    : out Send_Result;
+      Include_ACK : Boolean := False)
    is
       Frame          : Stream_Frame_Policy.Encode_Result;
+      ACK_Frame      : ACK_Frame_Policy.Encode_Result;
+      Plaintext      : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Retransmittable_Length) := (others => 0);
+      Plaintext_Length : Natural range 0 .. Max_Retransmittable_Length := 0;
       Built          : Application_Connection.Build_Result;
       Record_Status  : Sent_Packet_Policy.Record_Status;
       Account_Status : Recovery_Policy.Send_Status;
@@ -439,10 +447,39 @@ package body Flyology.QUIC.Application_Space is
          Result.Status := Stream_Range_Too_Large;
          return;
       end if;
+
+      ACK_Frame := (others => <>);
+      if Include_ACK then
+         ACK_Frame := Application_Connection.Encode_ACK
+           (Item.Packets, ACK_Delay => 0);
+      end if;
+      if ACK_Frame.Status = ACK_Frame_Policy.Encoded
+        and then ACK_Frame.Length + Frame.Length <=
+          Max_Retransmittable_Length
+      then
+         Plaintext
+           (1 .. Ada.Streams.Stream_Element_Offset (ACK_Frame.Length)) :=
+             ACK_Frame.Data
+               (1 .. Ada.Streams.Stream_Element_Offset (ACK_Frame.Length));
+         Plaintext
+           (Ada.Streams.Stream_Element_Offset (ACK_Frame.Length + 1)
+              .. Ada.Streams.Stream_Element_Offset
+                   (ACK_Frame.Length + Frame.Length)) :=
+             Frame.Data
+               (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length));
+         Plaintext_Length := ACK_Frame.Length + Frame.Length;
+         Result.ACK_Included := True;
+      else
+         Plaintext
+           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)) :=
+             Frame.Data
+               (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length));
+         Plaintext_Length := Frame.Length;
+      end if;
       Application_Connection.Build_One_RTT
         (Item.Packets,
-         Frame.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
+         Plaintext
+           (1 .. Ada.Streams.Stream_Element_Offset (Plaintext_Length)),
          Packet, Built);
       Result.Number := Built.Number;
       if Built.Status /= Application_Connection.Built then
@@ -484,8 +521,8 @@ package body Flyology.QUIC.Application_Space is
       Item.Latest_ACK_Eliciting := Now;
       Retain_New_Frame
         (Item, Built.Number,
-         Frame.Data
-           (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)));
+         Plaintext
+           (1 .. Ada.Streams.Stream_Element_Offset (Plaintext_Length)));
       Result.Status := Sent;
    end Build_Stream_Packet;
 

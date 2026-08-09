@@ -82,6 +82,7 @@ private package Flyology.QUIC.Application_Space is
       Status        : Send_Status := Output_Too_Small;
       Number        : Packet_Number := 0;
       Packet_Length : Natural range 0 .. Max_Datagram_Length := 0;
+      ACK_Included  : Boolean := False;
    end record;
 
    procedure Build_Stream_Packet
@@ -92,7 +93,8 @@ private package Flyology.QUIC.Application_Space is
       Data      : Ada.Streams.Stream_Element_Array;
       Now       : Timestamp;
       Packet    : out Ada.Streams.Stream_Element_Array;
-      Result    : out Send_Result)
+      Result    : out Send_Result;
+      Include_ACK : Boolean := False)
    with
      Pre => Is_Initialized (Item)
        and then Data'Length <= Max_Stream_Payload
@@ -297,6 +299,7 @@ private package Flyology.QUIC.Application_Space is
 
    function Retained_Packets (Item : State) return Sent_Packet_Policy.Sent_Count;
    function Committed_Data (Item : State) return Varint_Policy.Value_Type;
+   function Received_Data (Item : State) return Varint_Policy.Value_Type;
    function Bytes_In_Flight (Item : State) return Recovery_Policy.Byte_Count;
    function Congestion_Window (Item : State) return Recovery_Policy.Byte_Count;
    function Has_RTT_Sample (Item : State) return Boolean;

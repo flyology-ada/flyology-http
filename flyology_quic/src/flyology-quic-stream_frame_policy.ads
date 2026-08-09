@@ -13,7 +13,12 @@ is
    use type Ada.Streams.Stream_Element_Offset;
 
    Max_Frame_Length : constant := 65_535;
-   Max_Data_Length  : constant := Max_Frame_Length - 25;
+   --  Parsing remains protocol-bounded, while application sends are capped by
+   --  the 1,100-byte QUIC stream payload profile.  Keeping the encoder result
+   --  at the retransmittable packet bound avoids clearing and copying a 64 KiB
+   --  record for every small STREAM frame.
+   Max_Encoded_Length : constant := 1_125;
+   Max_Data_Length    : constant := Max_Encoded_Length - 25;
 
    subtype Frame_Offset is
      Ada.Streams.Stream_Element_Offset range 0 .. Max_Frame_Length;
@@ -53,11 +58,11 @@ is
 
    type Encode_Status is (Encoded, Stream_Range_Too_Large);
 
-   subtype Encoded_Length is Natural range 0 .. Max_Frame_Length;
+   subtype Encoded_Length is Natural range 0 .. Max_Encoded_Length;
 
    type Encode_Result is record
       Status : Encode_Status := Stream_Range_Too_Large;
-      Data   : Ada.Streams.Stream_Element_Array (1 .. Max_Frame_Length) :=
+      Data   : Ada.Streams.Stream_Element_Array (1 .. Max_Encoded_Length) :=
         (others => 0);
       Length : Encoded_Length := 0;
    end record;

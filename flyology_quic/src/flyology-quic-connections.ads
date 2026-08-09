@@ -158,6 +158,11 @@ package Flyology.QUIC.Connections is
    --  @return True when 1-RTT traffic can be exchanged
    function Is_Connected (Item : Connection) return Boolean;
 
+   --  Return the cumulative application stream bytes committed by the peer.
+   --  @param Item Connection to inspect
+   --  @return Monotonic connection-level receive-flow-control consumption
+   function Received_Data (Item : Connection) return Stream_Offset;
+
    --  Report whether the TLS handshake has QUIC-level confirmation.
    --  Servers confirm after accepting client Finished; clients confirm only
    --  after receiving HANDSHAKE_DONE.
@@ -319,6 +324,25 @@ package Flyology.QUIC.Connections is
       Now    : Timestamp := 0)
    with Pre => Packet'Length <= Max_Datagram_Length;
 
+   --  Process one UDP payload while allowing a newly required application
+   --  ACK to be carried by the caller's next response packet.
+   --  @param Item Initialized connection
+   --  @param Packet Complete UDP payload
+   --  @param Output Immediate non-deferred response datagrams
+   --  @param Status Transition outcome
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
+   --  @param Defer_Application_ACK Whether an application ACK may be deferred
+   --  @param ACK_Deferred True when the caller must send or coalesce that ACK
+   procedure Process_Datagram
+     (Item                  : in out Connection;
+      Packet                : Ada.Streams.Stream_Element_Array;
+      Output                : out Datagram_Batch;
+      Status                : out Operation_Status;
+      Now                   : Timestamp;
+      Defer_Application_ACK : Boolean;
+      ACK_Deferred          : out Boolean)
+   with Pre => Packet'Length <= Max_Datagram_Length;
+
    --  Outcome of processing a recovery timer expiration.
    --  @enum Probes_Ready Output contains one or two ACK-eliciting PTO probes
    --  @enum Not_Due The current recovery deadline is still in the future
@@ -435,6 +459,31 @@ package Flyology.QUIC.Connections is
       Now    : Timestamp;
       Packet : out Datagram;
       Status : out Send_Status)
+   with Pre => Is_Connected (Item)
+     and then Data'Length <= Max_Stream_Payload;
+
+   --  Build one protected STREAM packet and include the current application
+   --  ACK when both frames fit. ACK_Included is false when no ACK is pending
+   --  or the combined plaintext is too large.
+   --  @param Item Connected endpoint
+   --  @param ID QUIC stream identifier
+   --  @param Offset Absolute stream offset of Data
+   --  @param Fin Whether this packet sets the final stream size
+   --  @param Data Stream payload
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   --  @param ACK_Included Whether the datagram carries an ACK frame
+   procedure Build_Stream_Datagram_With_ACK
+     (Item         : in out Connection;
+      ID           : Stream_ID;
+      Offset       : Stream_Offset;
+      Fin          : Boolean;
+      Data         : Ada.Streams.Stream_Element_Array;
+      Now          : Timestamp;
+      Packet       : out Datagram;
+      Status       : out Send_Status;
+      ACK_Included : out Boolean)
    with Pre => Is_Connected (Item)
      and then Data'Length <= Max_Stream_Payload;
 
