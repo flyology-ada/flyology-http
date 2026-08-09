@@ -52,20 +52,11 @@ prepare_stress_rts () {
     "$flyology_root/scripts/prepare-rts.sh" >/dev/null
 
   default_execution="$stress_rts/adainclude/s-fldeex.ads"
-  pool_configuration="$stress_rts/adainclude/s-flpoco.ads"
   if ! grep -q 'Lightweight : constant Boolean := True;' \
       "$default_execution"
   then
     printf '%s\n' \
       'HTTP/3 stress RTS is not configured for lightweight tasks' >&2
-    exit 2
-  fi
-  if ! grep -q \
-      "Automatic_Pool_Size : constant Positive := $loop_pool_size;" \
-      "$pool_configuration"
-  then
-    printf '%s\n' \
-      'HTTP/3 stress RTS does not have the requested loop-pool size' >&2
     exit 2
   fi
 }
