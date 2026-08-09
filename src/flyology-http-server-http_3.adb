@@ -1169,15 +1169,12 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Item.Response_Ended := True;
    end Mark_Failed;
 
-   type Header_Block_Access is access H3.Header_Block;
-
-   procedure Free_Header_Block is new Ada.Unchecked_Deallocation
-     (H3.Header_Block, Header_Block_Access);
-
    type Request_Slot is record
       Occupied    : Boolean := False;
       Stream      : QUIC.Stream_ID := 0;
-      Headers     : Header_Block_Access := null;
+      Value       : aliased Request;
+      Authority   : Unbounded_String;
+      Has_Host    : Boolean := False;
       Saw_Headers : Boolean := False;
       Payload_Bytes : Bytes.Unbounded_Bytes;
       Started     : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
@@ -1260,62 +1257,33 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Send (State.all, Control, Handshake_Timeout);
       end Start_HTTP_3;
 
-      function Header_Value
-        (Fields : H3.Header_Block; Name : String) return String is
-      begin
-         for Index in 1 .. H3.Header_Count (Fields) loop
-            if H3.Field_Name (H3.Field_At (Fields, Index)) = Name then
-               return H3.Field_Value (H3.Field_At (Fields, Index));
-            end if;
-         end loop;
-         return "";
-      end Header_Value;
-
       procedure Dispatch_Request (Slot : Positive) is
-         Method : constant String := Header_Value
-           (Requests (Slot).Headers.all, ":method");
-         Target : constant String := Header_Value
-           (Requests (Slot).Headers.all, ":path");
-         Authority : constant String := Header_Value
-           (Requests (Slot).Headers.all, ":authority");
+         Method : constant String :=
+           To_String (Requests (Slot).Value.Method_Value);
+         Target : constant String :=
+           To_String (Requests (Slot).Value.Target_Value);
+         Authority : constant String :=
+           To_String (Requests (Slot).Authority);
          Validated : constant Flyology.HTTP.Method := To_Method (Method);
          pragma Unreferenced (Validated);
          Backend : aliased Stream_Backend;
-         Value : aliased Request;
          Deadline : constant Ada.Real_Time.Time :=
            (if Timeout < 0.0 then Ada.Real_Time.Time_Last
             else Requests (Slot).Started +
               Ada.Real_Time.To_Time_Span (Timeout));
          X : Applications.Exchange := Applications.Internals.Create
-           (Value, Backend'Access, State.Peer, Token, Deadline,
+           (Requests (Slot).Value, Backend'Access, State.Peer, Token,
+            Deadline,
             Secure_HTTPS);
       begin
          if Method = "CONNECT" or else Target = "" then
             raise Protocol_Error with
               "HTTP/3 CONNECT is not supported by the application adapter";
          end if;
-         Value.Method_Value := To_Unbounded_String (Method);
-         Value.Target_Value := To_Unbounded_String (Target);
-         Value.Version_Value := HTTP_1_1;
-         Value.Protocol_Value := HTTP_3_Protocol;
-         Value.Keep_Alive := True;
-         for Index in 1 .. H3.Header_Count (Requests (Slot).Headers.all) loop
-            declare
-               Field : constant H3.Header_Field :=
-                 H3.Field_At (Requests (Slot).Headers.all, Index);
-               Name : constant String := H3.Field_Name (Field);
-            begin
-               if Name'Length > 0 and then Name (Name'First) /= ':' then
-                  Append
-                    (Value.Header_Block,
-                     Name & ": " & H3.Field_Value (Field) & CRLF);
-               end if;
-            end;
-         end loop;
-         if Authority /= "" and then Header_Value
-           (Requests (Slot).Headers.all, "host") = ""
-         then
-            Append (Value.Header_Block, "Host: " & Authority & CRLF);
+         if Authority /= "" and then not Requests (Slot).Has_Host then
+            Append
+              (Requests (Slot).Value.Header_Block,
+               "Host: " & Authority & CRLF);
          end if;
          Backend.Owner := State;
          Backend.Stream := Requests (Slot).Stream;
@@ -1399,10 +1367,10 @@ package body Flyology.HTTP.Server.HTTP_3 is
       begin
          Requests (Slot).Occupied := False;
          Requests (Slot).Stream := 0;
+         Requests (Slot).Value := (others => <>);
+         Requests (Slot).Authority := Null_Unbounded_String;
+         Requests (Slot).Has_Host := False;
          Requests (Slot).Saw_Headers := False;
-         if Requests (Slot).Headers /= null then
-            H3.Clear (Requests (Slot).Headers.all);
-         end if;
          Requests (Slot).Started := Ada.Real_Time.Time_Last;
          Bytes.Clear (Requests (Slot).Payload_Bytes);
       end Release;
@@ -1425,16 +1393,42 @@ package body Flyology.HTTP.Server.HTTP_3 is
                   Requests (Slot).Occupied := True;
                   Requests (Slot).Stream := Value.Stream;
                   Requests (Slot).Started := Ada.Real_Time.Clock;
-                  if Requests (Slot).Headers = null then
-                     Requests (Slot).Headers := new H3.Header_Block;
-                  end if;
                end if;
                if not Requests (Slot).Saw_Headers then
-                  H3.Clear (Requests (Slot).Headers.all);
+                  Requests (Slot).Value := (others => <>);
+                  Requests (Slot).Authority := Null_Unbounded_String;
+                  Requests (Slot).Has_Host := False;
+                  Requests (Slot).Value.Version_Value := HTTP_1_1;
+                  Requests (Slot).Value.Protocol_Value := HTTP_3_Protocol;
+                  Requests (Slot).Value.Keep_Alive := True;
                   for Index in 1 .. H3.Header_Count (Value.Headers) loop
-                     H3.Append
-                       (Requests (Slot).Headers.all,
-                        H3.Field_At (Value.Headers, Index));
+                     declare
+                        Field : constant H3.Header_Field :=
+                          H3.Field_At (Value.Headers, Index);
+                        Name : constant String := H3.Field_Name (Field);
+                        Field_Value : constant String :=
+                          H3.Field_Value (Field);
+                     begin
+                        if Name = ":method" then
+                           Requests (Slot).Value.Method_Value :=
+                             To_Unbounded_String (Field_Value);
+                        elsif Name = ":path" then
+                           Requests (Slot).Value.Target_Value :=
+                             To_Unbounded_String (Field_Value);
+                        elsif Name = ":authority" then
+                           Requests (Slot).Authority :=
+                             To_Unbounded_String (Field_Value);
+                        elsif Name'Length > 0
+                          and then Name (Name'First) /= ':'
+                        then
+                           Append
+                             (Requests (Slot).Value.Header_Block,
+                              Name & ": " & Field_Value & CRLF);
+                           if Name = "host" then
+                              Requests (Slot).Has_Host := True;
+                           end if;
+                        end if;
+                     end;
                   end loop;
                   Requests (Slot).Saw_Headers := True;
                end if;
@@ -1483,11 +1477,6 @@ package body Flyology.HTTP.Server.HTTP_3 is
       procedure Cleanup is
       begin
          if Requests /= null then
-            for Index in Requests.all'Range loop
-               if Requests (Index).Headers /= null then
-                  Free_Header_Block (Requests (Index).Headers);
-               end if;
-            end loop;
             Free_Request_Array (Requests);
          end if;
          if State /= null then
