@@ -12,6 +12,7 @@ package Flyology.HTTP.Server.Applications.Internals is
       Backend  : not null access Exchange_Backends.Backend'Class;
       Peer     : Flyology.IO.Sockets.Endpoint;
       Token    : access Flyology.Cancellation.Token;
-      Deadline : Ada.Real_Time.Time) return Exchange;
+      Deadline : Ada.Real_Time.Time;
+      Scheme   : Origin_Scheme := Plain_HTTP) return Exchange;
 
 end Flyology.HTTP.Server.Applications.Internals;

@@ -1282,7 +1282,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
             else Requests (Slot).Started +
               Ada.Real_Time.To_Time_Span (Timeout));
          X : Applications.Exchange := Applications.Internals.Create
-           (Value, Backend'Access, State.Peer, Token, Deadline);
+           (Value, Backend'Access, State.Peer, Token, Deadline,
+            Secure_HTTPS);
       begin
          if Method = "CONNECT" or else Target = "" then
             raise Protocol_Error with

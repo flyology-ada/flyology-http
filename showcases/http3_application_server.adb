@@ -24,6 +24,7 @@ procedure HTTP3_Application_Server is
      Flyology.HTTP.Server.Development_Certificates;
    use type Ada.Streams.Stream_Element_Offset;
    use type Files.Count;
+   use type Sockets.Port;
 
    function Read_File
      (Path : String; Maximum : Positive)
@@ -80,12 +81,24 @@ procedure HTTP3_Application_Server is
       Private_Key_PEM : String;
       Certificate_DER : Ada.Streams.Stream_Element_Array;
       Private_Key     : QUIC.Ed25519_Private_Key;
-      Port            : Sockets.Port;
+      HTTPS_Port      : Sockets.Port;
+      HTTP_Port       : Sockets.Port;
       Temporary_Identity : access Development_Certificates.Identity := null)
    is
-      Port_Text : constant String :=
-        Ada.Strings.Fixed.Trim (Sockets.Port'Image (Port), Ada.Strings.Both);
+      HTTPS_Port_Text : constant String :=
+        Ada.Strings.Fixed.Trim
+          (Sockets.Port'Image (HTTPS_Port), Ada.Strings.Both);
+      HTTP_Port_Text : constant String :=
+        Ada.Strings.Fixed.Trim
+          (Sockets.Port'Image (HTTP_Port), Ada.Strings.Both);
    begin
+      if HTTPS_Port = Sockets.Any_Port
+        or else HTTP_Port = Sockets.Any_Port
+        or else HTTPS_Port = HTTP_Port
+      then
+         raise Constraint_Error with
+           "HTTP and HTTPS ports must be distinct and nonzero";
+      end if;
       OpenSSL.Initialize_Server
         (Backend,
          Certificate_File => Certificate_PEM,
@@ -95,34 +108,45 @@ procedure HTTP3_Application_Server is
          Development_Certificates.Discard (Temporary_Identity.all);
       end if;
       Ada.Text_IO.Put_Line
-        ("HTTP/1.1, HTTP/2, and HTTP/3 route ready on port " & Port_Text);
+        ("HTTP/1.1, HTTP/2, and HTTP/3 route ready on secure port " &
+         HTTPS_Port_Text);
       Ada.Text_IO.Put_Line
-        ("TLS test: curl -k https://127.0.0.1:" & Port_Text &
+        ("HTTP redirect: curl -i http://127.0.0.1:" & HTTP_Port_Text &
          "/hello/test");
       Ada.Text_IO.Put_Line
-        ("H3 test: curl -k --http3-only https://127.0.0.1:" & Port_Text &
+        ("TLS test: curl -k https://127.0.0.1:" & HTTPS_Port_Text &
+         "/hello/test");
+      Ada.Text_IO.Put_Line
+        ("H3 test: curl -k --http3-only https://127.0.0.1:" &
+         HTTPS_Port_Text &
          "/hello/test");
 
       Routes.Serve
         (State,
-         Sockets.Network_Endpoint (Sockets.Any_IPv4, Port),
-         Backend,
+         HTTP_Endpoint =>
+           Sockets.Network_Endpoint (Sockets.Any_IPv4, HTTP_Port),
+         HTTPS_Endpoint =>
+           Sockets.Network_Endpoint (Sockets.Any_IPv4, HTTPS_Port),
+         HTTPS_Origin => Flyology.HTTP.Parse_Origin
+           ("https://127.0.0.1:" & HTTPS_Port_Text),
+         TLS_Backend => Backend,
          Certificate_DER => Certificate_DER,
          Private_Key => Private_Key,
          Max_Connection_Age => -1.0,
          Token => Stop'Access);
    end Serve;
 begin
-   if Ada.Command_Line.Argument_Count not in 0 .. 1 | 4 .. 5 then
-      Ada.Text_IO.Put_Line ("usage: http3_application_server [PORT]");
+   if Ada.Command_Line.Argument_Count not in 0 .. 2 | 4 .. 6 then
+      Ada.Text_IO.Put_Line
+        ("usage: http3_application_server [HTTPS_PORT [HTTP_PORT]]");
       Ada.Text_IO.Put_Line
         ("   or: http3_application_server TLS_CERT.pem TLS_KEY.pem " &
-         "QUIC_CERT.der QUIC_KEY.raw [PORT]");
+         "QUIC_CERT.der QUIC_KEY.raw [HTTPS_PORT [HTTP_PORT]]");
       return;
    end if;
 
    Routes.Get ("/hello/{name}", Hello'Access, Name => "hello");
-   if Ada.Command_Line.Argument_Count <= 1 then
+   if Ada.Command_Line.Argument_Count <= 2 then
       Development_Certificates.Generate (Generated);
       Ada.Text_IO.Put_Line
         ("Generated temporary self-signed localhost identities " &
@@ -132,9 +156,12 @@ begin
          Development_Certificates.TLS_Private_Key_File (Generated),
          Development_Certificates.QUIC_Certificate_DER (Generated),
          Development_Certificates.QUIC_Private_Key (Generated),
-         (if Ada.Command_Line.Argument_Count = 1
+         (if Ada.Command_Line.Argument_Count >= 1
           then Sockets.Port'Value (Ada.Command_Line.Argument (1))
           else 4_433),
+         (if Ada.Command_Line.Argument_Count = 2
+          then Sockets.Port'Value (Ada.Command_Line.Argument (2))
+          else 4_080),
          Generated'Access);
    else
       declare
@@ -146,9 +173,12 @@ begin
          Serve
            (Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
             Certificate, QUIC.Ed25519_Private_Key'(Key_Data),
-            (if Ada.Command_Line.Argument_Count = 5
+            (if Ada.Command_Line.Argument_Count >= 5
              then Sockets.Port'Value (Ada.Command_Line.Argument (5))
-             else 4_433));
+             else 4_433),
+            (if Ada.Command_Line.Argument_Count = 6
+             then Sockets.Port'Value (Ada.Command_Line.Argument (6))
+             else 4_080));
       end;
    end if;
 end HTTP3_Application_Server;

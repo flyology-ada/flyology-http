@@ -19,7 +19,8 @@ package body Flyology.HTTP.Server.Applications is
       Item     : aliased in out Connection;
       Peer     : Flyology.IO.Sockets.Endpoint;
       Token    : access Flyology.Cancellation.Token;
-      Deadline : Ada.Real_Time.Time) return Exchange
+      Deadline : Ada.Real_Time.Time;
+      Scheme   : Origin_Scheme := Plain_HTTP) return Exchange
    is
    begin
       return Result : Exchange
@@ -30,6 +31,7 @@ package body Flyology.HTTP.Server.Applications is
       do
          Result.Peer_Value := Peer;
          Result.Deadline_Value := Deadline;
+         Result.Scheme_Value := Scheme;
       end return;
    end Create;
 
@@ -44,6 +46,9 @@ package body Flyology.HTTP.Server.Applications is
 
    function Request_Protocol (Item : Exchange) return Protocol is
      (Flyology.HTTP.Server.Request_Protocol (Item.Request_Handle.all));
+
+   function Request_Scheme (Item : Exchange) return Origin_Scheme is
+     (Item.Scheme_Value);
 
    function Request_Header (Item : Exchange; Name : String) return String is
      (Header (Item.Request_Handle.all, Name));

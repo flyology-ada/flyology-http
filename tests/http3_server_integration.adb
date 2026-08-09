@@ -32,6 +32,7 @@ procedure HTTP3_Server_Integration is
    use type H3.Event_Kind;
    use type H3.Operation_Status;
    use type QUIC.Operation_Status;
+   use type Flyology.HTTP.Origin_Scheme;
    use type Flyology.HTTP.Protocol;
 
    Certificate : constant String := "tests/fixtures/tls/server-cert.pem";
@@ -55,8 +56,11 @@ procedure HTTP3_Server_Integration is
    State : aliased Context;
    Server_Backend : aliased OpenSSL.OpenSSL_Provider;
    Probe : Sockets.Socket_Type;
+   HTTP_Probe : Sockets.Socket_Type;
    Address : Sockets.Endpoint;
+   HTTP_Address : Sockets.Endpoint;
    IPv6_Address : Sockets.Endpoint (Sockets.IPv6);
+   IPv6_HTTP_Address : Sockets.Endpoint (Sockets.IPv6);
 
    protected Outcome is
       procedure Fail (Message : String);
@@ -94,6 +98,7 @@ procedure HTTP3_Server_Integration is
       pragma Unreferenced (Application);
    begin
       pragma Assert (X.Request_Protocol = Flyology.HTTP.HTTP_3_Protocol);
+      pragma Assert (X.Request_Scheme = Flyology.HTTP.Secure_HTTPS);
       pragma Assert (X.Request_Method = "POST");
       pragma Assert (X.Parameter ("name") = "Ada");
       pragma Assert
@@ -108,10 +113,17 @@ procedure HTTP3_Server_Integration is
      (Application : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (Application);
    begin
-      pragma Assert
-        (X.Request_Protocol in Flyology.HTTP.HTTP_1_1_Protocol |
-           Flyology.HTTP.HTTP_2_Protocol);
-      X.Text (200, "same routes");
+      if X.Request_Scheme = Flyology.HTTP.Plain_HTTP then
+         pragma Assert
+           (X.Request_Protocol = Flyology.HTTP.HTTP_1_1_Protocol);
+         X.Text (200, "clear routes");
+      else
+         pragma Assert
+           (X.Request_Protocol in Flyology.HTTP.HTTP_1_1_Protocol |
+              Flyology.HTTP.HTTP_2_Protocol);
+         pragma Assert (X.Request_Scheme = Flyology.HTTP.Secure_HTTPS);
+         X.Text (200, "same routes");
+      end if;
    end Discover;
 begin
    Routes.Add_Middleware (Observe'Access);
@@ -135,9 +147,17 @@ begin
      (Probe,
       Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Sockets.Any_Port));
    Address := Sockets.Get_Socket_Name (Probe);
+   Sockets.Create_Socket (HTTP_Probe);
+   Sockets.Bind_Socket
+     (HTTP_Probe,
+      Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Sockets.Any_Port));
+   HTTP_Address := Sockets.Get_Socket_Name (HTTP_Probe);
+   Sockets.Close_Socket (HTTP_Probe);
    Sockets.Close_Socket (Probe);
    IPv6_Address := Sockets.Network_Endpoint
      (Sockets.Loopback_IPv6, Address.Port);
+   IPv6_HTTP_Address := Sockets.Network_Endpoint
+     (Sockets.Loopback_IPv6, HTTP_Address.Port);
 
    declare
       Stop : aliased Flyology.Cancellation.Token;
@@ -149,9 +169,17 @@ begin
       begin
          begin
             Routes.Serve
-              (State, Address, IPv6_Address, Server_Backend,
+              (State,
+               IPv4_HTTP_Endpoint => HTTP_Address,
+               IPv6_HTTP_Endpoint => IPv6_HTTP_Address,
+               IPv4_HTTPS_Endpoint => Address,
+               IPv6_HTTPS_Endpoint => IPv6_Address,
+               HTTPS_Origin => Flyology.HTTP.Parse_Origin
+                 ("https://localhost:" & Decimal (Natural (Address.Port))),
+               TLS_Backend => Server_Backend,
                Certificate_DER => Fixtures.Server_Certificate,
                Private_Key => Fixtures.Server_Private_Key,
+               Cleartext_Capacity => 4,
                TCP_Capacity => 4,
                --  Three H3 profiles run per address family. A new Initial may
                --  overtake a preceding close across different UDP sockets.
@@ -478,13 +506,13 @@ begin
             raise;
       end Run_Client;
 
-      procedure Await_Server is
+      procedure Await_Server (Endpoint : Sockets.Endpoint) is
          Socket : Sockets.Socket_Type;
       begin
          for Attempt in 1 .. 100 loop
             begin
                Sockets.Create_Socket (Socket, Sockets.IPv4);
-               Sockets.Connect_Socket (Socket, Address);
+               Sockets.Connect_Socket (Socket, Endpoint);
                Sockets.Close_Socket (Socket);
                return;
             exception
@@ -500,7 +528,35 @@ begin
          end loop;
       end Await_Server;
    begin
-      Await_Server;
+      Await_Server (Address);
+      Await_Server (HTTP_Address);
+      declare
+         HTTP : aliased Client.Client (Capacity => 1);
+         Request : Client.Request;
+      begin
+         Client.Configure
+           (HTTP,
+            Flyology.HTTP.Parse_Origin
+              ("http://localhost:" &
+               Decimal (Natural (HTTP_Address.Port))));
+         Client.Set_Target (Request, "/discover?source=cleartext");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert (Client.Status (Reply) = 308);
+            pragma Assert
+              (Client.Negotiated_Protocol (Reply) =
+                 Flyology.HTTP.HTTP_1_1_Protocol);
+            pragma Assert
+              (Client.Header (Reply, "Location") =
+                 "https://localhost:" & Decimal (Natural (Address.Port)) &
+                 "/discover?source=cleartext");
+            pragma Assert
+              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) = "");
+         end;
+         Client.Shutdown (HTTP);
+      end;
       declare
          task First_Client;
          task Second_Client;
@@ -524,6 +580,95 @@ begin
          null;
       end;
 
+      Stop.Request;
+   exception
+      when others =>
+         Stop.Request;
+         raise;
+   end;
+
+   --  Exercise the alternative cleartext policy independently of redirect.
+   --  The same registered route observes Plain_HTTP, and direct cleartext
+   --  responses do not advertise a secure HTTP/3 alternative.
+   declare
+      Stop : aliased Flyology.Cancellation.Token;
+      task type Server_Task_Type;
+      for Server_Task_Type'Storage_Size use 16 * 1_024 * 1_024;
+      Server_Task : Server_Task_Type;
+
+      task body Server_Task_Type is
+      begin
+         begin
+            Routes.Serve
+              (State,
+               HTTP_Endpoint => HTTP_Address,
+               HTTPS_Endpoint => Address,
+               HTTPS_Origin => Flyology.HTTP.Parse_Origin
+                 ("https://localhost:" & Decimal (Natural (Address.Port))),
+               TLS_Backend => Server_Backend,
+               Certificate_DER => Fixtures.Server_Certificate,
+               Private_Key => Fixtures.Server_Private_Key,
+               Cleartext => Routing.Serve_Cleartext,
+               Cleartext_Capacity => 1,
+               TCP_Capacity => 1,
+               HTTP_3_Capacity => 1,
+               Timeout => 10.0,
+               Handshake_Timeout => 10.0,
+               Max_Connection_Age => 20.0,
+               Drain_Timeout => 10.0,
+               Token => Stop'Access);
+         exception
+            when Error : others =>
+               Outcome.Fail (Ada.Exceptions.Exception_Information (Error));
+               Stop.Request;
+         end;
+      end Server_Task_Type;
+
+      procedure Await_Cleartext is
+         Socket : Sockets.Socket_Type;
+      begin
+         for Attempt in 1 .. 100 loop
+            begin
+               Sockets.Create_Socket (Socket, Sockets.IPv4);
+               Sockets.Connect_Socket (Socket, HTTP_Address);
+               Sockets.Close_Socket (Socket);
+               return;
+            exception
+               when Sockets.Socket_Error | Flyology.IO.Device_Error =>
+                  if Sockets.Is_Open (Socket) then
+                     Sockets.Close_Socket (Socket);
+                  end if;
+                  if Attempt = 100 then
+                     raise;
+                  end if;
+                  delay 0.01;
+            end;
+         end loop;
+      end Await_Cleartext;
+   begin
+      Await_Cleartext;
+      declare
+         HTTP : aliased Client.Client (Capacity => 1);
+         Request : Client.Request;
+      begin
+         Client.Configure
+           (HTTP,
+            Flyology.HTTP.Parse_Origin
+              ("http://localhost:" &
+               Decimal (Natural (HTTP_Address.Port))));
+         Client.Set_Target (Request, "/discover");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert (Client.Status (Reply) = 200);
+            pragma Assert (Client.Header (Reply, "Alt-Svc") = "");
+            pragma Assert
+              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                 "clear routes");
+         end;
+         Client.Shutdown (HTTP);
+      end;
       Stop.Request;
    exception
       when others =>

@@ -1,8 +1,8 @@
 # Flyology HTTP
 
-> Experimental HTTP/1.1 client and server library with opt-in HTTP/2 client and application-server engines for native and lightweight Flyology tasks.
+> Experimental HTTP/1.1, HTTP/2, and HTTP/3 client and application-server library for native and lightweight Flyology tasks.
 
-Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an origin-bound HTTP client with bounded connection pools, an opt-in multiplexed HTTP/2 transport, and streaming response bodies; a single-session origin-bound WebSocket client; and HTTP/1.1 and HTTP/2 application servers with routing, middleware, streaming, SSE, and provider-neutral TLS. The HTTP/2 server shares `Applications.Exchange` and router definitions with HTTP/1.1, while the raw connection API remains HTTP/1.x-specific. HTTP/2 supports TLS ALPN and cleartext prior knowledge. It does not provide h2c Upgrade, HTTP/2 server push or WebSockets, proxying, or content decoding, and it makes no production-qualification claim.
+Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an origin-bound HTTP client with bounded connection pools, multiplexed HTTP/2, direct or Alt-Svc-discovered HTTP/3, and streaming response bodies; a single-session origin-bound WebSocket client; and routed HTTP/1.1, HTTP/2, and HTTP/3 application servers. The unified server can own a distinct cleartext HTTP/1.x endpoint beside TLS/TCP HTTP/1.1 and HTTP/2 plus QUIC/UDP HTTP/3, routing or redirecting cleartext requests to a configured HTTPS origin. All three versions share `Applications.Exchange`, routes, middleware, and explicit scheme metadata, while the raw connection API remains HTTP/1.x-specific. HTTP/2 supports TLS ALPN and cleartext prior knowledge. The current HTTP/3 profile uses static-table QPACK and bounded sequential client reuse. The library makes no production-qualification claim.
 
 ## Primary documentation
 
@@ -32,4 +32,5 @@ Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an or
 - Server protocol: Flyology.HTTP.Server
 - Server applications: Flyology.HTTP.Server.Applications
 - HTTP/2 server: Flyology.HTTP.Server.HTTP_2
-- Routed HTTP/1.1 and HTTP/2 server: Flyology.HTTP.Server.Routing
+- HTTP/3 engine: Flyology.HTTP.HTTP_3
+- Routed HTTP/1.1, HTTP/2, and HTTP/3 server: Flyology.HTTP.Server.Routing

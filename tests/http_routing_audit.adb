@@ -28,6 +28,7 @@ procedure HTTP_Routing_Audit is
    use Ada.Strings.Unbounded;
    use type Ada.Real_Time.Time;
    use type Ada.Streams.Stream_Element_Offset;
+   use type Flyology.HTTP.Origin_Scheme;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    Test_Peer : constant Sockets.Endpoint :=
@@ -174,6 +175,12 @@ procedure HTTP_Routing_Audit is
         (State : in out Context;
          X     : in out Applications.Exchange) is
       begin
+         if X.Request_Scheme /= Flyology.HTTP.Plain_HTTP then
+            Failures := Failures + 1;
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "FAIL default routed request scheme is not cleartext HTTP");
+         end if;
          State.Route := To_Unbounded_String (X.Route_Name);
          State.Path := To_Unbounded_String (X.Path);
          X.Text (200, X.Route_Name);

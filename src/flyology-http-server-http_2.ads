@@ -29,12 +29,15 @@ package Flyology.HTTP.Server.HTTP_2 is
    --  @param Timeout Per-stream application deadline
    --  @param Max_Connection_Age Connection deadline; negative is unlimited
    --  @param Token Optional connection cancellation source
+   --  @param Scheme Origin scheme used to receive streams on this connection
    procedure Serve
      (Context            : in out App_Context;
       Channel            : in out Flyology.IO.Connections.Connection;
       Peer               : Flyology.IO.Sockets.Endpoint;
       Timeout            : Duration := 30.0;
       Max_Connection_Age : Duration := 300.0;
-      Token              : access Flyology.Cancellation.Token := null);
+      Token              : access Flyology.Cancellation.Token := null;
+      Scheme             : Flyology.HTTP.Origin_Scheme :=
+        Flyology.HTTP.Plain_HTTP);
 
 end Flyology.HTTP.Server.HTTP_2;

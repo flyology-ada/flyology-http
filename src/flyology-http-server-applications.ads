@@ -68,13 +68,15 @@ package Flyology.HTTP.Server.Applications is
    --  @param Peer Connected peer address
    --  @param Token Optional borrowed cancellation token
    --  @param Deadline Absolute monotonic request deadline
+   --  @param Scheme Origin scheme used to receive the request
    --  @return Request-scoped exchange
    function Create
       (Value    : aliased in out Request;
       Item     : aliased in out Connection;
       Peer     : Flyology.IO.Sockets.Endpoint;
       Token    : access Flyology.Cancellation.Token;
-      Deadline : Ada.Real_Time.Time) return Exchange;
+      Deadline : Ada.Real_Time.Time;
+      Scheme   : Origin_Scheme := Plain_HTTP) return Exchange;
 
    --  Return a copy of the parsed request. Body storage is present after a
    --  buffered body policy has completed.
@@ -96,6 +98,12 @@ package Flyology.HTTP.Server.Applications is
    --  @param Item Request exchange
    --  @return HTTP/1.1, HTTP/2, or HTTP/3
    function Request_Protocol (Item : Exchange) return Protocol;
+
+   --  Return whether the request arrived over cleartext HTTP or secure HTTPS.
+   --  This is independent of the negotiated HTTP protocol version.
+   --  @param Item Request exchange
+   --  @return Plain_HTTP or Secure_HTTPS
+   function Request_Scheme (Item : Exchange) return Origin_Scheme;
 
    --  Return a case-insensitive request header value. Repeated fields retain
    --  the core parser's comma-joined wire order.
@@ -586,6 +594,7 @@ private
         Ada.Task_Identification.Current_Task;
       Peer_Value        : Flyology.IO.Sockets.Endpoint;
       Deadline_Value    : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
+      Scheme_Value      : Origin_Scheme := Plain_HTTP;
       Route_Value       : Unbounded_String;
       Path_Value        : Unbounded_String;
       Parameters        : Parameter_Array;

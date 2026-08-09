@@ -1893,7 +1893,9 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Peer               : Flyology.IO.Sockets.Endpoint;
       Timeout            : Duration := 30.0;
       Max_Connection_Age : Duration := 300.0;
-      Token              : access Flyology.Cancellation.Token := null)
+      Token              : access Flyology.Cancellation.Token := null;
+      Scheme             : Flyology.HTTP.Origin_Scheme :=
+        Flyology.HTTP.Plain_HTTP)
    is
       State : aliased Session_State;
       type Backend_Array is array
@@ -1913,7 +1915,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Backend : Stream_Backend renames Backends_By_Slot (Slot).all;
          X : Applications.Exchange := Applications.Internals.Create
            (Backend.Request_Value, Backend'Access, Peer,
-            Backend.Token'Access, Backend.Deadline);
+            Backend.Token'Access, Backend.Deadline, Scheme);
       begin
          begin
             Handle (Context, X);

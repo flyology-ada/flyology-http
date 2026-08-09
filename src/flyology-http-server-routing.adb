@@ -1166,10 +1166,12 @@ package body Flyology.HTTP.Server.Routing is
       Value      : aliased in out Request;
       Peer       : Flyology.IO.Sockets.Endpoint;
       Token      : access Flyology.Cancellation.Token := null;
-      Alt_Svc    : String := "")
+      Alt_Svc    : String := "";
+      Scheme     : Origin_Scheme := Plain_HTTP)
    is
       X : App.Exchange := App.Create
-        (Value, Connection, Peer, Token, Request_Deadline (Connection));
+        (Value, Connection, Peer, Token, Request_Deadline (Connection),
+         Scheme);
    begin
       if Alt_Svc /= "" then
          X.Set_Header ("Alt-Svc", Alt_Svc);
@@ -1187,7 +1189,8 @@ package body Flyology.HTTP.Server.Routing is
       Max_Requests : Natural := 1_000;
       Token        : access Flyology.Cancellation.Token := null;
       Header_Timeout : Duration := -1.0;
-      Alt_Svc      : String := "")
+      Alt_Svc      : String := "";
+      Scheme       : Origin_Scheme := Plain_HTTP)
    is
       Value  : aliased Request;
       Closed : Boolean;
@@ -1286,7 +1289,8 @@ package body Flyology.HTTP.Server.Routing is
          end if;
          begin
             Dispatch
-              (Item, Context, Connection, Value, Peer, Token, Alt_Svc);
+              (Item, Context, Connection, Value, Peer, Token, Alt_Svc,
+               Scheme);
          exception
             when Flyology.Cancellation.Operation_Cancelled |
                  Flyology.IO.Timeout_Error |
@@ -1325,7 +1329,8 @@ package body Flyology.HTTP.Server.Routing is
       Token              : access Flyology.Cancellation.Token := null;
       Header_Timeout     : Duration := -1.0;
       Ingress            : access Ingress_Budget := null;
-      Alt_Svc            : String := "")
+      Alt_Svc            : String := "";
+      Scheme             : Origin_Scheme := Plain_HTTP)
    is
       procedure Serve_HTTP_1 is
          Transport : aliased
@@ -1339,7 +1344,7 @@ package body Flyology.HTTP.Server.Routing is
          end if;
          Serve
            (Item, Context, Connection, Peer, Timeout, Max_Connection_Age,
-            Max_Requests, Token, Header_Timeout, Alt_Svc);
+            Max_Requests, Token, Header_Timeout, Alt_Svc, Scheme);
       end Serve_HTTP_1;
 
       procedure Dispatch_HTTP_2
@@ -1358,7 +1363,8 @@ package body Flyology.HTTP.Server.Routing is
       procedure Serve_HTTP_2 is
       begin
          HTTP_2_Engine.Serve
-           (Context, Channel, Peer, Timeout, Max_Connection_Age, Token);
+           (Context, Channel, Peer, Timeout, Max_Connection_Age, Token,
+            Scheme);
       end Serve_HTTP_2;
    begin
       case Mode is
@@ -1448,7 +1454,8 @@ package body Flyology.HTTP.Server.Routing is
             Token              => Cancellation,
             Header_Timeout     => Header_Timeout,
             Ingress            => State.Ingress,
-            Alt_Svc            => Alt_Svc);
+            Alt_Svc            => Alt_Svc,
+            Scheme             => Secure_HTTPS);
       exception
          --  A peer can disconnect, probe, or lose a dual-stack connection
          --  race before completing TLS. That terminates this accepted
@@ -1614,6 +1621,458 @@ package body Flyology.HTTP.Server.Routing is
          Request_Stop;
          Close_If_Open (UDP_Listener);
          Close_If_Open (TCP_Listener);
+         raise;
+   end Serve;
+
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      HTTP_Endpoint        : Flyology.IO.Sockets.Endpoint;
+      HTTPS_Endpoint       : Flyology.IO.Sockets.Endpoint;
+      HTTPS_Origin         : Origin;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Cleartext            : Cleartext_Policy := Redirect_To_HTTPS;
+      Cleartext_Capacity   : Positive := 64;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 128;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 100_000;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
+   is
+      package Sockets renames Flyology.IO.Sockets;
+
+      type Cleartext_Context is limited record
+         Routes      : access Router;
+         Application : access App_Context;
+         Policy      : Cleartext_Policy;
+         Origin      : Flyology.HTTP.Origin;
+         Ingress     : access Ingress_Budget;
+      end record;
+
+      procedure Handle_Cleartext
+        (State        : in out Cleartext_Context;
+         Channel      : in out Flyology.IO.Connections.Connection;
+         Peer         : Sockets.Endpoint;
+         Cancellation : not null access
+           Flyology.IO.Connections.Cancellation_Token)
+      is
+      begin
+         if State.Policy = Serve_Cleartext then
+            State.Routes.Serve
+              (State.Application.all, Channel, Peer,
+               Mode               => HTTP_1_Only,
+               Timeout            => Timeout,
+               Max_Connection_Age => Max_Connection_Age,
+               Max_Requests       => TCP_Max_Requests,
+               Token              => Cancellation,
+               Header_Timeout     => Header_Timeout,
+               Ingress            => State.Ingress,
+               Scheme             => Plain_HTTP);
+            return;
+         end if;
+
+         declare
+            Transport : aliased
+              Flyology.HTTP.Server.Connections.Connection_Transport
+                (Channel'Access);
+            HTTP_Connection : aliased Flyology.HTTP.Server.Connection
+              (Transport'Access);
+            Value  : Request;
+            Closed : Boolean;
+            Request_Timeout : constant Duration :=
+              (if Max_Connection_Age < 0.0 then Timeout
+               elsif Timeout < 0.0 then Max_Connection_Age
+               else Duration'Min (Timeout, Max_Connection_Age));
+            Head_Timeout : constant Duration :=
+              (if Header_Timeout < 0.0 then Request_Timeout
+               elsif Request_Timeout < 0.0 then Header_Timeout
+               else Duration'Min (Header_Timeout, Request_Timeout));
+
+            procedure Reject (Status : Positive; Message : String) is
+            begin
+               if not Response_Started (HTTP_Connection) then
+                  begin
+                     Respond
+                       (HTTP_Connection, Status,
+                        "text/plain; charset=utf-8",
+                        Message & Character'Val (10), Close => True,
+                        Timeout => Request_Timeout, Token => Cancellation);
+                  exception
+                     when others => null;
+                  end;
+               end if;
+            end Reject;
+         begin
+            Read_Request_Head
+              (HTTP_Connection, Value, Closed,
+               Header_Timeout  => Head_Timeout,
+               Request_Timeout => Request_Timeout,
+               Max_Body        => Max_Request_Body,
+               Token           => Cancellation);
+            if Closed then
+               return;
+            end if;
+
+            declare
+               Raw_Target : constant String := Target (Value);
+               Path : constant String :=
+                 (if Raw_Target = "*" then "/"
+                  else Raw_Path (Raw_Target) &
+                    Raw_Query_Suffix (Raw_Target));
+            begin
+               if Path = "" or else Path (Path'First) /= '/' then
+                  Respond
+                    (HTTP_Connection, 400, "text/plain; charset=utf-8",
+                     "bad request" & Character'Val (10), Close => True,
+                     Timeout => Request_Timeout, Token => Cancellation);
+               else
+                  Respond
+                    (HTTP_Connection, 308, "", "",
+                     Extra_Headers =>
+                       "Location: " & Flyology.HTTP.Image (State.Origin) &
+                       Path & Character'Val (13) & Character'Val (10),
+                     Close => True, Timeout => Request_Timeout,
+                     Token => Cancellation);
+               end if;
+            end;
+         exception
+            when Payload_Too_Large =>
+               Reject (413, "request content is too large");
+            when Expectation_Failed =>
+               Reject (417, "request expectation failed");
+            when Protocol_Error =>
+               Reject (400, "bad request");
+            when Flyology.Cancellation.Operation_Cancelled |
+                 Flyology.IO.Timeout_Error |
+                 Flyology.IO.Device_Error |
+                 Flyology.IO.Sockets.Socket_Error =>
+               null;
+         end;
+      end Handle_Cleartext;
+
+      package Cleartext_Servers is new Flyology.IO.Structured_Servers
+        (Handler_Context => Cleartext_Context,
+         Handle          => Handle_Cleartext,
+         Handler_Model   => Handler_Model);
+
+      protected Outcome is
+         procedure Record_Failure (Message : String);
+         function Failed return Boolean;
+         function Detail return String;
+      private
+         Has_Failed : Boolean := False;
+         Failure_Detail : Unbounded_String;
+      end Outcome;
+
+      protected body Outcome is
+         procedure Record_Failure (Message : String) is
+         begin
+            if not Has_Failed then
+               Failure_Detail := To_Unbounded_String (Message);
+            end if;
+            Has_Failed := True;
+         end Record_Failure;
+
+         function Failed return Boolean is (Has_Failed);
+         function Detail return String is (To_String (Failure_Detail));
+      end Outcome;
+
+      HTTP_Listener : Sockets.Socket_Type;
+
+      procedure Request_Stop is
+      begin
+         begin
+            Token.Request;
+         exception
+            when others => null;
+         end;
+      end Request_Stop;
+   begin
+      if HTTP_Endpoint.Family /= HTTPS_Endpoint.Family
+        or else HTTP_Endpoint.Port = Sockets.Any_Port
+        or else HTTPS_Endpoint.Port = Sockets.Any_Port
+        or else HTTP_Endpoint.Port = HTTPS_Endpoint.Port
+      then
+         raise Constraint_Error with
+           "HTTP and HTTPS require distinct concrete same-family endpoints";
+      elsif Scheme (HTTPS_Origin) /= Secure_HTTPS then
+         raise Constraint_Error with "redirect origin must use https";
+      end if;
+
+      Sockets.Create_Socket
+        (HTTP_Listener, HTTP_Endpoint.Family, Sockets.Socket_Stream);
+      Sockets.Set_Socket_Option
+        (HTTP_Listener, (Name => Sockets.Reuse_Address, Enabled => True));
+      Sockets.Bind_Socket (HTTP_Listener, HTTP_Endpoint);
+      Sockets.Listen_Socket (HTTP_Listener, Cleartext_Capacity);
+
+      declare
+         Cleartext_Manager : aliased Cleartext_Servers.Server
+           (Capacity => Cleartext_Capacity);
+         Shared : aliased Cleartext_Context :=
+           (Routes      => Item'Unchecked_Access,
+            Application => Context'Unchecked_Access,
+            Policy      => Cleartext,
+            Origin      => HTTPS_Origin,
+            Ingress     => Ingress);
+
+         task Cleartext_Task;
+         task Secure_Task;
+         task Stop_Task;
+
+         task body Cleartext_Task is
+         begin
+            begin
+               Cleartext_Servers.Serve
+                 (Cleartext_Manager, HTTP_Listener, Shared, Drain_Timeout);
+            exception
+               when Error : others =>
+                  Outcome.Record_Failure (Exception_Summary (Error));
+                  Request_Stop;
+            end;
+         end Cleartext_Task;
+
+         task body Secure_Task is
+         begin
+            begin
+               Serve
+                 (Item, Context,
+                  Endpoint             => HTTPS_Endpoint,
+                  TLS_Backend          => TLS_Backend,
+                  Certificate_DER      => Certificate_DER,
+                  Private_Key          => Private_Key,
+                  TCP_Capacity         => TCP_Capacity,
+                  HTTP_3_Capacity      => HTTP_3_Capacity,
+                  Transport_Settings   => Transport_Settings,
+                  Timeout              => Timeout,
+                  Handshake_Timeout    => Handshake_Timeout,
+                  Max_Connection_Age   => Max_Connection_Age,
+                  TCP_Max_Requests     => TCP_Max_Requests,
+                  HTTP_3_Max_Requests  => HTTP_3_Max_Requests,
+                  Header_Timeout       => Header_Timeout,
+                  Ingress              => Ingress,
+                  Alt_Svc_Max_Age      => Alt_Svc_Max_Age,
+                  Drain_Timeout        => Drain_Timeout,
+                  Token                => Token,
+                  Handler_Model        => Handler_Model);
+            exception
+               when Error : others =>
+                  Outcome.Record_Failure (Exception_Summary (Error));
+                  Request_Stop;
+            end;
+         end Secure_Task;
+
+         task body Stop_Task is
+         begin
+            Token.Await_Request;
+            Cleartext_Servers.Request_Shutdown (Cleartext_Manager);
+         exception
+            when Error : others =>
+               Outcome.Record_Failure (Exception_Summary (Error));
+               Request_Stop;
+         end Stop_Task;
+      begin
+         null;
+      end;
+
+      if Outcome.Failed then
+         raise Unified_Server_Error with Outcome.Detail;
+      end if;
+   exception
+      when others =>
+         Request_Stop;
+         if Sockets.Is_Open (HTTP_Listener) then
+            Sockets.Close_Socket (HTTP_Listener);
+         end if;
+         raise;
+   end Serve;
+
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      IPv4_HTTP_Endpoint   : Flyology.IO.Sockets.Endpoint;
+      IPv6_HTTP_Endpoint   : Flyology.IO.Sockets.Endpoint;
+      IPv4_HTTPS_Endpoint  : Flyology.IO.Sockets.Endpoint;
+      IPv6_HTTPS_Endpoint  : Flyology.IO.Sockets.Endpoint;
+      HTTPS_Origin         : Origin;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Cleartext            : Cleartext_Policy := Redirect_To_HTTPS;
+      Cleartext_Capacity   : Positive := 64;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 128;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 100_000;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
+   is
+      IPv4_Cleartext_Capacity : constant Positive :=
+        Cleartext_Capacity / 2 + Cleartext_Capacity rem 2;
+      IPv6_Cleartext_Capacity : constant Positive :=
+        Cleartext_Capacity / 2;
+      IPv4_TCP_Capacity : constant Positive :=
+        TCP_Capacity / 2 + TCP_Capacity rem 2;
+      IPv6_TCP_Capacity : constant Positive := TCP_Capacity / 2;
+      IPv4_H3_Capacity : constant Positive :=
+        HTTP_3_Capacity / 2 + HTTP_3_Capacity rem 2;
+      IPv6_H3_Capacity : constant Positive := HTTP_3_Capacity / 2;
+
+      protected Outcome is
+         procedure Record_Failure (Message : String);
+         function Failed return Boolean;
+         function Detail return String;
+      private
+         Has_Failed : Boolean := False;
+         Failure_Detail : Unbounded_String;
+      end Outcome;
+
+      protected body Outcome is
+         procedure Record_Failure (Message : String) is
+         begin
+            if not Has_Failed then
+               Failure_Detail := To_Unbounded_String (Message);
+            end if;
+            Has_Failed := True;
+         end Record_Failure;
+         function Failed return Boolean is (Has_Failed);
+         function Detail return String is (To_String (Failure_Detail));
+      end Outcome;
+
+      procedure Request_Stop is
+      begin
+         begin
+            Token.Request;
+         exception
+            when others => null;
+         end;
+      end Request_Stop;
+   begin
+      if IPv4_HTTP_Endpoint.Family /= Flyology.IO.Sockets.IPv4
+        or else IPv6_HTTP_Endpoint.Family /= Flyology.IO.Sockets.IPv6
+        or else IPv4_HTTPS_Endpoint.Family /= Flyology.IO.Sockets.IPv4
+        or else IPv6_HTTPS_Endpoint.Family /= Flyology.IO.Sockets.IPv6
+        or else IPv4_HTTP_Endpoint.Port = Flyology.IO.Sockets.Any_Port
+        or else IPv4_HTTP_Endpoint.Port /= IPv6_HTTP_Endpoint.Port
+        or else IPv4_HTTPS_Endpoint.Port = Flyology.IO.Sockets.Any_Port
+        or else IPv4_HTTPS_Endpoint.Port /= IPv6_HTTPS_Endpoint.Port
+        or else IPv4_HTTP_Endpoint.Port = IPv4_HTTPS_Endpoint.Port
+      then
+         raise Constraint_Error with
+           "dual-stack HTTP and HTTPS endpoints are inconsistent";
+      elsif Cleartext_Capacity < 2 or else TCP_Capacity < 2
+        or else HTTP_3_Capacity < 2
+      then
+         raise Constraint_Error with
+           "dual-stack capacity must admit each address family";
+      end if;
+
+      declare
+         task IPv4_Server;
+         task IPv6_Server;
+
+         task body IPv4_Server is
+         begin
+            begin
+               Serve
+                 (Item, Context,
+                  HTTP_Endpoint        => IPv4_HTTP_Endpoint,
+                  HTTPS_Endpoint       => IPv4_HTTPS_Endpoint,
+                  HTTPS_Origin         => HTTPS_Origin,
+                  TLS_Backend          => TLS_Backend,
+                  Certificate_DER      => Certificate_DER,
+                  Private_Key          => Private_Key,
+                  Cleartext            => Cleartext,
+                  Cleartext_Capacity   => IPv4_Cleartext_Capacity,
+                  TCP_Capacity         => IPv4_TCP_Capacity,
+                  HTTP_3_Capacity      => IPv4_H3_Capacity,
+                  Transport_Settings   => Transport_Settings,
+                  Timeout              => Timeout,
+                  Handshake_Timeout    => Handshake_Timeout,
+                  Max_Connection_Age   => Max_Connection_Age,
+                  TCP_Max_Requests     => TCP_Max_Requests,
+                  HTTP_3_Max_Requests  => HTTP_3_Max_Requests,
+                  Header_Timeout       => Header_Timeout,
+                  Ingress              => Ingress,
+                  Alt_Svc_Max_Age      => Alt_Svc_Max_Age,
+                  Drain_Timeout        => Drain_Timeout,
+                  Token                => Token,
+                  Handler_Model        => Handler_Model);
+            exception
+               when Error : others =>
+                  Outcome.Record_Failure (Exception_Summary (Error));
+                  Request_Stop;
+            end;
+         end IPv4_Server;
+
+         task body IPv6_Server is
+         begin
+            begin
+               Serve
+                 (Item, Context,
+                  HTTP_Endpoint        => IPv6_HTTP_Endpoint,
+                  HTTPS_Endpoint       => IPv6_HTTPS_Endpoint,
+                  HTTPS_Origin         => HTTPS_Origin,
+                  TLS_Backend          => TLS_Backend,
+                  Certificate_DER      => Certificate_DER,
+                  Private_Key          => Private_Key,
+                  Cleartext            => Cleartext,
+                  Cleartext_Capacity   => IPv6_Cleartext_Capacity,
+                  TCP_Capacity         => IPv6_TCP_Capacity,
+                  HTTP_3_Capacity      => IPv6_H3_Capacity,
+                  Transport_Settings   => Transport_Settings,
+                  Timeout              => Timeout,
+                  Handshake_Timeout    => Handshake_Timeout,
+                  Max_Connection_Age   => Max_Connection_Age,
+                  TCP_Max_Requests     => TCP_Max_Requests,
+                  HTTP_3_Max_Requests  => HTTP_3_Max_Requests,
+                  Header_Timeout       => Header_Timeout,
+                  Ingress              => Ingress,
+                  Alt_Svc_Max_Age      => Alt_Svc_Max_Age,
+                  Drain_Timeout        => Drain_Timeout,
+                  Token                => Token,
+                  Handler_Model        => Handler_Model);
+            exception
+               when Error : others =>
+                  Outcome.Record_Failure (Exception_Summary (Error));
+                  Request_Stop;
+            end;
+         end IPv6_Server;
+      begin
+         null;
+      end;
+
+      if Outcome.Failed then
+         raise Unified_Server_Error with Outcome.Detail;
+      end if;
+   exception
+      when others =>
+         Request_Stop;
          raise;
    end Serve;
 

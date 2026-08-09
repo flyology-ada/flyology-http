@@ -5,7 +5,8 @@ package body Flyology.HTTP.Server.Applications.Internals is
       Backend  : not null access Exchange_Backends.Backend'Class;
       Peer     : Flyology.IO.Sockets.Endpoint;
       Token    : access Flyology.Cancellation.Token;
-      Deadline : Ada.Real_Time.Time) return Exchange
+      Deadline : Ada.Real_Time.Time;
+      Scheme   : Origin_Scheme := Plain_HTTP) return Exchange
    is
    begin
       return Result : Exchange
@@ -16,6 +17,7 @@ package body Flyology.HTTP.Server.Applications.Internals is
       do
          Result.Peer_Value := Peer;
          Result.Deadline_Value := Deadline;
+         Result.Scheme_Value := Scheme;
       end return;
    end Create;
 

@@ -86,6 +86,9 @@ procedure HTTP_Application_Server is
    HTTP_3_Capacity : constant Positive :=
      (if Ada.Command_Line.Argument_Count >= 6
       then Positive'Value (Ada.Command_Line.Argument (6)) else 128);
+   HTTP_Port : constant Sockets.Port :=
+     (if Ada.Command_Line.Argument_Count >= 7
+      then Sockets.Port'Value (Ada.Command_Line.Argument (7)) else 18_081);
    Showcase_Root : constant String :=
      Project_Root & "/showcases/http_application";
 
@@ -1761,6 +1764,9 @@ procedure HTTP_Application_Server is
            ("READY " & Lane & " https://127.0.0.1:"
             & Compact (Natural (Port)) & "/ (h1, h2, h3)");
          Ada.Text_IO.Put_Line
+           ("HTTP redirect: http://127.0.0.1:"
+            & Compact (Natural (HTTP_Port)) & "/");
+         Ada.Text_IO.Put_Line
            ("TLS test: curl -k --http2 https://127.0.0.1:"
             & Compact (Natural (Port)) & "/");
          Ada.Text_IO.Put_Line
@@ -1791,8 +1797,12 @@ procedure HTTP_Application_Server is
          begin
             State.Routes.Serve
               (State.Application,
-               Endpoint =>
+               HTTP_Endpoint =>
+                 Sockets.Network_Endpoint
+                   (Sockets.Loopback_IPv4, HTTP_Port),
+               HTTPS_Endpoint =>
                  Sockets.Network_Endpoint (Sockets.Loopback_IPv4, Port),
+               HTTPS_Origin        => Flyology.HTTP.Parse_Origin (Origin),
                TLS_Backend          => Backend,
                Certificate_DER      => Certificate_DER,
                Private_Key          => Private_Key,

@@ -102,28 +102,55 @@ OpenSSL.Initialize_Server
    Protocols => ALPN."&" (ALPN.Offer ("h2"), "http/1.1"));
 Routes.Serve
   (State,
-   Sockets.Network_Endpoint (Sockets.Any_IPv4, 443),
-   Backend,
+   HTTP_Endpoint  => Sockets.Network_Endpoint (Sockets.Any_IPv4, 80),
+   HTTPS_Endpoint => Sockets.Network_Endpoint (Sockets.Any_IPv4, 443),
+   HTTPS_Origin   => Flyology.HTTP.Parse_Origin
+     ("https://www.example.com"),
+   TLS_Backend     => Backend,
    Certificate_DER => Certificate_DER,
    Private_Key     => Private_Key,
    Token           => Stop'Access);
 ```
 
-For explicit dual-stack service, use the overload that takes an IPv4 endpoint
-followed by an IPv6 endpoint on the same concrete port. It binds TCP and UDP
-for both families concurrently and divides the total TCP and HTTP/3 capacities
-between them:
+The default cleartext policy returns a method-preserving 308 using the
+configured `HTTPS_Origin`; it does not trust the request's `Host` field.
+Select `Cleartext => Routing.Serve_Cleartext` to route cleartext HTTP/1.x
+through the same application instead. Handlers can inspect
+`X.Request_Scheme` independently of `X.Request_Protocol`. Cleartext direct
+responses do not advertise HTTP/3, and cleartext, secure TCP, and QUIC each
+have an independent capacity.
+
+For explicit dual-stack HTTP and HTTPS service, use the four-endpoint overload.
+The IPv4 and IPv6 cleartext endpoints share one port, the IPv4 and IPv6 secure
+endpoints share another, and the cleartext, secure TCP, and HTTP/3 capacities
+are divided independently between address families:
 
 ```ada
 Routes.Serve
   (State,
-   Sockets.Network_Endpoint (Configured_IPv4, 443),
-   Sockets.Network_Endpoint (Configured_IPv6, 443),
-   Backend,
-   Certificate_DER => Certificate_DER,
-   Private_Key     => Private_Key,
-   Token           => Stop'Access);
+   IPv4_HTTP_Endpoint  =>
+     Sockets.Network_Endpoint (Configured_IPv4, 80),
+   IPv6_HTTP_Endpoint  =>
+     Sockets.Network_Endpoint (Configured_IPv6, 80),
+   IPv4_HTTPS_Endpoint =>
+     Sockets.Network_Endpoint (Configured_IPv4, 443),
+   IPv6_HTTPS_Endpoint =>
+     Sockets.Network_Endpoint (Configured_IPv6, 443),
+   HTTPS_Origin        => Flyology.HTTP.Parse_Origin
+     ("https://www.example.com"),
+   TLS_Backend         => Backend,
+   Certificate_DER     => Certificate_DER,
+   Private_Key         => Private_Key,
+   Cleartext           => Routing.Redirect_To_HTTPS,
+   Cleartext_Capacity  => 64,
+   TCP_Capacity        => 64,
+   HTTP_3_Capacity     => 128,
+   Token               => Stop'Access);
 ```
+
+A secure-only dual-stack overload remains available when no cleartext listener
+is wanted. It takes just the IPv4 and IPv6 HTTPS endpoints, on the same port,
+and serves TLS/TCP plus QUIC/UDP on both families.
 
 The unified server automatically adds `Alt-Svc: h3=":443"; ma=86400` to
 HTTP/1.1 and HTTP/2 responses. The advertised port follows the bound endpoint,
@@ -175,11 +202,12 @@ The maintained `showcases/http3_application_server.adb` uses this API when run
 with no identity arguments:
 
 ```sh
-./showcases/bin/http3_application_server 4433
+./showcases/bin/http3_application_server 4433 4080
 ```
 
 Passing `TLS_CERT.pem TLS_KEY.pem QUIC_CERT.der QUIC_KEY.raw` retains the
-explicit stable-identity form. Lower-level
+explicit stable-identity form; optional trailing arguments select the HTTPS
+and HTTP ports. Lower-level
 `Serve_HTTP_3_Listener` and single-connection `Serve_HTTP_3` adapters remain
 available when an application owns the UDP listener itself.
 
@@ -190,6 +218,7 @@ The certificates are self-signed, so use an HTTP/3-enabled curl and explicitly
 accept them when testing the H3 listener:
 
 ```sh
+curl -i http://127.0.0.1:4080/hello/test
 curl --version  # The Features line must include HTTP3.
 curl -k --http3-only https://127.0.0.1:4433/hello/test
 ```
@@ -266,8 +295,10 @@ and `Expect: 100-continue` remain unavailable on H3.
 - An HTTP/3 routed-server adapter using the protocol-neutral application
   exchange, including middleware, route parameters, body policies, fixed and
   streamed responses, and SSE.
-- A unified routed server that serves TLS HTTP/1.1 and HTTP/2 plus HTTP/3 on
-  one TCP/UDP port and advertises HTTP/3 through `Alt-Svc`.
+- A unified routed server with a distinct cleartext HTTP/1.x endpoint plus
+  TLS HTTP/1.1 and HTTP/2 and QUIC HTTP/3 on one secure TCP/UDP port. It can
+  route or redirect cleartext requests and advertises HTTP/3 through
+  `Alt-Svc` only on secure TCP responses.
 
 The HTTP/2 server uses the protocol-neutral `Applications.Exchange` and the
 same routes and middleware as HTTP/1.1. The raw HTTP/1.x `Server.Connection`

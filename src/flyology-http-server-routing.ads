@@ -22,6 +22,11 @@ package Flyology.HTTP.Server.Routing is
    --  Raised after a unified listener's TCP or UDP serving task fails.
    Unified_Server_Error : exception;
 
+   --  Policy for the cleartext endpoint of a unified HTTP/HTTPS server.
+   --  @enum Serve_Cleartext Route cleartext HTTP/1.x requests normally
+   --  @enum Redirect_To_HTTPS Redirect each request to the configured origin
+   type Cleartext_Policy is (Serve_Cleartext, Redirect_To_HTTPS);
+
    --  Typed middleware API used by this router instance. Applications may
    --  also instantiate Server.Middleware independently of routing.
    package Components is new
@@ -398,6 +403,7 @@ package Flyology.HTTP.Server.Routing is
    --  @param Peer Connected peer address
    --  @param Token Optional cancellation token
    --  @param Alt_Svc Optional HTTP/3 alternative-service field value
+   --  @param Scheme Origin scheme used to receive the request
    procedure Dispatch
      (Item       : in out Router;
       Context    : in out App_Context;
@@ -405,7 +411,8 @@ package Flyology.HTTP.Server.Routing is
       Value      : aliased in out Request;
       Peer       : Flyology.IO.Sockets.Endpoint;
       Token      : access Flyology.Cancellation.Token := null;
-      Alt_Svc    : String := "");
+      Alt_Svc    : String := "";
+      Scheme     : Origin_Scheme := Plain_HTTP);
 
    --  Match and invoke one protocol-neutral application exchange. Protocol
    --  engines use this overload after parsing and admitting a stream.
@@ -431,6 +438,7 @@ package Flyology.HTTP.Server.Routing is
    --  @param Header_Timeout Absolute slow-header budget for each request;
    --  negative uses the remaining request/connection lifetime
    --  @param Alt_Svc Optional HTTP/3 alternative-service field value
+   --  @param Scheme Origin scheme used to receive each request
    procedure Serve
      (Item         : in out Router;
       Context      : in out App_Context;
@@ -441,7 +449,8 @@ package Flyology.HTTP.Server.Routing is
       Max_Requests : Natural := 1_000;
       Token        : access Flyology.Cancellation.Token := null;
       Header_Timeout : Duration := -1.0;
-      Alt_Svc      : String := "");
+      Alt_Svc      : String := "";
+      Scheme       : Origin_Scheme := Plain_HTTP);
 
    --  Select HTTP/1.x or HTTP/2 for one accepted Flyology connection and
    --  serve it through this router. Route registration, middleware, body
@@ -461,6 +470,7 @@ package Flyology.HTTP.Server.Routing is
    --  @param Header_Timeout HTTP/1.x slow-header budget; ignored for HTTP/2
    --  @param Ingress Optional HTTP/1.x retained-body budget
    --  @param Alt_Svc Optional HTTP/3 alternative-service field value
+   --  @param Scheme Origin scheme used to receive each request
    procedure Serve
      (Item               : in out Router;
       Context            : in out App_Context;
@@ -473,7 +483,8 @@ package Flyology.HTTP.Server.Routing is
       Token              : access Flyology.Cancellation.Token := null;
       Header_Timeout     : Duration := -1.0;
       Ingress            : access Ingress_Budget := null;
-      Alt_Svc            : String := "");
+      Alt_Svc            : String := "";
+      Scheme             : Origin_Scheme := Plain_HTTP);
 
    --  Bind one endpoint as TLS/TCP for HTTP/1.1 and HTTP/2 and as UDP for
    --  HTTP/3, then serve every protocol through this router until Token is
@@ -592,6 +603,155 @@ package Flyology.HTTP.Server.Routing is
      and then IPv4_Endpoint.Port /= Flyology.IO.Sockets.Any_Port
      and then IPv4_Endpoint.Port = IPv6_Endpoint.Port
      and then Certificate_DER'Length in 1 .. 4_096
+     and then TCP_Capacity >= 2
+     and then HTTP_3_Capacity in 2 .. 256
+     and then HTTP_3_Max_Requests <= 1_000_000
+     and then Handshake_Timeout > 0.0
+     and then
+       (Drain_Timeout = Flyology.IO.Infinite or else Drain_Timeout >= 0.0);
+
+   --  Bind distinct cleartext HTTP/TCP and secure HTTPS TCP+UDP endpoints.
+   --  HTTPS serves HTTP/1.1 and HTTP/2 over TLS plus HTTP/3 over QUIC. The
+   --  cleartext endpoint either routes HTTP/1.x through the same application
+   --  or sends a 308 redirect to HTTPS_Origin without trusting Host. The two
+   --  endpoints must use the same address family and different concrete
+   --  ports. Capacities are independent totals for cleartext TCP, secure TCP,
+   --  and QUIC connections.
+   --  @param Item Frozen router shared by all protocol workers
+   --  @param Context Shared application context
+   --  @param HTTP_Endpoint Cleartext HTTP/TCP endpoint
+   --  @param HTTPS_Endpoint Secure TLS/TCP and QUIC/UDP endpoint
+   --  @param HTTPS_Origin Configured public redirect origin
+   --  @param TLS_Backend Initialized ALPN-capable TLS server provider
+   --  @param Certificate_DER DER-encoded Ed25519 HTTP/3 certificate
+   --  @param Private_Key Raw Ed25519 HTTP/3 private key
+   --  @param Cleartext Cleartext routing or redirect policy
+   --  @param Cleartext_Capacity Maximum concurrent cleartext connections
+   --  @param TCP_Capacity Maximum concurrent secure H1/H2 connections
+   --  @param HTTP_3_Capacity Maximum concurrent H3 connections
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request or stream application deadline
+   --  @param Handshake_Timeout TLS and QUIC handshake deadline
+   --  @param Max_Connection_Age Per-connection lifetime
+   --  @param TCP_Max_Requests HTTP/1.x persistent request limit
+   --  @param HTTP_3_Max_Requests H3 request limit per connection
+   --  @param Header_Timeout HTTP/1.x slow-header deadline
+   --  @param Ingress Optional shared HTTP/1.x retained-body budget
+   --  @param Alt_Svc_Max_Age Alt-Svc lifetime in seconds
+   --  @param Drain_Timeout TCP handler drain after shutdown
+   --  @param Token Required unified server shutdown source
+   --  @param Handler_Model Fixed lightweight or native handler designation
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      HTTP_Endpoint        : Flyology.IO.Sockets.Endpoint;
+      HTTPS_Endpoint       : Flyology.IO.Sockets.Endpoint;
+      HTTPS_Origin         : Origin;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Cleartext            : Cleartext_Policy := Redirect_To_HTTPS;
+      Cleartext_Capacity   : Positive := 64;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 128;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 100_000;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
+   with Pre => HTTP_Endpoint.Family = HTTPS_Endpoint.Family
+     and then HTTP_Endpoint.Port /= Flyology.IO.Sockets.Any_Port
+     and then HTTPS_Endpoint.Port /= Flyology.IO.Sockets.Any_Port
+     and then HTTP_Endpoint.Port /= HTTPS_Endpoint.Port
+     and then Scheme (HTTPS_Origin) = Secure_HTTPS
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then HTTP_3_Capacity <= 256
+     and then HTTP_3_Max_Requests <= 1_000_000
+     and then Handshake_Timeout > 0.0
+     and then
+       (Drain_Timeout = Flyology.IO.Infinite or else Drain_Timeout >= 0.0);
+
+   --  Bind explicit IPv4 and IPv6 cleartext and secure endpoints. Each pair
+   --  uses one shared port across address families, while HTTP and HTTPS use
+   --  different ports. Capacity values are totals divided between families.
+   --  @param Item Frozen router shared by all protocol workers
+   --  @param Context Shared application context
+   --  @param IPv4_HTTP_Endpoint IPv4 cleartext HTTP/TCP endpoint
+   --  @param IPv6_HTTP_Endpoint IPv6 cleartext HTTP/TCP endpoint
+   --  @param IPv4_HTTPS_Endpoint IPv4 TLS/TCP and QUIC/UDP endpoint
+   --  @param IPv6_HTTPS_Endpoint IPv6 TLS/TCP and QUIC/UDP endpoint
+   --  @param HTTPS_Origin Configured public redirect origin
+   --  @param TLS_Backend Initialized ALPN-capable TLS server provider
+   --  @param Certificate_DER DER-encoded Ed25519 HTTP/3 certificate
+   --  @param Private_Key Raw Ed25519 HTTP/3 private key
+   --  @param Cleartext Cleartext routing or redirect policy
+   --  @param Cleartext_Capacity Total concurrent cleartext connections
+   --  @param TCP_Capacity Total concurrent secure H1/H2 connections
+   --  @param HTTP_3_Capacity Total concurrent H3 connections
+   --  @param Transport_Settings QUIC flow-control and stream limits
+   --  @param Timeout Per-request or stream application deadline
+   --  @param Handshake_Timeout TLS and QUIC handshake deadline
+   --  @param Max_Connection_Age Per-connection lifetime
+   --  @param TCP_Max_Requests HTTP/1.x persistent request limit
+   --  @param HTTP_3_Max_Requests H3 request limit per connection
+   --  @param Header_Timeout HTTP/1.x slow-header deadline
+   --  @param Ingress Optional shared HTTP/1.x retained-body budget
+   --  @param Alt_Svc_Max_Age Alt-Svc lifetime in seconds
+   --  @param Drain_Timeout TCP handler drain after shutdown
+   --  @param Token Required unified server shutdown source
+   --  @param Handler_Model Fixed lightweight or native handler designation
+   procedure Serve
+     (Item                 : aliased in out Router;
+      Context              : aliased in out App_Context;
+      IPv4_HTTP_Endpoint   : Flyology.IO.Sockets.Endpoint;
+      IPv6_HTTP_Endpoint   : Flyology.IO.Sockets.Endpoint;
+      IPv4_HTTPS_Endpoint  : Flyology.IO.Sockets.Endpoint;
+      IPv6_HTTPS_Endpoint  : Flyology.IO.Sockets.Endpoint;
+      HTTPS_Origin         : Origin;
+      TLS_Backend          : aliased in out
+        Flyology.IO.TLS.ALPN.Provider'Class;
+      Certificate_DER      : Ada.Streams.Stream_Element_Array;
+      Private_Key          : Flyology.QUIC.Connections.Ed25519_Private_Key;
+      Cleartext            : Cleartext_Policy := Redirect_To_HTTPS;
+      Cleartext_Capacity   : Positive := 64;
+      TCP_Capacity         : Positive := 64;
+      HTTP_3_Capacity      : Positive := 128;
+      Transport_Settings   : Flyology.QUIC.Connections.Transport_Settings :=
+        (others => <>);
+      Timeout              : Duration := 30.0;
+      Handshake_Timeout    : Duration := 10.0;
+      Max_Connection_Age   : Duration := 300.0;
+      TCP_Max_Requests     : Natural := 1_000;
+      HTTP_3_Max_Requests  : Positive := 100_000;
+      Header_Timeout       : Duration := -1.0;
+      Ingress              : access Ingress_Budget := null;
+      Alt_Svc_Max_Age      : Natural := 86_400;
+      Drain_Timeout        : Duration := 30.0;
+      Token                : not null access Flyology.Cancellation.Token;
+      Handler_Model        : Flyology.Execution_Model :=
+        Flyology.Project_Default)
+   with Pre => IPv4_HTTP_Endpoint.Family = Flyology.IO.Sockets.IPv4
+     and then IPv6_HTTP_Endpoint.Family = Flyology.IO.Sockets.IPv6
+     and then IPv4_HTTPS_Endpoint.Family = Flyology.IO.Sockets.IPv4
+     and then IPv6_HTTPS_Endpoint.Family = Flyology.IO.Sockets.IPv6
+     and then IPv4_HTTP_Endpoint.Port /= Flyology.IO.Sockets.Any_Port
+     and then IPv4_HTTP_Endpoint.Port = IPv6_HTTP_Endpoint.Port
+     and then IPv4_HTTPS_Endpoint.Port /= Flyology.IO.Sockets.Any_Port
+     and then IPv4_HTTPS_Endpoint.Port = IPv6_HTTPS_Endpoint.Port
+     and then IPv4_HTTP_Endpoint.Port /= IPv4_HTTPS_Endpoint.Port
+     and then Scheme (HTTPS_Origin) = Secure_HTTPS
+     and then Certificate_DER'Length in 1 .. 4_096
+     and then Cleartext_Capacity >= 2
      and then TCP_Capacity >= 2
      and then HTTP_3_Capacity in 2 .. 256
      and then HTTP_3_Max_Requests <= 1_000_000
