@@ -200,6 +200,9 @@ private package Flyology.QUIC.Connection_Driver is
    function Has_Stream
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean;
 
+   function Is_Stream_Retired
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean;
+
    function Stream_Count (Item : Connection) return Natural;
 
    function Stream_At

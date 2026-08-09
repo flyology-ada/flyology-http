@@ -228,6 +228,10 @@ private package Flyology.QUIC.Application_Space is
      (Item      : State;
       Stream_ID : Varint_Policy.Value_Type) return Boolean;
 
+   function Is_Stream_Retired
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Boolean;
+
    function Stream_Count
      (Item : State) return Stream_Table_Policy.Stream_Count_Type;
 

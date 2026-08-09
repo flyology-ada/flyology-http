@@ -39,6 +39,13 @@ package body Flyology.QUIC.Application_Space is
    is
      (Stream_Table_Policy.Has_Stream (Item.Streams, Stream_ID));
 
+   function Is_Stream_Retired
+     (Item      : State;
+      Stream_ID : Varint_Policy.Value_Type) return Boolean
+   is
+     (Receive_Flow_Control_Policy.Is_Stream_Retired
+        (Item.Receive_Flow, Stream_ID));
+
    function Stream_Count
      (Item : State) return Stream_Table_Policy.Stream_Count_Type
    is
@@ -93,6 +100,9 @@ package body Flyology.QUIC.Application_Space is
      (Item      : in out State;
       Stream_ID : Varint_Policy.Value_Type) is
    begin
+      Flow_Control_Policy.Release_Stream (Item.Flow, Stream_ID);
+      Receive_Flow_Control_Policy.Release_Stream
+        (Item.Receive_Flow, Stream_ID);
       Stream_Table_Policy.Release (Item.Streams, Stream_ID);
    end Release_Stream;
 
@@ -883,6 +893,7 @@ package body Flyology.QUIC.Application_Space is
    is
      (case Status is
          when Receive_Flow_Control_Policy.Reserved => Processed,
+         when Receive_Flow_Control_Policy.Retired => Processed,
          when Receive_Flow_Control_Policy.Stream_Not_Receivable
             | Receive_Flow_Control_Policy.Stream_Not_Sendable
             | Receive_Flow_Control_Policy.Stream_Not_Opened =>
@@ -1049,7 +1060,13 @@ package body Flyology.QUIC.Application_Space is
                Natural (Frame.Stream_Frame.Data_Length),
                Frame.Stream_Frame.Fin, Local_Bidi_Opened,
                Local_Uni_Opened, Receive_Status);
-            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+            if Receive_Status = Receive_Flow_Control_Policy.Retired then
+               --  Process_Plaintext stages every STREAM frame before flow
+               --  validation. Undo the staged reassembly for a late frame,
+               --  but continue processing unrelated frames in this packet.
+               Stream_Table_Policy.Release
+                 (Candidate_Streams, Frame.Stream_ID);
+            elsif Receive_Status /= Receive_Flow_Control_Policy.Reserved then
                Result.Status := Process_Status_For (Receive_Status);
                return;
             end if;
@@ -1057,7 +1074,10 @@ package body Flyology.QUIC.Application_Space is
             Receive_Flow_Control_Policy.Reserve_Reset
               (Candidate_Receive, Frame.Stream_ID, Frame.Final_Size,
                Local_Bidi_Opened, Local_Uni_Opened, Receive_Status);
-            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+            if Receive_Status = Receive_Flow_Control_Policy.Retired then
+               Stream_Table_Policy.Release
+                 (Candidate_Streams, Frame.Stream_ID);
+            elsif Receive_Status /= Receive_Flow_Control_Policy.Reserved then
                Result.Status := Process_Status_For (Receive_Status);
                return;
             end if;
@@ -1066,7 +1086,9 @@ package body Flyology.QUIC.Application_Space is
               Receive_Flow_Control_Policy.Check_Stop_Sending
                 (Candidate_Receive, Frame.Stream_ID, Local_Bidi_Opened,
                  Local_Uni_Opened);
-            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+            if Receive_Status /= Receive_Flow_Control_Policy.Reserved
+              and then Receive_Status /= Receive_Flow_Control_Policy.Retired
+            then
                Result.Status := Process_Status_For (Receive_Status);
                return;
             end if;
@@ -1078,18 +1100,22 @@ package body Flyology.QUIC.Application_Space is
               Receive_Flow_Control_Policy.Check_Max_Stream_Data
                 (Candidate_Receive, Frame.Stream_ID, Local_Bidi_Opened,
                  Local_Uni_Opened);
-            if Receive_Status /= Receive_Flow_Control_Policy.Reserved then
+            if Receive_Status = Receive_Flow_Control_Policy.Retired then
+               null;
+            elsif Receive_Status /= Receive_Flow_Control_Policy.Reserved then
                Result.Status := Process_Status_For (Receive_Status);
                return;
-            end if;
-            Flow_Control_Policy.Raise_Stream_Limit
-              (Candidate_Flow, Frame.Stream_ID, Frame.Maximum, Updated);
-            if Updated = Flow_Control_Policy.Stream_Not_Sendable then
-               Result.Status := Invalid_Stream_State;
-               return;
-            elsif Updated = Flow_Control_Policy.Stream_Capacity_Exceeded then
-               Result.Status := Stream_Capacity_Exceeded;
-               return;
+            else
+               Flow_Control_Policy.Raise_Stream_Limit
+                 (Candidate_Flow, Frame.Stream_ID, Frame.Maximum, Updated);
+               if Updated = Flow_Control_Policy.Stream_Not_Sendable then
+                  Result.Status := Invalid_Stream_State;
+                  return;
+               elsif Updated = Flow_Control_Policy.Stream_Capacity_Exceeded
+               then
+                  Result.Status := Stream_Capacity_Exceeded;
+                  return;
+               end if;
             end if;
          elsif Frame.Kind in Application_Frame_Policy.Max_Streams_Bidi
            | Application_Frame_Policy.Max_Streams_Uni

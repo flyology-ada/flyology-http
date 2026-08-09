@@ -599,6 +599,10 @@ package body Flyology.QUIC.Connections is
    function Has_Stream (Item : Connection; ID : Stream_ID) return Boolean is
      (Connection_Driver.Has_Stream (Impl (Item).Driver, ID));
 
+   function Is_Stream_Retired
+     (Item : Connection; ID : Stream_ID) return Boolean
+   is (Connection_Driver.Is_Stream_Retired (Impl (Item).Driver, ID));
+
    function Available_Length
      (Item : Connection; ID : Stream_ID) return Stream_Offset
    is

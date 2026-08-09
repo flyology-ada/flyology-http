@@ -64,7 +64,7 @@ package body Flyology.HTTP.Client is
 
    --  Match the server's generous default lifetime while completed stream
    --  storage is recycled inside the bounded concurrent-stream profile.
-   HTTP_3_Requests_Per_Connection : constant Positive := 1_000;
+   HTTP_3_Requests_Per_Connection : constant Positive := 100_000;
 
    type Pooled_Connection is limited record
       Channel  : aliased Connections.Connection;

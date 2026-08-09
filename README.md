@@ -55,6 +55,8 @@ QUIC and HTTP/3 error-case coverage. The stress command checks hostile UDP
 input, mutated authenticated streams, bounded server churn, and concurrent Ada
 client use against aioquic. See
 [`tests/http3-conformance.md`](tests/http3-conformance.md) for the exact matrix.
+Rebuild with `FLYOLOGY_QUIC_TRACE=true` to emit tagged QUIC and HTTP/3 state
+failures on standard error. Tracing is compiled out by default.
 
 ## Use with Alire
 
@@ -227,13 +229,14 @@ synchronously, and buffers each complete request stream before entering the
 route handler. Each connection retains at most 32 concurrent QUIC stream
 reassembly buffers and recycles completed request state. The unified server
 defaults to 128 concurrent HTTP/3 connections alongside 64 TCP connections,
-serves 1,000 requests per H3 connection by default, and accepts explicit
-limits up to 256 concurrent H3 connections and 1,000 requests per connection.
-These are separate resource controls: connection capacity creates worker
-tasks, while the request limit controls connection rotation. The QPACK
-profile does not use the dynamic table. It is experimental and does not claim
-production qualification. HTTP/3 server push is disabled. Because this profile
-does not advertise MAX_PUSH_ID, received push promises and push streams are
-rejected as required by RFC 9114.
+serves 100,000 requests per H3 connection by default, and accepts explicit
+limits up to 256 concurrent H3 connections and 1,000,000 requests per
+connection. Completed exchanges do not accumulate in the connection, so this
+lifetime limit controls connection rotation rather than retained request
+memory. Connection capacity separately controls the fixed worker set. The
+QPACK profile does not use the dynamic table. It is experimental and does not
+claim production qualification. HTTP/3 server push is disabled. Because this
+profile does not advertise MAX_PUSH_ID, received push promises and push
+streams are rejected as required by RFC 9114.
 
 Flyology HTTP is dual-licensed under MIT or Apache-2.0.

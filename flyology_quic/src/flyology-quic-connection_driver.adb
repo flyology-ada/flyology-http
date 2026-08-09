@@ -1,4 +1,5 @@
 with Flyology.QUIC.Crypto_Reassembly_Policy;
+with Flyology.QUIC.Debug;
 with Flyology.QUIC.Handshake_Packet_Policy;
 with Flyology.QUIC.Initial_Connection;
 with Flyology.QUIC.Initial_Packet_Policy;
@@ -49,6 +50,10 @@ package body Flyology.QUIC.Connection_Driver is
    function Has_Stream
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
    is (Application_Space.Has_Stream (Item.Application, Stream_ID));
+
+   function Is_Stream_Retired
+     (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
+   is (Application_Space.Is_Stream_Retired (Item.Application, Stream_ID));
 
    function Stream_Count (Item : Connection) return Natural is
      (Natural (Application_Space.Stream_Count (Item.Application)));
@@ -323,6 +328,11 @@ package body Flyology.QUIC.Connection_Driver is
       Packet : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
       Built  : Application_Space.Send_Result;
    begin
+      Debug.Log
+        ("quic", "transport-close",
+         "state=" & Connection_State'Image (Item.Current) &
+         " error=" & Varint_Policy.Value_Type'Image (Error_Code) &
+         " frame=" & Varint_Policy.Value_Type'Image (Frame_Type));
       Application_Space.Build_Transport_Close_Packet
         (Item.Application, Error_Code, Frame_Type, Packet, Built);
       Item.Current := Failed;
@@ -905,6 +915,14 @@ package body Flyology.QUIC.Connection_Driver is
                if Application_Result.Status = Application_Space.Processed
                  and then Application_Result.Frame_Count = 0
                then
+                  Debug.Log
+                    ("quic", "application-packet-rejected",
+                     "status=" & Application_Space.Process_Status'Image
+                       (Application_Result.Status) &
+                     " frame=" & Varint_Policy.Value_Type'Image
+                       (Application_Result.Triggering_Frame_Type) &
+                     " packet=" & Application_Space.Packet_Number'Image
+                       (Application_Result.Number));
                   Fail_Application_With_Close
                     (Item, Error_Code => 16#0A#, Frame_Type => 0,
                      Output => Output, Result => Result);
@@ -912,6 +930,14 @@ package body Flyology.QUIC.Connection_Driver is
                  Application_Space.Processed | Application_Space.Duplicate
                    | Application_Space.Too_Old
                then
+                  Debug.Log
+                    ("quic", "application-packet-rejected",
+                     "status=" & Application_Space.Process_Status'Image
+                       (Application_Result.Status) &
+                     " frame=" & Varint_Policy.Value_Type'Image
+                       (Application_Result.Triggering_Frame_Type) &
+                     " packet=" & Application_Space.Packet_Number'Image
+                       (Application_Result.Number));
                   Fail_Application_With_Close
                     (Item,
                      Transport_Error_For (Application_Result.Status),

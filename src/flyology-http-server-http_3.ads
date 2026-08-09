@@ -24,10 +24,11 @@ package Flyology.HTTP.Server.HTTP_3 is
 
    --  Default lifetime request policy. Completed request reassembly is
    --  recycled; 32 retained QUIC streams bound concurrency, while compact
-   --  flow-control accounting supports one thousand lifetime exchanges.
-   Default_Requests_Per_Connection : constant Positive := 1_000;
+   --  flow-control accounting supports long-lived connections without
+   --  retaining completed request state.
+   Default_Requests_Per_Connection : constant Positive := 100_000;
    --  Largest accepted lifetime request policy for the bounded profile.
-   Maximum_Requests_Per_Connection : constant Positive := 1_000;
+   Maximum_Requests_Per_Connection : constant Positive := 1_000_000;
 
    --  Run a bounded multi-connection HTTP/3 listener on an unconnected bound
    --  UDP socket. One receiver dispatches datagrams by connection identifier

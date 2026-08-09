@@ -1,4 +1,5 @@
 with Ada.Characters.Handling;
+with Ada.Exceptions;
 with Ada.Real_Time;
 with Ada.Strings.Fixed;
 with Ada.Unchecked_Deallocation;
@@ -8,6 +9,7 @@ with Flyology.HTTP.HTTP_3;
 with Flyology.HTTP.Server.Applications.Internals;
 with Flyology.HTTP.Server.Exchange_Backends;
 with Flyology.IO;
+with Flyology.QUIC.Debug;
 
 package body Flyology.HTTP.Server.HTTP_3 is
    use Ada.Streams;
@@ -18,6 +20,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
    package H3 renames Flyology.HTTP.HTTP_3;
    package Backends renames Flyology.HTTP.Server.Exchange_Backends;
    package QUIC renames Flyology.QUIC.Connections;
+   package Debug renames Flyology.QUIC.Debug;
    package Sockets renames Flyology.IO.Sockets;
 
    use type H3.Event_Kind;
@@ -325,6 +328,11 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Packet : QUIC.Datagram;
       Sent   : QUIC.Send_Status;
    begin
+      Debug.Log
+        ("h3", "application-close",
+         "status=" & H3.Operation_Status'Image (Status) &
+         " code=" & QUIC.Stream_Offset'Image
+           (Application_Error_For (Status)));
       QUIC.Build_Application_Close_Datagram
         (Item.Transport, Application_Error_For (Status), Packet, Sent);
       if Sent /= QUIC.Sent then
@@ -438,6 +446,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
          when QUIC.Succeeded | QUIC.Waiting_For_More =>
             Send (Item, Flight, Timeout);
             if QUIC.State (Item.Transport) = QUIC.Failed then
+               Debug.Log
+                 ("h3", "transport-failed",
+                  "operation=" & QUIC.Operation_Status'Image (Status));
                Item.Closed := True;
             end if;
          when QUIC.Connection_Closed =>
@@ -1554,7 +1565,10 @@ package body Flyology.HTTP.Server.HTTP_3 is
                         Transport_Settings, Timeout, Handshake_Timeout,
                         Max_Connection_Age, Max_Requests, Token);
                   exception
-                     when others => null;
+                     when Error : others =>
+                        Debug.Log
+                          ("h3", "worker-exception",
+                           Ada.Exceptions.Exception_Information (Error));
                   end;
                   Registry.Release (Slot);
                end if;

@@ -66,4 +66,24 @@ begin
      (Update = Updated
       and then Has_Stream (Item, 1)
       and then Stream_Limit (Item, 1) = 9);
+
+   Reset
+     (Item, Stream_ID_Policy.Client,
+      (Connection => Value_Type (Max_Streams + 1),
+       Bidi_Local => 1, Bidi_Remote => 1, Unidirectional => 1));
+   for Ordinal in 1 .. Max_Streams + 1 loop
+      declare
+         ID : constant Stream_ID_Policy.Stream_ID :=
+           Stream_ID_Policy.Stream_ID ((Ordinal - 1) * 4);
+      begin
+         Reserve_Send
+           (Item, ID, Offset => 0, Length => 1, Fin => True,
+            Status => Status);
+         pragma Assert
+           (Status = Reserved and then Stream_Count_Used (Item) = 1);
+         Release_Stream (Item, ID);
+         pragma Assert (Stream_Count_Used (Item) = 0);
+      end;
+   end loop;
+   pragma Assert (Committed_Data (Item) = Value_Type (Max_Streams + 1));
 end Flyology.QUIC.Flow_Control_Policy.Smoke;

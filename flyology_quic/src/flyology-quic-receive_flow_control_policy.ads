@@ -30,6 +30,7 @@ is
    type State is private;
    type Reserve_Status is
      (Reserved,
+      Retired,
       Stream_Not_Receivable,
       Stream_Not_Sendable,
       Stream_Not_Opened,
@@ -53,6 +54,22 @@ is
 
    function Stream_Count_Used (Item : State) return Stream_Count
    with Global => null;
+
+   function Has_Stream
+     (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
+   with Global => null;
+
+   function Is_Stream_Retired
+     (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
+   with Global => null;
+
+   procedure Release_Stream
+     (Item : in out State; ID : Stream_ID_Policy.Stream_ID)
+   with
+     Global => null,
+     Pre =>
+       not Has_Stream (Item, ID) or else Stream_Count_Used (Item) > 0,
+     Post => Stream_Count_Used (Item) <= Stream_Count_Used (Item'Old);
 
    procedure Raise_Stream_Limit
      (Item          : in out State;
@@ -117,6 +134,8 @@ private
       Final     : Value_Type := 0;
    end record;
    type Stream_Table is array (Stream_Index) of Stream_Slot;
+   subtype Stream_Class is Natural range 0 .. 3;
+   type Opened_Table is array (Stream_Class) of Stream_ID_Policy.Stream_Count;
 
    type State is record
       Role      : Stream_ID_Policy.Endpoint_Role := Stream_ID_Policy.Client;
@@ -124,5 +143,6 @@ private
       Committed : Value_Type := 0;
       Streams   : Stream_Table := (others => (others => <>));
       Count     : Stream_Count := 0;
+      Opened    : Opened_Table := (others => 0);
    end record;
 end Flyology.QUIC.Receive_Flow_Control_Policy;

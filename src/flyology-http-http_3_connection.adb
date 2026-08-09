@@ -103,10 +103,14 @@ package body Flyology.HTTP.HTTP_3_Connection is
    end Find;
 
    function Is_Released_Message
-     (Item : Connection; ID : QUIC.Stream_ID) return Boolean is
+     (Item      : Connection;
+      Transport : QUIC.Connection;
+      ID        : QUIC.Stream_ID) return Boolean is
      (ID mod 4 = 0
-      and then ID / 4 <= QUIC.Stream_ID (Message_Ordinal'Last)
-      and then Item.Released_Messages (Message_Ordinal (ID / 4))
+      and then
+        ((ID / 4 <= QUIC.Stream_ID (Message_Ordinal'Last)
+          and then Item.Released_Messages (Message_Ordinal (ID / 4)))
+         or else QUIC.Is_Stream_Retired (Transport, ID))
       and then Find (Item, ID) = 0);
 
    procedure Release_Message
@@ -306,7 +310,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
       for Stream_Index in 1 .. QUIC.Stream_Count (Transport) loop
          Reset_Handled := False;
          ID := QUIC.Stream_At (Transport, Stream_Index);
-         if Is_Released_Message (Item, ID) then
+         if Is_Released_Message (Item, Transport, ID) then
             Length := QUIC.Available_Length (Transport, ID);
             if Length > 0 then
                QUIC.Consume (Transport, ID, Length);

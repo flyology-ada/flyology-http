@@ -57,6 +57,44 @@ is
    function Stream_Count_Used (Item : State) return Stream_Count is
      (Item.Count);
 
+   function Has_Stream
+     (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
+   is
+     (Find (Item, ID) /= 0);
+
+   function Class_Of
+     (ID : Stream_ID_Policy.Stream_ID) return Stream_Class
+   is (Stream_Class (ID mod 4));
+
+   function ID_For
+     (Class   : Stream_Class;
+      Ordinal : Stream_ID_Policy.Stream_Count)
+      return Stream_ID_Policy.Stream_ID
+   is
+     (Stream_ID_Policy.Stream_ID ((Ordinal - 1) * 4)
+      + Stream_ID_Policy.Stream_ID (Class))
+   with Pre => Ordinal >= 1;
+
+   function Is_Stream_Retired
+     (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
+   is
+     (Stream_ID_Policy.Ordinal (ID) <= Item.Opened (Class_Of (ID))
+      and then Find (Item, ID) = 0);
+
+   procedure Release_Stream
+     (Item : in out State; ID : Stream_ID_Policy.Stream_ID)
+   is
+      Index : constant Optional_Index := Find (Item, ID);
+   begin
+      if Index = 0 then
+         return;
+      end if;
+      pragma Assert (Index in Stream_Index);
+      pragma Assert (Has_Stream (Item, ID));
+      Item.Streams (Index) := (others => <>);
+      Item.Count := Item.Count - 1;
+   end Release_Stream;
+
    procedure Raise_Stream_Limit
      (Item          : in out State;
       Bidirectional : Boolean;
@@ -126,7 +164,9 @@ is
       return Reserve_Status
    is
    begin
-      if not Stream_ID_Policy.Can_Send (Item.Role, ID) then
+      if Is_Stream_Retired (Item, ID) then
+         return Retired;
+      elsif not Stream_ID_Policy.Can_Send (Item.Role, ID) then
          return Stream_Not_Sendable;
       elsif Stream_ID_Policy.Is_Local (Item.Role, ID) then
          if not Opened_Locally
@@ -150,6 +190,11 @@ is
       Status             : out Reserve_Status)
    is
       Index    : Optional_Index := Find (Item, ID);
+      Class    : constant Stream_Class := Class_Of (ID);
+      Ordinal  : constant Stream_ID_Policy.Stream_Count :=
+        Stream_ID_Policy.Ordinal (ID);
+      Needed   : Stream_ID_Policy.Stream_Count := 0;
+      Previous : constant Stream_ID_Policy.Stream_Count := Item.Opened (Class);
       Created  : Boolean := False;
       Highest  : Value_Type;
       Increase : Value_Type;
@@ -159,12 +204,13 @@ is
       if Status /= Reserved then
          return;
       elsif Index = 0 then
-         if Item.Count = Max_Streams then
-            Status := Stream_Capacity_Exceeded;
+         if Ordinal <= Previous then
+            Status := Retired;
             return;
          end if;
-         Index := Free_Slot (Item);
-         if Index = 0 then
+         Needed := Ordinal - Previous;
+         if Needed > Stream_ID_Policy.Stream_Count (Max_Streams - Item.Count)
+         then
             Status := Stream_Capacity_Exceeded;
             return;
          end if;
@@ -199,13 +245,51 @@ is
          return;
       end if;
 
-      pragma Assert (Index in Stream_Index);
       if Created then
-         Item.Streams (Index) :=
-           (Occupied => True, ID => ID, Highest => Ending,
-            Final_Set => Fin, Final => (if Fin then Ending else 0));
-         Item.Count := Item.Count + 1;
+         declare
+            Opening_Count : constant Positive := Positive (Needed);
+            subtype Opening_Index is Positive range 1 .. Opening_Count;
+            type Opening_Slots is array (Opening_Index) of Stream_Index;
+            Slots : Opening_Slots := (others => Stream_Index'First);
+            Found : Natural range 0 .. Opening_Count := 0;
+         begin
+            for Candidate in Stream_Index loop
+               exit when Found = Opening_Count;
+               if not Item.Streams (Candidate).Occupied then
+                  Found := Found + 1;
+                  Slots (Opening_Index (Found)) := Candidate;
+               end if;
+            end loop;
+            if Found /= Opening_Count then
+               Status := Stream_Capacity_Exceeded;
+               return;
+            end if;
+
+            for Step in Opening_Index loop
+               pragma Loop_Invariant
+                 (Item.Count =
+                    Item.Count'Loop_Entry + Stream_Count (Step - 1));
+               Index := Slots (Step);
+               Item.Streams (Index) :=
+                 (Occupied => True,
+                  ID =>
+                    (if Step = Opening_Index'Last
+                     then ID
+                     else ID_For
+                       (Class,
+                        Previous + Stream_ID_Policy.Stream_Count (Step))),
+                  Highest =>
+                    (if Step = Opening_Index'Last then Ending else 0),
+                  Final_Set => Step = Opening_Index'Last and then Fin,
+                  Final =>
+                    (if Step = Opening_Index'Last and then Fin
+                     then Ending else 0));
+               Item.Count := Item.Count + 1;
+            end loop;
+         end;
+         Item.Opened (Class) := Ordinal;
       else
+         pragma Assert (Index in Stream_Index);
          Item.Streams (Index).Highest := Value_Type'Max (Highest, Ending);
          if Fin then
             Item.Streams (Index).Final_Set := True;
@@ -223,7 +307,8 @@ is
    begin
       Item :=
         (Role => Role, Initial => Limits, Committed => 0,
-         Streams => (others => (others => <>)), Count => 0);
+         Streams => (others => (others => <>)), Count => 0,
+         Opened => (others => 0));
    end Reset;
 
    procedure Reserve_Stream

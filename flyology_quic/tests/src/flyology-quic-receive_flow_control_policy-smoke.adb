@@ -57,4 +57,56 @@ begin
    Status := Check_Stop_Sending
      (Item, ID => 2, Local_Bidi_Opened => 1, Local_Uni_Opened => 1);
    pragma Assert (Status = Stream_Not_Sendable);
+
+   --  Opening stream 4 implicitly opens stream 0. Retiring the higher stream
+   --  must not misclassify the unseen lower stream as a retransmission.
+   Reset
+     (Item, Stream_ID_Policy.Server,
+      (Connection => 4, Bidi_Local => 1, Bidi_Remote => 1,
+       Unidirectional => 1, Streams_Bidi => 2, Streams_Uni => 1));
+   Reserve_Stream
+     (Item, ID => 4, Offset => 0, Length => 1, Fin => True,
+      Local_Bidi_Opened => 0, Local_Uni_Opened => 0, Status => Status);
+   pragma Assert
+     (Status = Reserved
+      and then Stream_Count_Used (Item) = 2
+      and then not Is_Stream_Retired (Item, 0));
+   Release_Stream (Item, 4);
+   pragma Assert
+     (Stream_Count_Used (Item) = 1
+      and then Is_Stream_Retired (Item, 4)
+      and then not Is_Stream_Retired (Item, 0));
+   Reserve_Stream
+     (Item, ID => 4, Offset => 0, Length => 1, Fin => True,
+      Local_Bidi_Opened => 0, Local_Uni_Opened => 0, Status => Status);
+   pragma Assert (Status = Retired and then Committed_Data (Item) = 1);
+   Reserve_Stream
+     (Item, ID => 0, Offset => 0, Length => 1, Fin => True,
+      Local_Bidi_Opened => 0, Local_Uni_Opened => 0, Status => Status);
+   pragma Assert (Status = Reserved and then Committed_Data (Item) = 2);
+   Release_Stream (Item, 0);
+
+   --  Completed lifetime state is recyclable beyond the fixed concurrent
+   --  table size while connection-level accounting remains cumulative.
+   Reset
+     (Item, Stream_ID_Policy.Server,
+      (Connection => Value_Type (Max_Streams + 1),
+       Bidi_Local => 1, Bidi_Remote => 1, Unidirectional => 1,
+       Streams_Bidi => Value_Type (Max_Streams + 1), Streams_Uni => 1));
+   for Ordinal in 1 .. Max_Streams + 1 loop
+      declare
+         ID : constant Stream_ID_Policy.Stream_ID :=
+           Stream_ID_Policy.Stream_ID ((Ordinal - 1) * 4);
+      begin
+         Reserve_Stream
+           (Item, ID, Offset => 0, Length => 1, Fin => True,
+            Local_Bidi_Opened => 0, Local_Uni_Opened => 0, Status => Status);
+         pragma Assert (Status = Reserved);
+         Release_Stream (Item, ID);
+         pragma Assert
+           (Stream_Count_Used (Item) = 0
+            and then Is_Stream_Retired (Item, ID));
+      end;
+   end loop;
+   pragma Assert (Committed_Data (Item) = Value_Type (Max_Streams + 1));
 end Flyology.QUIC.Receive_Flow_Control_Policy.Smoke;

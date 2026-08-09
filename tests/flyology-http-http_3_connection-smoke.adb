@@ -21,8 +21,9 @@ begin
    --  An exact tombstone must not classify an unseen lower stream as already
    --  released merely because a higher-numbered stream completed first.
    Server.Released_Messages (1) := True;
-   pragma Assert (Is_Released_Message (Server, 4));
-   pragma Assert (not Is_Released_Message (Server, 0));
+   pragma Assert (Is_Released_Message (Server, Server_Transport, 4));
+   pragma Assert
+     (not Is_Released_Message (Server, Server_Transport, 0));
    Server.Released_Messages (1) := False;
 
    Start

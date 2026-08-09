@@ -57,6 +57,14 @@ is
      (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
    with Global => null;
 
+   procedure Release_Stream
+     (Item : in out State; ID : Stream_ID_Policy.Stream_ID)
+   with
+     Global => null,
+     Pre =>
+       not Has_Stream (Item, ID) or else Stream_Count_Used (Item) > 0,
+     Post => Stream_Count_Used (Item) <= Stream_Count_Used (Item'Old);
+
    function Stream_Committed
      (Item : State; ID : Stream_ID_Policy.Stream_ID) return Value_Type
    with Global => null,

@@ -530,6 +530,15 @@ package Flyology.QUIC.Connections is
    --  @return True when the stream has receive state
    function Has_Stream (Item : Connection; ID : Stream_ID) return Boolean;
 
+   --  Return whether a receive stream was completed and released. This lets
+   --  protocol layers discard late retransmissions without retaining one
+   --  tombstone for every stream in the connection lifetime.
+   --  @param Item Connection to inspect
+   --  @param ID Stream identifier
+   --  @return True when the stream was previously released
+   function Is_Stream_Retired
+     (Item : Connection; ID : Stream_ID) return Boolean;
+
    --  Return the contiguous readable prefix of a peer stream.
    --  @param Item Connection to inspect
    --  @param ID Stream identifier

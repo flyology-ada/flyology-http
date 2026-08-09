@@ -27,7 +27,9 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Settings : HTTP_3_Settings_Policy.Settings);
 
    function Is_Released_Message
-     (Item : Connection; ID : QUIC.Stream_ID) return Boolean;
+     (Item      : Connection;
+      Transport : QUIC.Connection;
+      ID        : QUIC.Stream_ID) return Boolean;
 
    type Operation_Status is
      (Succeeded,

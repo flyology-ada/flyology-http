@@ -69,6 +69,20 @@ is
    function Stream_Count_Used (Item : State) return Stream_Count is
      (Item.Count);
 
+   procedure Release_Stream
+     (Item : in out State; ID : Stream_ID_Policy.Stream_ID)
+   is
+      Index : constant Optional_Index := Find (Item, ID);
+   begin
+      if Index = 0 then
+         return;
+      end if;
+      pragma Assert (Index in Stream_Index);
+      pragma Assert (Has_Stream (Item, ID));
+      Item.Streams (Index) := (others => <>);
+      Item.Count := Item.Count - 1;
+   end Release_Stream;
+
    function Has_Stream
      (Item : State; ID : Stream_ID_Policy.Stream_ID) return Boolean
    is
