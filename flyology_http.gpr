@@ -3,6 +3,17 @@ with "flyology_quic/flyology_quic.gpr";
 with "config/flyology_http_config.gpr";
 project Flyology_HTTP is
 
+   type QUIC_Trace_Type is ("false", "true");
+   QUIC_Trace : QUIC_Trace_Type :=
+     external ("FLYOLOGY_QUIC_TRACE", "false");
+   QUIC_Trace_Switch := "-gnateDFLYOLOGY_QUIC_TRACE=False";
+   case QUIC_Trace is
+      when "false" =>
+         null;
+      when "true" =>
+         QUIC_Trace_Switch := "-gnateDFLYOLOGY_QUIC_TRACE=True";
+   end case;
+
    type Connection_Test_Hooks_Type is ("false", "true");
    Connection_Test_Hooks : Connection_Test_Hooks_Type :=
      external ("FLYOLOGY_CONNECTION_TEST_HOOKS", "false");
@@ -88,7 +99,7 @@ project Flyology_HTTP is
    package Compiler is
       for Default_Switches ("Ada") use
         Flyology_HTTP_Config.Ada_Compiler_Switches
-        & ("-gnatwJ", Connection_Test_Hook_Switch);
+        & ("-gnatwJ", Connection_Test_Hook_Switch, QUIC_Trace_Switch);
    end Compiler;
 
    package Binder is
