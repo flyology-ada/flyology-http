@@ -22,7 +22,8 @@
           <li><a href="../" aria-current="page">Guide</a></li>
           <li><a href="../../architecture/">Architecture</a></li>
           <li><a href="../../journal/">Journal</a></li>
-          <li><a href="../../api/">API</a></li>
+          <li><a href="../../api/">HTTP API</a></li>
+          <li><a href="../../iri-api/">IRI API</a></li>
           <li>
             <details class="nav-dropdown" data-nav-dropdown>
               <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
@@ -43,7 +44,7 @@
 
     <main id="main" class="page-shell">
       <header class="doc-hero">
-        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">URI, IRI, and URL</li></ol><h1>Parse identifiers once, then use their parts deliberately.</h1></div>
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">URI, IRI, and URL</li></ol><h1>Parse an identifier once and use its components explicitly.</h1></div>
         <p class="doc-hero-copy"><code>flyology_iri</code> separates RFC URI/IRI references from WHATWG URL behavior and turns a normalized endpoint into the origin and request target expected by Flyology HTTP.</p>
       </header>
 
@@ -62,10 +63,10 @@
         </nav>
 
         <article class="prose">
-          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p><code>flyology_iri</code> is a separate Alire crate in this repository. It has no Flyology runtime dependency, so URI and URL parsing can also be used by non-HTTP code.</p></aside>
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p><code>flyology_iri</code> is a separate Alire crate in this repository. Its public <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html"><code>Flyology_IRI</code></a> package has no Flyology runtime dependency, so non-HTTP code can also use the parser.</p></aside>
 
           <section id="choose-syntax"><span class="step-label">IDENTIFIERS 01</span><h2>Choose semantics before parsing.</h2>
-            <p>The parser does not blur three different contracts. Select <code>URI_Syntax</code> for RFC 3986 ASCII references, <code>IRI_Syntax</code> for RFC 3987 references containing well-formed UTF-8, or <code>Web_URL_Syntax</code> for browser-style URL parsing and serialization.</p>
+            <p>Select the <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#2281efecb8f9f210210b0ef8be9ca66c8969cd5776ce310e042b5512876b9944"><code>Syntax_Kind</code></a> before parsing. Use <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#2281efecb8f9f210210b0ef8be9ca66c8969cd5776ce310e042b5512876b9944"><code>URI_Syntax</code></a> for RFC 3986 ASCII references. Use <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#2281efecb8f9f210210b0ef8be9ca66c8969cd5776ce310e042b5512876b9944"><code>IRI_Syntax</code></a> for RFC 3987 references that contain well-formed UTF-8. Use <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#2281efecb8f9f210210b0ef8be9ca66c8969cd5776ce310e042b5512876b9944"><code>Web_URL_Syntax</code></a> for browser-style URL parsing and serialization.</p>
             <div class="decision-list">
               <dl>
                 <div class="decision-row"><dt><code>URI_Syntax</code></dt><dd>Validate absolute or relative RFC 3986 references. Percent escapes must contain two hexadecimal digits.</dd></div>
@@ -77,6 +78,7 @@
           </section>
 
           <section id="parse"><span class="step-label">IDENTIFIERS 02</span><h2>Keep one owned serialization and component spans.</h2>
+            <p>Call the ordinary <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#de26a35ac74ce40f82a31935a25141e86ea0d17f0f967bac9f3405ae77276811"><code>Parse (Input, Syntax)</code></a> overload for a value with an explicit syntax. The example inspects <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#7b0f13e20058f0acb427347d11a2c4b073a696a2dc1fd519a3e0bf61984ee28d"><code>Scheme</code></a>, <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#1b720d28ad5b76a25660cba45d1f0cb154ed79fc601facf23cda56601e2d2ebe"><code>Host</code></a>, <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#82d113c142226c0b7733a1197f99cbc1067edafd6c193cf1993fe9235533e8fc"><code>Path</code></a>, and <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#dbaefc23a8902a5c4c1e18d1f5bf061ec843ec188bfd71851bfb31c98c24278c"><code>Query</code></a>.</p>
             <figure class="code-panel"><figcaption>parse and inspect a web URL</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology_IRI;
 
 package IRI renames Flyology_IRI;
@@ -92,12 +94,12 @@ pragma Assert (IRI.Host (URL) = "example.com");
 pragma Assert (IRI.Path (URL) = "/items");
 pragma Assert (IRI.Has_Query (URL));
 pragma Assert (IRI.Query (URL) = "q=ada");</code></pre></figure>
-            <p><code>Reference</code> owns the normalized serialization once and records offsets for scheme, authority, user information, host, port, path, query, and fragment. Component getters return strings; <code>Has_Query</code> and <code>Has_Fragment</code> distinguish an absent delimiter from a present empty component.</p>
-            <p>Web parsing lowercases schemes and domains, applies IDNA/Punycode, canonicalizes IP literals and ports, percent-encodes required bytes, and preserves the URL distinction between hierarchical and opaque paths. <code>Image</code> is the canonical serialization; it is not necessarily byte-for-byte equal to the input.</p>
+            <p><a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#14cfcf552836a95879bf97103cff2b39bf9892a4d1b21b24fa223bf85577de74"><code>Reference</code></a> owns one normalized serialization and records component offsets. Component getters return strings. <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#4cdcf2f99dcb5d9f9199969c10af0183012affccb222ee1779fab9654383ad02"><code>Has_Query</code></a> and <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#9aad9240079465d0b02920d275d8b371237b52b160e1511ef2f81b81e306ea81"><code>Has_Fragment</code></a> distinguish an absent delimiter from a present empty component.</p>
+            <p>Web parsing lowercases schemes and domains, applies IDNA/Punycode, canonicalizes IP literals and ports, and percent-encodes required bytes. It preserves the URL distinction between hierarchical and opaque paths. <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#369d1f7e2ca47453171b3204935d133060e4da3958b0de4920449181fb2d199f"><code>Image</code></a> returns the canonical serialization, which can differ from the input bytes.</p>
           </section>
 
           <section id="http-client"><span class="step-label">IDENTIFIERS 03</span><h2>Derive the HTTP origin and target from the same URL.</h2>
-            <p>Flyology's HTTP client intentionally accepts an origin at configuration time and an origin-form target on each request. Parse a complete endpoint once, then use <code>Origin</code> and <code>Target</code> to cross that boundary without hand-splitting strings.</p>
+            <p>The HTTP <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#ea92e238e84c66de7586afd464d3912cf10bcc7c5aebd556ba7513c48bedc5e9"><code>Client</code></a> accepts one origin during configuration and one origin-form target in each <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#1f13964f8b6e678773246dee11e56649ccf537ba0587fbaf9a277854d61e4cab"><code>Request</code></a>. Parse a complete endpoint once. Then use <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#380659f5512ae1245e267500deb7284230e3f0e0e759fc1b8e94aec6869633a8"><code>Origin</code></a> and <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#e3a4f23773a71f8a97e016882f4b63cf4a3f5f15f1ddfe54b168fe7ebbb99c29"><code>Target</code></a> instead of splitting strings by hand.</p>
             <figure class="code-panel"><figcaption>one endpoint, two HTTP API values</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP;
 with Flyology.HTTP.Client;
 with Flyology_IRI;
@@ -122,12 +124,14 @@ Client.Set_Target (Request, IRI.Target (Endpoint));
 -- Origin is "https://api.example.com".
 -- Target is "/v1/items?limit=20"; URL fragments are not sent in HTTP.
 Reply := Client.Execute (HTTP, Request, Timeout =&gt; 5.0);</code></pre></figure>
-            <p><code>Origin</code> accepts parsed <code>http</code>, <code>https</code>, <code>ws</code>, and <code>wss</code> URLs. It returns only the normalized scheme, host, and optional nondefault port; URL credentials are deliberately omitted. <code>Target</code> returns the normalized path and optional query, including a present empty query, and deliberately omits the fragment. Both raise <code>Malformed_Reference</code> when the reference cannot represent this network-URL boundary.</p>
-            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>Parsing a URL does not authorize its destination.</strong> Apply application policy to <code>Scheme</code>, <code>Host</code>, and <code>Port</code> before configuring a client when input is untrusted. URL normalization neither prevents SSRF nor chooses a trust boundary, and it does not make credentials safe to transmit.</p></aside>
+            <p>If a parsed URL uses <code>http</code>, <code>https</code>, <code>ws</code>, or <code>wss</code>, <code>Origin</code> returns its normalized scheme, host, and optional nondefault port. It omits URL credentials.</p>
+            <p><code>Target</code> returns the normalized path and optional query, including a present empty query. It omits the fragment. Both operations raise <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#2acf78295d971470a680192f4f020b3c3befc525e9b9d098667c907868e82788"><code>Malformed_Reference</code></a> when the reference cannot represent this network URL boundary.</p>
+            <p>The example passes those values to <a href="../../api/fa54f2c15df49722ee965de4d64bd16b7cce37f87e4a0cf25f766e6be782bf39.html#775fcb8b50aa63b38922a44075d1e92c7add389e8add88b3232f90c6ac59115b"><code>Flyology.HTTP.Parse_Origin</code></a>, <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e895e197e4231e7f5890447d70faf0a22801c7f212e98a68c701ad33ee19767"><code>Client.Configure</code></a>, and <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#b58fc29c20d8e7e86cea1bc2c5bc524ce2a7d327cab8dff9add032b731590885"><code>Client.Set_Target</code></a>. The default retention record is <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#39bfb5af0dcd5292423d8b5f4c3dc3121a9acb827d668cc1020e1d52ed27499d"><code>Default_Pool_Configuration</code></a>; the retained-response <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#0f9fb73a9767e92ba48f1d317d5b5c1e80dc48694f8e667c9053dd073b3def86"><code>Execute</code></a> overload performs the request.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>When input is untrusted, apply application policy before configuring a client.</strong> Check <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#7b0f13e20058f0acb427347d11a2c4b073a696a2dc1fd519a3e0bf61984ee28d"><code>Scheme</code></a>, <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#1b720d28ad5b76a25660cba45d1f0cb154ed79fc601facf23cda56601e2d2ebe"><code>Host</code></a>, and <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#8833f0b51cddd676751cb7273a7ca33e5ddffffbfe15fca978f3abaf660b0eaa"><code>Port</code></a>. URL normalization does not prevent SSRF, choose a trust boundary, or make credentials safe to transmit.</p></aside>
           </section>
 
           <section id="websocket-client"><span class="step-label">IDENTIFIERS 04</span><h2>Use the same adapters for WebSocket handshakes.</h2>
-            <p>A WebSocket endpoint has a <code>ws</code> or <code>wss</code> connection origin plus a request target. The optional browser <code>Origin</code> header is a separate HTTP(S) application origin. Parse those values separately so their roles stay visible.</p>
+            <p>The <a href="../../api/06f73157458e27997dffe2b8e150e2b3d029afdedefddcb3cd874b685d63764e.html"><code>WebSocket_Client</code></a> package uses a <a href="../../api/06f73157458e27997dffe2b8e150e2b3d029afdedefddcb3cd874b685d63764e.html#bb8acfd9e6a46babaaa574d1f4a58ee58a2dfdad011227878828d150dcba8fc9"><code>Request</code></a> with a <code>ws</code> or <code>wss</code> connection origin and a request target. The optional browser <code>Origin</code> header is a separate HTTP(S) application origin. Parse those values separately so their roles stay visible.</p>
             <figure class="code-panel"><figcaption>WebSocket endpoint and browser origin</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP.WebSocket_Client;
 with Flyology_IRI;
 
@@ -146,7 +150,7 @@ WebSockets.Configure
 WebSockets.Set_Target (Request, IRI.Target (Endpoint));
 WebSockets.Set_Origin (Request, IRI.Origin (Application));
 WebSockets.Connect (Socket, Request, Timeout =&gt; 5.0);</code></pre></figure>
-            <p><code>Set_Origin</code> sets the browser-origin handshake field; it does not select the socket destination. Keep it absent for a non-browser client unless the server policy requires one, and never copy an endpoint's <code>wss:</code> origin into that HTTP-origin field.</p>
+            <p>The example constructs the destination with <a href="../../api/06f73157458e27997dffe2b8e150e2b3d029afdedefddcb3cd874b685d63764e.html#a15773065ed940d60dfe5ee01431c934bb403a4082613fdfdd6d1127580e3588"><code>WebSockets.Parse_Origin</code></a>, uses the TLS <a href="../../api/06f73157458e27997dffe2b8e150e2b3d029afdedefddcb3cd874b685d63764e.html#b3b256c96ce11d03e73920569fb1cf426ace844c3b3c1487cdda03d428b2fa81"><code>Configure</code></a> overload, sets the target with <a href="../../api/06f73157458e27997dffe2b8e150e2b3d029afdedefddcb3cd874b685d63764e.html#91aa0e4538d043d762f4eb75d19d403014a23ebe30745d8ddf82ddc5be08be0c"><code>Set_Target</code></a>, and calls <a href="../../api/06f73157458e27997dffe2b8e150e2b3d029afdedefddcb3cd874b685d63764e.html#6e08e7b7f02c2204a8381464f2a95ac626ca3434d88d74f9146533c7e420348f"><code>Connect</code></a>. <a href="../../api/06f73157458e27997dffe2b8e150e2b3d029afdedefddcb3cd874b685d63764e.html#3f89e6cbd62593eba00affa45576350112bdadb7f72406a49b1dad88a2d01064"><code>Set_Origin</code></a> sets the browser-origin handshake field; it does not select the socket destination. Keep it absent for a non-browser client unless server policy requires it. Never copy an endpoint's <code>wss:</code> origin into that HTTP-origin field.</p>
           </section>
 
           <section id="resolve"><span class="step-label">IDENTIFIERS 05</span><h2>Resolve with the semantics of the selected mode.</h2>
@@ -158,7 +162,7 @@ Next : constant IRI.Reference := IRI.Parse
 
 pragma Assert (IRI.Image (Next) =
   "https://example.com/catalog/items?q=ada#details");</code></pre></figure>
-            <p>The <code>Parse (Input, Base)</code> overload applies WHATWG URL resolution, including special-scheme slash handling and <code>file:</code> drive-letter rules. For RFC URI or IRI references, call <code>Resolve (Base, Relative)</code>; that path follows RFC 3986 section 5.2 rather than the browser state machine.</p>
+            <p>The <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#4f4f904e70cd8e9cfe9b30ce1c71b25bfac710c15f76235b6aa24acd00bb371c"><code>Parse (Input, Base)</code></a> overload applies WHATWG URL resolution, including special-scheme slash handling and <code>file:</code> drive-letter rules. For RFC URI or IRI references, call <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#3af561ecc9c77f6b689b3a6430b23dee54c06d199089eee138e1d07bd4f9d6db"><code>Resolve (Base, Relative)</code></a>. That operation follows RFC 3986 section 5.2 instead of the browser state machine.</p>
           </section>
 
           <section id="errors"><span class="step-label">IDENTIFIERS 06</span><h2>Choose exceptions, diagnostics, or a Boolean fast path.</h2>
@@ -175,8 +179,9 @@ if Error.Kind = IRI.No_Error then
 else
    Report (Error.Kind, Error.Offset);
 end if;</code></pre></figure>
-            <p><code>Parse</code> raises <code>Malformed_Reference</code>. <code>Try_Parse</code> returns a stable error category and can reuse the destination's owned-string capacity. <code>Diagnose</code> reports the first error and byte offset for URI/IRI grammar checks. <code>Can_Parse</code> avoids constructing a reference; common absolute HTTP(S), URI, and IRI validation paths do not allocate, while less common web inputs may allocate during normalization or IDNA handling.</p>
-            <p>Keep a finite <code>Max_Length</code> at untrusted boundaries. It bounds input for validation and the resulting serialization for construction; normalization can make a serialized URL longer than its source.</p>
+            <p><a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#d0ad78e8c68d1dc8d7069d11370eff977b2163af36557aab5f5e6d94c4cc7601"><code>No_Error</code></a> is the successful diagnostic result. The <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#bcd9408f540d757f1c3851b7dd6de4b06d1a6ac97e3d09abcd70f1e3023c0958"><code>Kind</code></a> accessor and <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#c93a6f27aa89dcc3befb4cf01c487e5c34946b7c9a53e733c0d5d700cf37f63c"><code>Offset</code></a> field locate a failure. The ordinary <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#de26a35ac74ce40f82a31935a25141e86ea0d17f0f967bac9f3405ae77276811"><code>Parse</code></a> overload raises <code>Malformed_Reference</code>. <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#8847bc595ee9fe984e6fb97f92dd7e58920a8eb8aab2f2c646ec2ebabbb0040c"><code>Try_Parse</code></a> returns a stable <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#c93a6f27aa89dcc3befb4cf01c487e5c34946b7c9a53e733c0d5d700cf37f63c"><code>Parse_Error</code></a> and can reuse the destination's owned-string capacity. <a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#29fada15c7123197262dadb9bcdb5bfabf2e484bae3b07c1bb673b399eb9045f"><code>Diagnose</code></a> reports the first error and byte offset for URI/IRI grammar checks.</p>
+            <p><a href="../../iri-api/561d1ce28c5d15ec0f40afe80a1dff9418f0259a1f627e6aec4c6c19e9d77034.html#272775e7166ccfd6e578f5314d13933f6937e1ae659985076ce73dfe1dfa31de"><code>Can_Parse</code></a> avoids constructing a reference. Common absolute HTTP(S), URI, and IRI validation paths do not allocate. Less common web inputs may allocate during normalization or IDNA handling.</p>
+            <p>At untrusted boundaries, keep a finite <code>Max_Length</code>. It bounds validation input and the constructed serialization. Normalization can make a serialized URL longer than its source.</p>
           </section>
 
           <section id="evidence"><span class="step-label">IDENTIFIERS 07</span><h2>Keep conformance and performance claims pinned.</h2>
@@ -187,6 +192,6 @@ end if;</code></pre></figure>
       </div>
     </main>
 
-    <footer class="site-footer"><div class="footer-inner"><span><code>flyology_iri</code> is experimental. Treat normalization, destination policy, and input bounds as separate application decisions.</span><div class="footer-links"><a href="../client/">Client guide</a><a href="../http2/">HTTP/2 guide</a><a href="../">Guide index</a><a href="../../api/">HTTP API reference</a></div></div></footer>
+    <footer class="site-footer"><div class="footer-inner"><span><code>flyology_iri</code> is experimental. Treat normalization, destination policy, and input bounds as separate application decisions.</span><div class="footer-links"><a href="../client/">Client guide</a><a href="../http2/">HTTP/2 guide</a><a href="../">Guide index</a><a href="../../iri-api/">IRI API reference</a><a href="../../api/">HTTP API reference</a></div></div></footer>
   </body>
 </html>

@@ -25,7 +25,8 @@
           <li><a href="../../guide/">Guide</a></li>
           <li><a href="../../architecture/">Architecture</a></li>
           <li><a href="../" aria-current="page">Journal</a></li>
-          <li><a href="../../api/">API</a></li>
+          <li><a href="../../api/">HTTP API</a></li>
+          <li><a href="../../iri-api/">IRI API</a></li>
           <li>
             <details class="nav-dropdown" data-nav-dropdown>
               <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
@@ -52,7 +53,7 @@
       <header class="article-hero">
         <div>
           <ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Journal</a></li><li aria-current="page">HTTP comparison</li></ol>
-          <h1>A preliminary Ada HTTP server comparison.</h1>
+          <h1>Superseded: Preliminary Ada HTTP server measurements.</h1>
         </div>
         <div>
           <p class="article-summary">Superseded: the benchmark linked one Flyology event loop while reporting 16 and did not verify every server thread's CPU affinity. The measurements remain only as a historical record.</p>
@@ -115,7 +116,7 @@
 
           <section id="throughput">
             <span class="step-label">OBSERVATION</span>
-            <h2>Lightweight led every measured peer row.</h2>
+            <h2>Superseded result: lightweight led every measured peer row.</h2>
             <p>At concurrency 32, Flyology lightweight served 68.5 thousand plaintext requests per second. AWS served 30.6 thousand and EWS served 28.8 thousand. The 1 KiB response produced a similar ordering: 63.7, 29.9, and 26.7 thousand requests per second.</p>
 
             <figure class="benchmark-plot" aria-labelledby="plain-plot-title">
@@ -161,7 +162,7 @@
 
           <section id="resources">
             <span class="step-label">TRADEOFF</span>
-            <h2>Native bought throughput with threads and CPU.</h2>
+            <h2>Superseded result: native used more threads and CPU for higher throughput.</h2>
             <p>Flyology native was the fastest fixture in this CPU-small workload, reaching 384.0 thousand plaintext requests per second at concurrency 32. It also created 257 server threads and accumulated 91.5 CPU seconds across the plain-tier trial. Flyology lightweight used two threads and 17.25 CPU seconds.</p>
             <div class="benchmark-table-wrap">
               <table class="benchmark-table">
@@ -187,9 +188,9 @@
 
           <section id="missing">
             <span class="step-label">LIMITS</span>
-            <h2>The next experiment needs real waiting.</h2>
+            <h2>The measurements do not include external I/O.</h2>
             <p>These endpoints perform almost no application work. They do not query a database, call a remote service, serialize a meaningful object, use TLS, or exercise connection churn. The comparison therefore isolates HTTP and routing overhead more than it represents a complete application.</p>
-            <p>A database-backed follow-up should hold query, connection-pool size, response encoding, and backpressure policy constant. A nonblocking database path would test the lightweight lane's intended advantage. A blocking driver would need a bounded native executor and would measure the hybrid design instead.</p>
+            <p>A database-backed follow-up must hold query, connection-pool size, response encoding, and backpressure policy constant. A nonblocking database path would test the lightweight lane's intended advantage. A blocking driver would need a bounded native executor and would measure the hybrid design instead.</p>
             <div class="callout callout-teal">
               <span class="callout-symbol" aria-hidden="true">i</span>
               <p>The restrained conclusion is specific: on this recorded host and these verified fixtures, Flyology lightweight delivered higher median throughput than the tested AWS and EWS configurations while using two server threads.</p>

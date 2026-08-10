@@ -58,3 +58,19 @@ node "$website_kit/scripts/build-api-search-index.mjs" docs/api
 
 test -f docs/api/index.html
 test -f docs/api/search-index.js
+
+node "$website_kit/scripts/render-gnatdoc-theme.mjs" \
+  "$project_root/flyology_iri/docs/gnatdoc-theme.json" \
+  "$project_root/flyology_iri/docs/gnatdoc/html"
+ALR="$alr" "$project_root/flyology_iri/scripts/docs.sh"
+mkdir -p flyology_iri/docs/api/fonts
+cp "$website_kit/assets/fonts/geologica-latin-variable.woff2" \
+  flyology_iri/docs/api/fonts/
+cp website/assets/brand/flyology-mark-transparent.svg \
+  flyology_iri/docs/api/flyology-mark.svg
+cp "$website_kit/assets/scripts/ada-highlight.js" \
+  flyology_iri/docs/api/ada-highlight.js
+node "$website_kit/scripts/build-api-search-index.mjs" flyology_iri/docs/api
+
+test -f flyology_iri/docs/api/index.html
+test -f flyology_iri/docs/api/search-index.js
