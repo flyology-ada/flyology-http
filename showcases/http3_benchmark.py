@@ -74,25 +74,26 @@ async def request_batch(
 
     ended = set()
     latencies = []
-    while len(ended) != count:
-        event = await asyncio.wait_for(protocol.events.get(), timeout=timeout)
-        if isinstance(event, ConnectionTerminated):
-            raise RuntimeError(
-                f"connection closed early: code={event.error_code} "
-                f"ended={len(ended)}/{count}"
-            )
-        if isinstance(event, HeadersReceived) and event.stream_id in started:
-            for name, value in event.headers:
-                if name == b":status":
-                    statuses[event.stream_id] = value
-            if event.stream_ended:
-                ended.add(event.stream_id)
-                latencies.append(time.perf_counter() - started[event.stream_id])
-        elif isinstance(event, DataReceived) and event.stream_id in started:
-            bodies[event.stream_id].extend(event.data)
-            if event.stream_ended:
-                ended.add(event.stream_id)
-                latencies.append(time.perf_counter() - started[event.stream_id])
+    async with asyncio.timeout(timeout):
+        while len(ended) != count:
+            event = await protocol.events.get()
+            if isinstance(event, ConnectionTerminated):
+                raise RuntimeError(
+                    f"connection closed early: code={event.error_code} "
+                    f"ended={len(ended)}/{count}"
+                )
+            if isinstance(event, HeadersReceived) and event.stream_id in started:
+                for name, value in event.headers:
+                    if name == b":status":
+                        statuses[event.stream_id] = value
+                if event.stream_ended:
+                    ended.add(event.stream_id)
+                    latencies.append(time.perf_counter() - started[event.stream_id])
+            elif isinstance(event, DataReceived) and event.stream_id in started:
+                bodies[event.stream_id].extend(event.data)
+                if event.stream_ended:
+                    ended.add(event.stream_id)
+                    latencies.append(time.perf_counter() - started[event.stream_id])
 
     for stream_id in started:
         if (
