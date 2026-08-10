@@ -162,6 +162,28 @@ package body Flyology.QUIC.Connection_Driver is
       end if;
    end Build_Stream_Datagram_With_ACK;
 
+   procedure Build_Stream_Batch_Datagram_With_ACK
+     (Item         : in out Connection;
+      Fragments    : Application_Space.Stream_Fragment_Array;
+      Data         : Ada.Streams.Stream_Element_Array;
+      Now          : Application_Space.Timestamp;
+      Packet       : out Datagram;
+      Status       : out Application_Space.Send_Status;
+      ACK_Included : out Boolean)
+   is
+      Built : Application_Space.Send_Result;
+   begin
+      Packet := (others => <>);
+      Application_Space.Build_Stream_Batch_Packet
+        (Item.Application, Fragments, Data, Now, Packet.Data, Built,
+         Include_ACK => True);
+      Status := Built.Status;
+      ACK_Included := Built.ACK_Included;
+      if Built.Status = Application_Space.Sent then
+         Packet.Length := Built.Packet_Length;
+      end if;
+   end Build_Stream_Batch_Datagram_With_ACK;
+
    procedure Build_Stream_Abort_Datagram
      (Item              : in out Connection;
       Stream_ID         : Varint_Policy.Value_Type;

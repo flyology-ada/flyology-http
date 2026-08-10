@@ -187,6 +187,18 @@ private package Flyology.QUIC.Connection_Driver is
    with Pre => Is_Connected (Item)
      and then Data'Length <= Application_Space.Max_Stream_Payload;
 
+   procedure Build_Stream_Batch_Datagram_With_ACK
+     (Item         : in out Connection;
+      Fragments    : Application_Space.Stream_Fragment_Array;
+      Data         : Ada.Streams.Stream_Element_Array;
+      Now          : Application_Space.Timestamp;
+      Packet       : out Datagram;
+      Status       : out Application_Space.Send_Status;
+      ACK_Included : out Boolean)
+   with Pre => Is_Connected (Item)
+     and then Fragments'Length in 1 .. Application_Space.Max_Stream_Fragments
+     and then Data'Length <= Application_Space.Max_Stream_Payload;
+
    procedure Build_Stream_Abort_Datagram
      (Item              : in out Connection;
       Stream_ID         : Varint_Policy.Value_Type;

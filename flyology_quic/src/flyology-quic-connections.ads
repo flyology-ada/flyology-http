@@ -19,6 +19,10 @@ package Flyology.QUIC.Connections is
    Max_Output_Datagrams : constant := 20;
    --  Largest stream payload carried by one generated datagram.
    Max_Stream_Payload : constant := 1_100;
+   --  Largest number of independent STREAM frames combined in one generated
+   --  1-RTT packet. The aggregate encoded packet remains bounded by
+   --  Max_Datagram_Length.
+   Max_Stream_Fragments : constant Positive := 8;
    --  Lifetime stream accounting retained by one bounded QUIC connection.
    --  Large byte reassembly buffers remain separately bounded to 32 active
    --  streams and are recycled after protocol completion.
@@ -125,6 +129,28 @@ package Flyology.QUIC.Connections is
       Items : Datagram_Array;
       Count : Natural range 0 .. Max_Output_Datagrams := 0;
    end record;
+
+   --  Description of one slice in the aggregate Data argument supplied to
+   --  Build_Stream_Batch_Datagram_With_ACK.
+   --  @field ID QUIC stream identifier
+   --  @field Offset Absolute stream offset of the slice
+   --  @field Length Number of aggregate Data octets belonging to this stream
+   --  @field Fin Whether the slice sets the stream final size
+   type Stream_Fragment is record
+      ID     : Stream_ID := 0;
+      Offset : Stream_Offset := 0;
+      Length : Natural range 0 .. Max_Stream_Payload := 0;
+      Fin    : Boolean := False;
+   end record;
+
+   --  Bounded descriptions for STREAM frames combined into one packet.
+   type Stream_Fragment_Array is
+     array (Positive range <>) of Stream_Fragment;
+
+   --  Return the aggregate payload length described by Fragments, capped one
+   --  past Max_Stream_Payload so callers can validate without overflow.
+   function Total_Length
+     (Fragments : Stream_Fragment_Array) return Natural;
 
    --  Externally visible connection phase.
    --  @enum Uninitialized No endpoint configuration has been supplied
@@ -485,6 +511,31 @@ package Flyology.QUIC.Connections is
       Status       : out Send_Status;
       ACK_Included : out Boolean)
    with Pre => Is_Connected (Item)
+     and then Data'Length <= Max_Stream_Payload;
+
+   --  Build one protected packet containing STREAM frames for several
+   --  independent streams and include the current application ACK when it
+   --  fits. All stream-flow reservations commit together only when Status is
+   --  Sent. Packet_Too_Large leaves every stream unsent so callers can fall
+   --  back to individual packets.
+   --  @param Item Connected endpoint
+   --  @param Fragments Ordered stream slice descriptions
+   --  @param Data Concatenated slice payloads in Fragments order
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   --  @param ACK_Included Whether the datagram carries an ACK frame
+   procedure Build_Stream_Batch_Datagram_With_ACK
+     (Item         : in out Connection;
+      Fragments    : Stream_Fragment_Array;
+      Data         : Ada.Streams.Stream_Element_Array;
+      Now          : Timestamp;
+      Packet       : out Datagram;
+      Status       : out Send_Status;
+      ACK_Included : out Boolean)
+   with Pre => Is_Connected (Item)
+     and then Fragments'Length in 1 .. Max_Stream_Fragments
+     and then Total_Length (Fragments) = Data'Length
      and then Data'Length <= Max_Stream_Payload;
 
    --  Build one protected cancellation packet for both directions of a

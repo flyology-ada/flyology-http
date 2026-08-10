@@ -52,6 +52,7 @@ for test in \
   flyology-quic-ack_frame_policy-smoke \
   flyology-quic-ack_range_policy-smoke \
   flyology-quic-application_connection-smoke \
+  flyology-quic-application_space-batch_smoke \
   flyology-quic-application_space-smoke \
   flyology-quic-application_frame_policy-smoke \
   flyology-quic-connection_state_policy-smoke \

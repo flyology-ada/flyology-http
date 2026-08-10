@@ -85,6 +85,16 @@ private package Flyology.QUIC.Application_Space is
       ACK_Included  : Boolean := False;
    end record;
 
+   Max_Stream_Fragments : constant Positive := 8;
+   type Stream_Fragment is record
+      ID     : Varint_Policy.Value_Type := 0;
+      Offset : Varint_Policy.Value_Type := 0;
+      Length : Natural range 0 .. Max_Stream_Payload := 0;
+      Fin    : Boolean := False;
+   end record;
+   type Stream_Fragment_Array is
+     array (Positive range <>) of Stream_Fragment;
+
    procedure Build_Stream_Packet
      (Item      : in out State;
       Stream_ID : Varint_Policy.Value_Type;
@@ -97,6 +107,20 @@ private package Flyology.QUIC.Application_Space is
       Include_ACK : Boolean := False)
    with
      Pre => Is_Initialized (Item)
+       and then Data'Length <= Max_Stream_Payload
+       and then Packet'Length >= Max_Datagram_Length;
+
+   procedure Build_Stream_Batch_Packet
+     (Item        : in out State;
+      Fragments   : Stream_Fragment_Array;
+      Data        : Ada.Streams.Stream_Element_Array;
+      Now         : Timestamp;
+      Packet      : out Ada.Streams.Stream_Element_Array;
+      Result      : out Send_Result;
+      Include_ACK : Boolean := False)
+   with
+     Pre => Is_Initialized (Item)
+       and then Fragments'Length in 1 .. Max_Stream_Fragments
        and then Data'Length <= Max_Stream_Payload
        and then Packet'Length >= Max_Datagram_Length;
 

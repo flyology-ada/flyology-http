@@ -13,6 +13,7 @@ package body Flyology.HTTP.HTTP_3 is
    package Internal_Settings renames
      Flyology.HTTP.HTTP_3_Settings_Policy;
    use type Internal.Event_Kind;
+   use type Internal.Operation_Status;
 
    type Session_Impl is limited record
       Value      : Internal.Connection;
@@ -369,6 +370,81 @@ package body Flyology.HTTP.HTTP_3 is
          Now, Packet, Result, ACK_Included);
       Status := Public_Status (Result);
    end Send_Response;
+
+   procedure Prepare_Response
+     (Item      : in out Session;
+      Transport : QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Output    : out Prepared_Response;
+      Status    : out Operation_Status)
+   is
+      Result : Internal.Operation_Status;
+      Value  : Internal.Prepared_Response;
+   begin
+      Output := (others => <>);
+      if not Is_Initialized (Item) then
+         Status := Uninitialized;
+         return;
+      end if;
+      To_Internal_Into (Headers, Impl (Item).Send_Headers);
+      Internal.Prepare_Response
+        (Impl (Item).Value, Transport, Stream, Impl (Item).Send_Headers, Data,
+         Value, Result);
+      Status := Public_Status (Result);
+      if Result = Internal.Succeeded then
+         Output :=
+           (Ready              => Value.Ready,
+            Stream             => Value.Stream,
+            Data               => Value.Data,
+            Length             => Value.Length,
+            Response_Code      => Value.Response_Code,
+            Has_Content_Length => Value.Has_Content_Length,
+            Content_Length     => Value.Content_Length,
+            Body_Length        => Value.Body_Length);
+      end if;
+   end Prepare_Response;
+
+   procedure Send_Prepared_Responses
+     (Item         : in out Session;
+      Transport    : in out QUIC.Connection;
+      Responses    : in out Prepared_Response_Array;
+      Now          : QUIC.Timestamp;
+      Packet       : out QUIC.Datagram;
+      Status       : out Operation_Status;
+      ACK_Included : out Boolean)
+   is
+      Values : Internal.Prepared_Response_Array (Responses'Range);
+      Result : Internal.Operation_Status;
+   begin
+      Packet := (others => <>);
+      ACK_Included := False;
+      if not Is_Initialized (Item) then
+         Status := Uninitialized;
+         return;
+      end if;
+      for Index in Responses'Range loop
+         Values (Index) :=
+           (Ready              => Responses (Index).Ready,
+            Stream             => Responses (Index).Stream,
+            Data               => Responses (Index).Data,
+            Length             => Responses (Index).Length,
+            Response_Code      => Responses (Index).Response_Code,
+            Has_Content_Length => Responses (Index).Has_Content_Length,
+            Content_Length     => Responses (Index).Content_Length,
+            Body_Length        => Responses (Index).Body_Length);
+      end loop;
+      Internal.Build_Prepared_Responses
+        (Impl (Item).Value, Transport, Values, Now, Packet, Result,
+         ACK_Included);
+      Status := Public_Status (Result);
+      if Result = Internal.Succeeded then
+         for Response of Responses loop
+            Response := (others => <>);
+         end loop;
+      end if;
+   end Send_Prepared_Responses;
 
    procedure Send_Data
      (Item      : in out Session;

@@ -829,6 +829,125 @@ package body Flyology.HTTP.HTTP_3_Connection is
       end if;
    end Build_Headers;
 
+   procedure Prepare_Response
+     (Item      : in out Connection;
+      Transport : QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : QPACK_Field_Section_Policy.Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Output    : out Prepared_Response;
+      Status    : out Operation_Status)
+   is
+      Slot        : Optional_Slot;
+      Validation  : HTTP_3_Header_Policy.Validation_Result;
+      Head_Update : HTTP_3_Message_Policy.Response_Update;
+      Data_Update : HTTP_3_Message_Policy.Response_Update;
+      Encoded     : QPACK_Field_Section_Policy.Encode_Result;
+      Head_Frame  : HTTP_3_Frame_Policy.Encode_Result;
+      Data_Frame  : HTTP_3_Frame_Policy.Encode_Result;
+      Length      : Natural;
+      Peer        : HTTP_3_Settings_Policy.Settings;
+   begin
+      Output := (others => <>);
+      if not QUIC.Is_Connected (Transport) then
+         Status := Not_Connected;
+         return;
+      elsif Item.Local_Role /= Server then
+         Status := Wrong_Role;
+         return;
+      elsif Data'Length > HTTP_3_Frame_Policy.Max_Payload_Length then
+         Status := Frame_Too_Large;
+         return;
+      end if;
+
+      if Has_Peer_Settings (Item) then
+         Peer := Peer_Settings (Item);
+         if Peer.Has_Max_Field_Size
+           and then HTTP_3_Settings_Policy.Varint_Policy.Value_Type
+             (QPACK_Field_Section_Policy.Field_Section_Size (Headers)) >
+               Peer.Max_Field_Size
+         then
+            Status := Peer_Field_Section_Too_Large;
+            return;
+         end if;
+      end if;
+
+      Validation := HTTP_3_Header_Policy.Validate_Response (Headers);
+      if Validation.Status /= HTTP_3_Header_Policy.Valid then
+         Status := Header_Error;
+         return;
+      elsif Validation.Is_Interim then
+         Status := Message_Error;
+         return;
+      end if;
+      Encoded := QPACK_Field_Section_Policy.Encode (Headers);
+      if Encoded.Status /= QPACK_Field_Section_Policy.Encoded then
+         Status := QPACK_Decompression_Failed;
+         return;
+      end if;
+      Head_Frame := HTTP_3_Frame_Policy.Encode
+        (HTTP_3_Frame_Policy.Headers_Frame,
+         Encoded.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Encoded.Length)));
+      Data_Frame := HTTP_3_Frame_Policy.Encode
+        (HTTP_3_Frame_Policy.Data_Frame, Data);
+      Length := Head_Frame.Length + Data_Frame.Length;
+      if Length > QUIC.Max_Stream_Payload then
+         Status := Frame_Too_Large;
+         return;
+      end if;
+
+      Find_Or_Add_Message (Item, Transport, Stream, Slot, Status);
+      if Status /= Succeeded or else Item.Sending (Slot).Finished then
+         if Status = Succeeded then
+            Status := Frame_Unexpected;
+         end if;
+         return;
+      elsif Item.Sending (Slot).Kind /= Response_Message then
+         Status := Frame_Unexpected;
+         return;
+      end if;
+      Head_Update := HTTP_3_Message_Policy.On_Response_Frame
+        (Item.Sending (Slot).Response,
+         HTTP_3_Frame_Policy.Headers_Frame,
+         HTTP_3_Message_Policy.Final_Response_Headers,
+         Response_Code => Validation.Response_Code,
+         Has_Content_Length => Validation.Has_Content_Length,
+         Content_Length => Validation.Content_Length);
+      if Head_Update.Status /= HTTP_3_Message_Policy.Accepted then
+         Status := Message_Error;
+         return;
+      end if;
+      Data_Update := HTTP_3_Message_Policy.On_Response_Frame
+        (Head_Update.State, HTTP_3_Frame_Policy.Data_Frame,
+         Data_Length => QUIC.Stream_Offset (Data'Length));
+      if Data_Update.Status /= HTTP_3_Message_Policy.Accepted
+        or else HTTP_3_Message_Policy.Finish_Response (Data_Update.State) /=
+          HTTP_3_Message_Policy.Message_Complete
+      then
+         Status := Message_Error;
+         return;
+      end if;
+
+      Output.Stream := Stream;
+      Output.Length := Length;
+      Output.Data
+        (1 .. Ada.Streams.Stream_Element_Offset (Head_Frame.Length)) :=
+          Head_Frame.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Head_Frame.Length));
+      Output.Data
+        (Ada.Streams.Stream_Element_Offset (Head_Frame.Length + 1)
+           .. Ada.Streams.Stream_Element_Offset (Length)) :=
+          Data_Frame.Data
+            (1 .. Ada.Streams.Stream_Element_Offset (Data_Frame.Length));
+      Output.Response_Code := Validation.Response_Code;
+      Output.Has_Content_Length := Validation.Has_Content_Length;
+      Output.Content_Length := Validation.Content_Length;
+      Output.Body_Length := QUIC.Stream_Offset (Data'Length);
+      Output.Ready := True;
+      Status := Succeeded;
+   end Prepare_Response;
+
    procedure Build_Response
      (Item      : in out Connection;
       Transport : in out QUIC.Connection;
@@ -957,6 +1076,132 @@ package body Flyology.HTTP.HTTP_3_Connection is
          Item.Send_Count := Item.Send_Count - 1;
       end if;
    end Build_Response;
+
+   procedure Build_Prepared_Responses
+     (Item         : in out Connection;
+      Transport    : in out QUIC.Connection;
+      Responses    : Prepared_Response_Array;
+      Now          : QUIC.Timestamp;
+      Packet       : out QUIC.Datagram;
+      Status       : out Operation_Status;
+      ACK_Included : out Boolean)
+   is
+      Fragments : QUIC.Stream_Fragment_Array (Responses'Range);
+      Combined  : Ada.Streams.Stream_Element_Array
+        (1 .. QUIC.Max_Stream_Payload) := (others => 0);
+      Length    : Natural := 0;
+      Slot      : Optional_Slot;
+      Head_Update : HTTP_3_Message_Policy.Response_Update;
+      Data_Update : HTTP_3_Message_Policy.Response_Update;
+      Sent      : QUIC.Send_Status;
+
+      procedure Validate (Response : Prepared_Response) is
+      begin
+         if not Response.Ready then
+            Status := Frame_Unexpected;
+            return;
+         end if;
+         Slot := Find_Send (Item, Response.Stream);
+         if Slot = 0
+           or else Item.Sending (Slot).Finished
+           or else Item.Sending (Slot).Kind /= Response_Message
+         then
+            Status := Frame_Unexpected;
+            return;
+         end if;
+         Head_Update := HTTP_3_Message_Policy.On_Response_Frame
+           (Item.Sending (Slot).Response,
+            HTTP_3_Frame_Policy.Headers_Frame,
+            HTTP_3_Message_Policy.Final_Response_Headers,
+            Response_Code => Response.Response_Code,
+            Has_Content_Length => Response.Has_Content_Length,
+            Content_Length => Response.Content_Length);
+         Data_Update := HTTP_3_Message_Policy.On_Response_Frame
+           (Head_Update.State, HTTP_3_Frame_Policy.Data_Frame,
+            Data_Length => Response.Body_Length);
+         if Head_Update.Status /= HTTP_3_Message_Policy.Accepted
+           or else Data_Update.Status /= HTTP_3_Message_Policy.Accepted
+           or else HTTP_3_Message_Policy.Finish_Response (Data_Update.State) /=
+             HTTP_3_Message_Policy.Message_Complete
+         then
+            Status := Message_Error;
+         end if;
+      end Validate;
+   begin
+      Packet := (others => <>);
+      ACK_Included := False;
+      if not QUIC.Is_Connected (Transport) then
+         Status := Not_Connected;
+         return;
+      elsif Item.Local_Role /= Server then
+         Status := Wrong_Role;
+         return;
+      elsif Responses'Length not in 1 .. Max_Prepared_Responses then
+         Status := Frame_Too_Large;
+         return;
+      end if;
+
+      Status := Succeeded;
+      for Index in Responses'Range loop
+         Validate (Responses (Index));
+         exit when Status /= Succeeded;
+         for Prior in Responses'First .. Index - 1 loop
+            if Responses (Prior).Stream = Responses (Index).Stream then
+               Status := Frame_Unexpected;
+            end if;
+         end loop;
+         exit when Status /= Succeeded;
+         if Responses (Index).Length > QUIC.Max_Stream_Payload - Length then
+            Status := Frame_Too_Large;
+            return;
+         end if;
+         Slot := Find_Send (Item, Responses (Index).Stream);
+         Fragments (Index) :=
+           (ID     => Responses (Index).Stream,
+            Offset => Item.Sending (Slot).Offset,
+            Length => Responses (Index).Length,
+            Fin    => True);
+         Combined
+           (Ada.Streams.Stream_Element_Offset (Length + 1)
+              .. Ada.Streams.Stream_Element_Offset
+                   (Length + Responses (Index).Length)) :=
+             Responses (Index).Data
+               (1 .. Ada.Streams.Stream_Element_Offset
+                    (Responses (Index).Length));
+         Length := Length + Responses (Index).Length;
+      end loop;
+      if Status /= Succeeded then
+         return;
+      end if;
+
+      if Responses'Length = 1 then
+         QUIC.Build_Stream_Datagram_With_ACK
+           (Transport, Fragments (Responses'First).ID,
+            Fragments (Responses'First).Offset, Fin => True,
+            Data => Combined (1 .. Ada.Streams.Stream_Element_Offset (Length)),
+            Now => Now, Packet => Packet, Status => Sent,
+            ACK_Included => ACK_Included);
+      else
+         QUIC.Build_Stream_Batch_Datagram_With_ACK
+           (Transport, Fragments,
+            Combined (1 .. Ada.Streams.Stream_Element_Offset (Length)),
+            Now, Packet, Sent, ACK_Included);
+      end if;
+      if Sent = QUIC.Packet_Too_Large then
+         Status := Frame_Too_Large;
+         return;
+      end if;
+      Status := Send_Status_For (Sent);
+      if Status /= Succeeded then
+         return;
+      end if;
+
+      for Response of Responses loop
+         Slot := Find_Send (Item, Response.Stream);
+         Item.Sending (Slot) := (others => <>);
+         Item.Send_Count := Item.Send_Count - 1;
+      end loop;
+   end Build_Prepared_Responses;
 
    procedure Build_Data
      (Item      : in out Connection;
