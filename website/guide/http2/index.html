@@ -22,7 +22,8 @@
           <li><a href="../" aria-current="page">Guide</a></li>
           <li><a href="../../architecture/">Architecture</a></li>
           <li><a href="../../journal/">Journal</a></li>
-          <li><a href="../../api/">API</a></li>
+          <li><a href="../../api/">HTTP API</a></li>
+          <li><a href="../../iri-api/">IRI API</a></li>
           <li>
             <details class="nav-dropdown" data-nav-dropdown>
               <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
@@ -63,23 +64,23 @@
         </nav>
 
         <article class="prose">
-          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>HTTP/2 is opt-in. Existing <code>Configure</code> calls keep HTTP/1.1-only behavior, so adding this version does not silently change an application's transport policy.</p></aside>
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>HTTP/2 is opt-in. Existing <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e895e197e4231e7f5890447d70faf0a22801c7f212e98a68c701ad33ee19767"><code>Configure</code></a> calls retain HTTP/1.1-only behavior. Adding HTTP/2 support does not change an application's transport policy.</p></aside>
 
           <section id="choose-mode"><span class="step-label">HTTP/2 01</span><h2>Choose the failure behavior you need.</h2>
-            <p>Pass a <code>Client.Protocol_Mode</code> to an explicit <code>Configure</code> overload. The mode determines whether the client may fall back and whether TLS is required.</p>
+            <p>Pass a <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e9ce321fb3e4b0720f1dcf6efe1ff06d7fc98902b8e0ca6a45f0f9f58610710"><code>Client.Protocol_Mode</code></a> to an explicit <code>Configure</code> overload. The mode fixes the protocol policy for all connections made by that client until it is reconfigured; individual requests do not select a mode. It also determines whether fallback is permitted and whether TLS is required.</p>
             <div class="decision-list">
               <dl>
-                <div class="decision-row"><dt><code>HTTP_1_Only</code></dt><dd>Use HTTP/1.1 and do not offer HTTP/2. This is the behavior of existing overloads.</dd></div>
-                <div class="decision-row"><dt><code>Negotiate_HTTP_2</code></dt><dd>For an HTTPS origin, offer <code>h2</code> and then <code>http/1.1</code> through ALPN. Use HTTP/1.1 when the authenticated peer does not select HTTP/2.</dd></div>
-                <div class="decision-row"><dt><code>Require_HTTP_2</code></dt><dd>For an HTTPS origin, require the peer to select <code>h2</code>. Any other ALPN result fails the connection.</dd></div>
-                <div class="decision-row"><dt><code>HTTP_2_Prior_Knowledge</code></dt><dd>For an <code>http://</code> origin, send the HTTP/2 connection preface directly. The client does not perform the deprecated HTTP/1.1 Upgrade handshake.</dd></div>
+                <div class="decision-row"><dt><a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e9ce321fb3e4b0720f1dcf6efe1ff06d7fc98902b8e0ca6a45f0f9f58610710"><code>HTTP_1_Only</code></a></dt><dd>Use HTTP/1.1 and do not offer HTTP/2. Existing overloads use this behavior.</dd></div>
+                <div class="decision-row"><dt><a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e9ce321fb3e4b0720f1dcf6efe1ff06d7fc98902b8e0ca6a45f0f9f58610710"><code>Negotiate_HTTP_2</code></a></dt><dd>For HTTPS, offer <code>h2</code> followed by <code>http/1.1</code> through ALPN. Use HTTP/1.1 when the authenticated peer does not select HTTP/2.</dd></div>
+                <div class="decision-row"><dt><a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e9ce321fb3e4b0720f1dcf6efe1ff06d7fc98902b8e0ca6a45f0f9f58610710"><code>Require_HTTP_2</code></a></dt><dd>For HTTPS, require the peer to select <code>h2</code>. Any other ALPN result fails the connection.</dd></div>
+                <div class="decision-row"><dt><a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e9ce321fb3e4b0720f1dcf6efe1ff06d7fc98902b8e0ca6a45f0f9f58610710"><code>HTTP_2_Prior_Knowledge</code></a></dt><dd>For <code>http://</code>, send the HTTP/2 connection preface directly. The client does not perform the deprecated HTTP/1.1 Upgrade handshake.</dd></div>
               </dl>
             </div>
             <p>Use negotiation for general HTTPS clients, requirement when HTTP/2 is part of the service contract, and prior knowledge only when the cleartext endpoint is already known to speak HTTP/2.</p>
           </section>
 
           <section id="tls"><span class="step-label">HTTP/2 02</span><h2>Configure authenticated TLS and ALPN.</h2>
-            <p>Initialize a TLS provider normally, then pass the provider, mode, and pool policy to <code>Configure</code>. Certificate-chain and hostname verification remain enabled. The provider must support ALPN for either HTTP/2 negotiation mode.</p>
+            <p>Initialize a TLS provider, then pass the provider, mode, and pool policy to the matching <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#e173f71b19af8cf27fe4bee0f8b39813ec1e919187a407fde4c177c24208163d"><code>Configure</code></a> overload. Use <a href="../../api/fa54f2c15df49722ee965de4d64bd16b7cce37f87e4a0cf25f766e6be782bf39.html#775fcb8b50aa63b38922a44075d1e92c7add389e8add88b3232f90c6ac59115b"><code>Parse_Origin</code></a> to construct its normalized HTTP origin. Certificate-chain and hostname verification remain enabled. The provider must support ALPN for either negotiation mode.</p>
             <figure class="code-panel"><figcaption>prefer HTTP/2 with HTTP/1.1 fallback</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP;
 with Flyology.HTTP.Client;
 with Flyology.IO.TLS.OpenSSL;
@@ -104,7 +105,7 @@ Client.Configure
           </section>
 
           <section id="execute"><span class="step-label">HTTP/2 03</span><h2>Use the ordinary client API.</h2>
-            <p>Requests do not select their own protocol. Build a normal <code>Client.Request</code>, call <code>Execute</code>, and consume the limited response before it leaves the client's lifetime. The selected protocol is available on the response.</p>
+            <p>Requests do not select their own protocol. Build a normal <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#1f13964f8b6e678773246dee11e56649ccf537ba0587fbaf9a277854d61e4cab"><code>Client.Request</code></a> and call <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#0f9fb73a9767e92ba48f1d317d5b5c1e80dc48694f8e667c9053dd073b3def86"><code>Execute</code></a>. Consume the limited response before it leaves the client's lifetime. The response records the selected protocol.</p>
             <figure class="code-panel"><figcaption>execute and inspect the negotiated protocol</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Request : Client.Request;
 
 Client.Set_Target (Request, "/v1/items");
@@ -120,9 +121,10 @@ begin
 end;
 
 Client.Shutdown (HTTP, Timeout =&gt; 5.0);</code></pre></figure>
-            <p>The value passed to <code>Set_Target</code> is still HTTP origin-form. For a complete URL, derive the normalized path and optional query with <a href="../iri/#http-client"><code>Flyology_IRI.Target</code></a>; URL fragments are omitted.</p>
+            <p>The example uses <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#b58fc29c20d8e7e86cea1bc2c5bc524ce2a7d327cab8dff9add032b731590885"><code>Set_Target</code></a>, the retained-response <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#0f9fb73a9767e92ba48f1d317d5b5c1e80dc48694f8e667c9053dd073b3def86"><code>Execute</code></a> overload, <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#bbee19ffa4c483d97e7f5865c025abc7b2bc4e65778bd4987ba6317617c37616"><code>Response</code></a>, <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#b356daf9eb95ffc2d74165ba136afe4d5794fe8388e74dec98ecffe0ba78b161"><code>Negotiated_Protocol</code></a>, and <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#185f64c2af0b2715c8c0795cf6607baadda2eb455aa73f449d0ae1e2b48d14ec"><code>Read_All</code></a>. Its protocol result is <a href="../../api/fa54f2c15df49722ee965de4d64bd16b7cce37f87e4a0cf25f766e6be782bf39.html#446293f94e7c27d865a17e81519923d64100b3b5717e63be99629746c83e9a76"><code>HTTP_1_1_Protocol</code></a> or <a href="../../api/fa54f2c15df49722ee965de4d64bd16b7cce37f87e4a0cf25f766e6be782bf39.html#cce3926fbd9d9fe63eb3dd0141a2f0aad7faba69f643df6e680fc3b2ff1dc5f5"><code>HTTP_2_Protocol</code></a>.</p>
+            <p><a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#c755ae9b8e321c2d51024e15e4769129c57f242e9e6fdbc7b5b869a36993c814"><code>Shutdown</code></a> rejects new work and drains response leases. The value passed to <code>Set_Target</code> is HTTP origin-form. For a complete URL, derive the normalized path and optional query with <a href="../iri/#http-client"><code>Flyology_IRI.Target</code></a>; URL fragments are omitted.</p>
             <p>Concurrent callers may share the configured client. On HTTP/2, up to 32 active streams can share one transport, subject to the peer's advertised stream limit. Pool <code>Capacity</code> still bounds open plus connecting transports, while each transport can carry several exchanges. Admission waits, timeouts, cancellation, GOAWAY handling, safe retries, and explicit shutdown retain their normal client semantics.</p>
-            <p>A response continues to own one exchange lease. Reading it to completion releases its stream for reuse. Finalizing an incomplete HTTP/2 response resets that stream instead of discarding unrelated streams on the same connection.</p>
+            <p>Each response owns one exchange lease for its lifetime. Reading the response to completion releases that stream for reuse. Finalizing an incomplete HTTP/2 response resets only that stream; other streams on the connection remain available.</p>
           </section>
 
           <section id="prior-knowledge"><span class="step-label">HTTP/2 04</span><h2>Use prior knowledge only for a known cleartext peer.</h2>
@@ -152,7 +154,8 @@ Client.Configure
           </section>
 
           <section id="server"><span class="step-label">HTTP/2 06</span><h2>Reuse the high-level server API.</h2>
-            <p>The existing <code>Routing.Serve</code> has an accepted-connection overload that selects HTTP/1.x, HTTP/2, or ALPN. Route registration, middleware, body policy, parameters, deadlines, response helpers, streamed bodies, and SSE remain unchanged. Each admitted HTTP/2 stream runs its synchronous handler in a lightweight task while one connection pump owns framing and flow control.</p>
+            <p>The <a href="../../api/1401386ce20d86ff87b973920dff8f41aef9e0ed80d2887154b4c9dd88ed2523.html"><code>Routing</code></a> generic provides one router for both protocols. Register GET handlers with <a href="../../api/1401386ce20d86ff87b973920dff8f41aef9e0ed80d2887154b4c9dd88ed2523.html#167ab3fce6ac16e8367958cc29364d7ecbc7f0c6897790cf708f5d559a94eada"><code>Get</code></a>, then pass the router to the accepted-connection <a href="../../api/1401386ce20d86ff87b973920dff8f41aef9e0ed80d2887154b4c9dd88ed2523.html#d2ee558a1735e06971720b3db3b85445f07e79367fb8a6e19d7640dea88afedf"><code>Serve</code></a> overload. Route registration, middleware, body policy, parameters, deadlines, response helpers, streamed bodies, and SSE remain unchanged.</p>
+            <p>Each admitted HTTP/2 stream runs its synchronous handler in a lightweight task. One connection pump owns framing and flow control.</p>
             <figure class="code-panel"><figcaption>bind the listener, then serve the existing router</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">package Routing is new
   Flyology.HTTP.Server.Routing (Application_Context);
 
@@ -170,16 +173,16 @@ Routes.Serve
    Mode    =&gt; Flyology.HTTP.Server.ALPN_Negotiated,
    Timeout =&gt; 30.0,
    Token   =&gt; Cancellation);</code></pre></figure>
-            <p>The TLS provider for this example offers <code>h2</code> and <code>http/1.1</code>. <code>ALPN_Negotiated</code> reads the selected protocol and invokes the appropriate engine, so both protocols use the same registered routes on port 8443. <code>HTTP_2_Only</code> instead accepts a cleartext prior-knowledge connection or TLS already selected as <code>h2</code>. <code>HTTP_1_Only</code> preserves explicit HTTP/1.x behavior.</p>
+            <p>The TLS provider for this example offers <code>h2</code> and <code>http/1.1</code>. <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#b0f1d9c017d01115435ec598c1252af828aec35327eda60862def244756ac67c"><code>ALPN_Negotiated</code></a> reads the selected protocol and invokes the appropriate engine, so both protocols use the same registered routes on port 8443. <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#b0f1d9c017d01115435ec598c1252af828aec35327eda60862def244756ac67c"><code>HTTP_2_Only</code></a> instead accepts a cleartext prior-knowledge connection or TLS already selected as <code>h2</code>. <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#b0f1d9c017d01115435ec598c1252af828aec35327eda60862def244756ac67c"><code>HTTP_1_Only</code></a> preserves explicit HTTP/1.x behavior.</p>
             <p>The listening port is configured before this call, when the application binds its Flyology socket. <code>Routing.Serve</code> receives an already accepted connection, so changing the protocol mode does not move listener ownership or port configuration into the router.</p>
-            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The raw connection API is intentionally not drop-in.</strong> <code>Server.Connection</code> contains HTTP/1.x connection-scoped parser and response state. HTTP/2 has several independently blocked streams on one connection, so direct low-level HTTP/2 users implement the generic <code>HTTP_2</code> application callback with <code>Applications.Exchange</code> instead.</p></aside>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p><strong>The raw connection API is protocol-specific.</strong> <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#8a72bc8fbfb54e3505dbac95f648b21580d26da7a3464d687b128e004581d873"><code>Server.Connection</code></a> contains HTTP/1.x connection-scoped parser and response state. HTTP/2 has independently blocked streams on one connection. Direct low-level HTTP/2 users implement the generic <a href="../../api/c83152bc53148d4aa85360129cc70b92b37eda1c148370a09801d9da7cf44d7a.html"><code>HTTP_2</code></a> callback with <a href="../../api/379c79fc1639815ac33578162a1ee8ded22c93c09f171a43777537d800cecd67.html#9d65984bfe50c12cf6844b91ddbefece572aed4577c3286ce44d79a1dc15c409"><code>Applications.Exchange</code></a>.</p></aside>
           </section>
 
           <section id="limits"><span class="step-label">HTTP/2 07</span><h2>Keep the current boundary visible.</h2>
             <div class="decision-list">
               <dl>
                 <div class="decision-row"><dt>Request bodies</dt><dd>Empty and retained request bodies are supported. Borrowed streaming body sources, request trailers, and <code>Expect: 100-continue</code> remain HTTP/1.1-only.</dd></div>
-                <div class="decision-row"><dt>Responses</dt><dd>Response heads and bodies remain bounded and streamable through the ordinary API. HTTP/2 has no reason phrase, so <code>Reason_Phrase</code> returns an empty string.</dd></div>
+                <div class="decision-row"><dt>Responses</dt><dd>Response heads and bodies remain bounded and streamable through the ordinary API. HTTP/2 has no reason phrase, so <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#cfc81278bc13b9fa96d45fd862cf49a9031a5208044781fc12a83d2cc663ecda"><code>Reason_Phrase</code></a> returns an empty string.</dd></div>
                 <div class="decision-row"><dt>Server features</dt><dd>The application server supports prior knowledge or an already ALPN-selected connection, up to 32 concurrent streams, bounded per-stream buffers, routing, middleware, streaming bodies, and SSE. The accepted-connection <code>Ingress</code> budget currently applies only to HTTP/1.x; HTTP/2 request retention is bounded by its fixed stream buffers and route body limits. The server does not provide server push, extended CONNECT/WebSockets, h2c Upgrade, or protocol fallback after a connection has started.</dd></div>
                 <div class="decision-row"><dt>Intermediaries</dt><dd>Proxying and content decoding are not implemented.</dd></div>
               </dl>

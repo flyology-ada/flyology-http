@@ -25,7 +25,8 @@
           <li><a href="../../guide/">Guide</a></li>
           <li><a href="../../architecture/">Architecture</a></li>
           <li><a href="../" aria-current="page">Journal</a></li>
-          <li><a href="../../api/">API</a></li>
+          <li><a href="../../api/">HTTP API</a></li>
+          <li><a href="../../iri-api/">IRI API</a></li>
           <li>
             <details class="nav-dropdown" data-nav-dropdown>
               <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
@@ -52,7 +53,7 @@
       <header class="article-hero">
         <div>
           <ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Journal</a></li><li aria-current="page">HTTP follow-up</li></ol>
-          <h1>Longer Linux runs refine the Ada HTTP result.</h1>
+          <h1>Superseded: Longer Linux runs refine the Ada HTTP measurements.</h1>
         </div>
         <div>
           <p class="article-summary">Superseded: the benchmark linked one Flyology event loop while reporting 16 and did not verify every server thread's CPU affinity. The measurements remain only as a historical record.</p>
@@ -98,7 +99,7 @@
 
           <section id="method">
             <span class="step-label">METHOD</span>
-            <h2>The comparison stayed apples-to-apples.</h2>
+            <h2>The tiers use comparable fixtures.</h2>
             <p>The plain tier compares direct HTTP handlers: Flyology's raw connection handler, AWS's callback API, and EWS's dynamic handler API. The application tier compares Flyology's router and exchange API with one identical ServletAda servlet running over AWS and EWS.</p>
             <dl class="decision-list">
               <div class="decision-row"><dt>Transport</dt><dd>HTTP/1.1 cleartext over loopback with persistent connections; no TLS or connection churn.</dd></div>
@@ -113,7 +114,7 @@
 
           <section id="throughput">
             <span class="step-label">OBSERVATION</span>
-            <h2>Flyology led every valid peer row.</h2>
+            <h2>Superseded result: Flyology led every valid peer row.</h2>
             <p>At concurrency one, Flyology's faster lane led the tested peer fixtures in both tiers and on both architectures. Which Flyology lane was faster changed with architecture: native led on ARM64, while lightweight led on AMD64.</p>
 
             <div class="benchmark-table-wrap">
@@ -143,7 +144,7 @@
 
           <section id="efficiency">
             <span class="step-label">TRADEOFF</span>
-            <h2>Lightweight is the efficiency result, not a universal throughput winner.</h2>
+            <h2>Lightweight reduces resource use but does not always lead throughput.</h2>
             <p>Lightweight used two server threads in every run; native used 257. Across the two plain workloads, lightweight accumulated 52.7 CPU seconds on ARM64 and 51.6 on AMD64. Native accumulated 186.2 and 212.5 seconds respectively.</p>
 
             <div class="benchmark-table-wrap">
@@ -172,8 +173,8 @@
           <section id="limits">
             <span class="step-label">LIMITS</span>
             <h2>This still measures HTTP overhead, not a complete service.</h2>
-            <p>The endpoints do almost no application work. They do not query a database, call a remote service, use TLS, serialize a meaningful object, or rotate connections. A database-backed endpoint could change the balance: nonblocking waits should suit lightweight tasks, while a blocking client library belongs behind a bounded native-task boundary.</p>
-            <p>The hosts were shared and the CPU quota was not an exclusive reservation. Cross-architecture numbers describe two separate environments and should not be read as a processor comparison. A dedicated-host campaign remains the right next step for stronger absolute claims.</p>
+            <p>The endpoints do almost no application work. They do not query a database, call a remote service, use TLS, serialize a meaningful object, or rotate connections. A database-backed endpoint could change the balance: nonblocking waits are the intended lightweight-task case, while a blocking client library belongs behind a bounded native-task boundary.</p>
+            <p>The hosts were shared and the CPU quota was not an exclusive reservation. Cross-architecture numbers describe two separate environments; they are not a processor comparison. A dedicated-host campaign remains the right next step for stronger absolute claims.</p>
             <div class="callout callout-teal">
               <span class="callout-symbol" aria-hidden="true">i</span>
               <p>The restrained conclusion is specific: under the valid concurrency-one profile, Flyology led the tested peer fixtures on both architectures. Lightweight retained that standing with two threads and substantially less CPU than Flyology native, but native was faster in the ARM64 runs.</p>
@@ -182,7 +183,7 @@
 
           <section id="reproduce">
             <span class="step-label">REPRODUCE</span>
-            <h2>Bring your own two Linux nodes.</h2>
+            <h2>Repeat the campaign on two Linux nodes.</h2>
             <p>The generic runner creates an isolated namespace, builds the benchmark image once per architecture, runs the campaign, copies the artifacts, and removes the namespace.</p>
             <details class="code-foldout">
               <summary>Seven-trial ARM64 and AMD64 command</summary>

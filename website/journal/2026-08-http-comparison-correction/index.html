@@ -25,7 +25,8 @@
           <li><a href="../../guide/">Guide</a></li>
           <li><a href="../../architecture/">Architecture</a></li>
           <li><a href="../" aria-current="page">Journal</a></li>
-          <li><a href="../../api/">API</a></li>
+          <li><a href="../../api/">HTTP API</a></li>
+          <li><a href="../../iri-api/">IRI API</a></li>
           <li>
             <details class="nav-dropdown" data-nav-dropdown>
               <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
@@ -52,10 +53,10 @@
       <header class="article-hero">
         <div>
           <ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Journal</a></li><li aria-current="page">HTTP correction</li></ol>
-          <h1>A corrected HTTP harness changes the comparison.</h1>
+          <h1>The corrected HTTP harness changes the comparison.</h1>
         </div>
         <div>
-          <p class="article-summary">A linked-runtime probe found that two earlier campaigns ran one Flyology event loop while reporting 16. With 16 loops observed and every server thread pinned, lightweight and native converge under saturation on local ARM64 and both native Linux architectures; pinned Rust fixtures lead the tier comparisons.</p>
+          <p class="article-summary">A linked-runtime probe found that two earlier campaigns ran one Flyology event loop while reporting 16. The corrected campaign observed 16 loops and verified every server thread's CPU mask. Lightweight and native converge under saturation, while the pinned Rust fixtures lead the tier comparisons.</p>
           <dl class="article-meta">
             <div><dt>Published</dt><dd><time datetime="2026-08-04">2026-08-04</time></dd></div>
             <div><dt>Source</dt><dd><code>46a718a</code> recorded (unreachable); <a href="https://github.com/flyology-ada/flyology-http/tree/49ef1ca535dced0fde888e291914d7fab9beb61f/showcases/http-comparison">49ef1ca (showcase-subtree analogue)</a></dd></div>
@@ -86,7 +87,7 @@
               <strong>Correction</strong>
               <p>This entry supersedes the <a href="../2026-08-http-comparison/">preliminary snapshot</a> and its <a href="../2026-08-http-comparison-follow-up/">longer Ada-only follow-up</a>. Their metadata claimed 16 loops, but an Alire-generated build setting overrode the prepared runtime and linked one. They also pinned only the process leader, allowing worker threads to escape the intended server CPU set.</p>
             </div>
-            <p>The corrected build removes the overriding setting, links and runs a probe that must report the requested loop count, records requested and observed values separately, and fails if any live server thread has the wrong CPU mask after startup or warmup. Every run here reports 16 requested and 16 observed loops.</p>
+            <p>The corrected build removes the overriding setting. It links and runs a probe that must report the requested loop count, and records requested and observed values separately. The runner fails if any live server thread has the wrong CPU mask after startup or warmup. Every run here reports 16 requested and 16 observed loops.</p>
             <p>The old downloads remain available to preserve the record. Their throughput, lane ordering, CPU, and thread conclusions are not current evidence.</p>
           </section>
 
@@ -104,7 +105,10 @@
             </dl>
             <p>The Rust side is pinned to Rust 1.97.1, hyper 1.11.0, axum 0.8.9, Actix Web 4.14.0, and Tokio 1.53.1. Direct dependencies use exact versions and <code>Cargo.lock</code> fixes the transitive graph.</p>
             <p>The shared hosts used 16-CPU pod quotas, not exclusive CPU sets. The ARM64 host used Neoverse-N1 with 80 physical cores and 256 GB; the AMD64 host used Intel Xeon Gold 5412U with 24 physical cores, 48 logical CPUs, and 256 GB.</p>
-            <p>The measurement record retains its original hashes. The local run recorded unreachable <code>d0abaa29…</code>. Reachable <a href="https://github.com/flyology-ada/flyology-http/tree/6110161d0806d504a1802030c6ce74c519c15e7f/showcases/http-comparison"><code>6110161d…</code></a> has the same <code>showcases/http-comparison</code> tree and commit delta, but it is only a showcase-subtree analogue: its Flyology <code>src</code> tree differs by 1,410 additions and 94 deletions across 12 files, including the HTTP server built by the local Docker campaign. It cannot reproduce the measured binary. The report source and Kubernetes overlay recorded unreachable <code>46a718a4…</code>; reachable <a href="https://github.com/flyology-ada/flyology-http/tree/49ef1ca535dced0fde888e291914d7fab9beb61f/showcases/http-comparison"><code>49ef1ca5…</code></a> is likewise proven identical only for the <code>showcases/http-comparison</code> subtree and the commit delta, not for every packaged overlay or build input. Neither reachable analogue is a historical reproduction checkout. <code>b0cfa28…</code> and the Kubernetes base <code>7880b4e…</code> were already reachable and remain unchanged in the method record.</p>
+            <p>The measurement record retains its original hashes. The local run recorded unreachable <code>d0abaa29…</code>. Reachable <a href="https://github.com/flyology-ada/flyology-http/tree/6110161d0806d504a1802030c6ce74c519c15e7f/showcases/http-comparison"><code>6110161d…</code></a> has the same <code>showcases/http-comparison</code> tree and commit delta.</p>
+            <p>That reachable revision is only a showcase-subtree analogue. Its Flyology <code>src</code> tree differs by 1,410 additions and 94 deletions across 12 files, including the HTTP server built by the local Docker campaign. It cannot reproduce the measured binary.</p>
+            <p>The report source and Kubernetes overlay recorded unreachable <code>46a718a4…</code>. Reachable <a href="https://github.com/flyology-ada/flyology-http/tree/49ef1ca535dced0fde888e291914d7fab9beb61f/showcases/http-comparison"><code>49ef1ca5…</code></a> is proven identical only for the <code>showcases/http-comparison</code> subtree and the commit delta, not for every packaged overlay or build input. Neither reachable analogue is a historical reproduction checkout.</p>
+            <p><code>b0cfa28…</code> and the Kubernetes base <code>7880b4e…</code> were already reachable and remain unchanged in the method record.</p>
             <div class="data-links" aria-label="Benchmark data downloads">
               <a href="data/summary.csv" download>Throughput and latency CSV</a>
               <a href="data/resources.csv" download>Resource CSV</a>
@@ -165,7 +169,7 @@
 
           <section id="resources">
             <span class="step-label">EFFICIENCY</span>
-            <h2>Thread economy remains lightweight's clearest advantage.</h2>
+            <h2>Lightweight uses fewer server threads.</h2>
             <p>With 16 loops, every lightweight server reached 17 threads: the main thread plus the loop pool. Native remained at 257 because the fixture capacity is 256. CPU seconds cover one server lifecycle, so compare lanes within an environment and tier; the local and shared-host lifecycles have different durations.</p>
             <div class="benchmark-table-wrap">
               <table class="benchmark-table">
@@ -192,7 +196,7 @@
 
           <section id="high-concurrency">
             <span class="step-label">SATURATION PROFILE</span>
-            <h2>More concurrency closes the lane gap, not the tier gap.</h2>
+            <h2>Higher concurrency narrows the lane difference.</h2>
             <p>The c1 profile above asks about per-request overhead. This separate profile asks what happens as persistent connections rise to c8, c32, and c128. Local ARM64 is a one-second gate; the two native Linux views are medians from three 10-second trials. Every shared-host result plotted below passed all three trials with 100% HTTP 200 responses and zero timeouts.</p>
 
             <div class="snapshot-boundary">
@@ -289,7 +293,8 @@
             </div>
 
             <h3>A tentative interpretation</h3>
-            <p>One plausible reading is that, with 16 verified loops and enough persistent connections in flight, cooperative scheduling no longer keeps lightweight throughput below native: lightweight leads native by 5–10% on shared ARM64 and stays within 1.5% on shared AMD64. That interpretation is incomplete on its own. Lightweight still uses 17 threads instead of 257, but native's c128 p99 is 3.6–6.7 times lower, while hyper and Actix Web retain the highest valid tier throughput. These CPU-small loopback endpoints do not establish the same ordering for database or external-I/O services.</p>
+            <p>One plausible reading is that, with 16 verified loops and enough persistent connections in flight, cooperative scheduling no longer keeps lightweight throughput below native. Lightweight leads native by 5–10% on shared ARM64 and stays within 1.5% on shared AMD64.</p>
+            <p>That interpretation is incomplete on its own. Lightweight still uses 17 threads instead of 257, but native's c128 p99 is 3.6–6.7 times lower. Hyper and Actix Web retain the highest valid tier throughput. These CPU-small loopback endpoints do not establish the same ordering for database or external-I/O services.</p>
             <p>EWS and ServletAda/EWS timed out at c8, c32, and c128 in all three shared-host trials, so they are marked excluded rather than ranked. The <a href="data/saturation.csv" download>aggregate CSV</a> publishes every valid c8/c32/c128 median, range, and latency percentile; the <a href="data/saturation-excluded.csv" download>excluded-observation CSV</a> records each timeout-bearing trial; and the <a href="data/saturation-resources.csv" download>resource CSV</a> records CPU, RSS, threads, and context switches.</p>
           </section>
 
@@ -307,7 +312,7 @@
 
           <section id="reproduce">
             <span class="step-label">NEW CAMPAIGN</span>
-            <h2>Pin one complete source tree and retain its evidence.</h2>
+            <h2>Pin the complete source tree and retain raw evidence.</h2>
             <p>There is no reachable checkout that is proven to reproduce the dated local binary or complete Kubernetes overlay. The following templates are for a new campaign: replace the placeholder with one reachable commit containing every input to be measured, use that same revision throughout, and retain the sanitized raw output outside ignored <code>build/</code> paths.</p>
             <details class="code-foldout">
               <summary>Local ARM64 saturation command</summary>

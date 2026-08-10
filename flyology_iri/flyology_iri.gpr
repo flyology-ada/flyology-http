@@ -34,5 +34,6 @@ project Flyology_IRI is
 
    package Documentation is
       for Output_Dir ("html") use "docs/api";
+      for Resources_Dir ("html") use "docs/gnatdoc/html";
    end Documentation;
 end Flyology_IRI;
