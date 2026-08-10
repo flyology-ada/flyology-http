@@ -181,9 +181,10 @@ begin
                Private_Key => Fixtures.Server_Private_Key,
                Cleartext_Capacity => 4,
                TCP_Capacity => 4,
-               --  Three H3 profiles run per address family. A new Initial may
-               --  overtake a preceding close across different UDP sockets.
-               HTTP_3_Capacity => 6,
+               --  Three H3 profiles run per address family. Client shutdown
+               --  does not acknowledge server-side registry release, so keep
+               --  one reclamation slot per family for an overtaking Initial.
+               HTTP_3_Capacity => 8,
                Timeout => 10.0,
                Handshake_Timeout => 10.0,
                Max_Connection_Age => 20.0,
@@ -202,12 +203,39 @@ begin
       end Server_Task_Type;
 
       procedure Run_Client (Raw_Address : Sockets.Endpoint) is
+         type Client_Phase is
+           (Initialize_Mixed_Client,
+            Mixed_Discover,
+            Mixed_H3_Request,
+            Mixed_TCP_Fallback,
+            Mixed_Shutdown,
+            Pooled_Configure,
+            Pooled_Exchange,
+            Pooled_Shutdown,
+            Raw_Handshake,
+            Raw_Start,
+            Raw_Request,
+            Raw_Response,
+            Raw_Close);
+
          Socket : Sockets.Socket_Type;
          Transport : QUIC.Connection;
          Session : H3.Session;
          Flight : QUIC.Datagram_Batch;
          QUIC_Status : QUIC.Operation_Status;
          H3_Status : H3.Operation_Status;
+         Phase : Client_Phase := Initialize_Mixed_Client;
+         Exchange_Number : Natural := 0;
+         Attempt_Number : Natural := 0;
+         pragma Volatile (Phase);
+         pragma Volatile (Exchange_Number);
+         pragma Volatile (Attempt_Number);
+
+         function Failure_Context return String is
+           (Sockets.Image (Raw_Address) &
+            " phase=" & Client_Phase'Image (Phase) &
+            " exchange=" & Decimal (Exchange_Number) &
+            " attempt=" & Decimal (Attempt_Number));
       begin
       declare
          HTTP : aliased Client.Client (Capacity => 2);
@@ -253,6 +281,7 @@ begin
             end Fail_Open;
          end Dual_Stack_Gate;
       begin
+         Phase := Initialize_Mixed_Client;
          OpenSSL.Initialize_Client
            (Client_Backend, CA_File => Certificate,
             Library_Directory => Library_Directory);
@@ -269,6 +298,7 @@ begin
                Max_Connection_Age => 300.0,
                Max_Requests_Per_Connection => 0));
          Client.Set_Target (Request, "/discover");
+         Phase := Mixed_Discover;
          declare
             Reply : Client.Response :=
               Client.Execute (HTTP, Request, Timeout => 10.0);
@@ -312,12 +342,16 @@ begin
             exception
                when Error : others =>
                   Outcome.Fail
-                    (Ada.Exceptions.Exception_Information (Error));
+                    (Sockets.Image (Raw_Address) &
+                     " phase=" & Client_Phase'Image (Mixed_H3_Request) &
+                     " exchange=0 attempt=0: " &
+                     Ada.Exceptions.Exception_Information (Error));
                   Dual_Stack_Gate.Fail_Open;
             end H3_Request;
          begin
             Dual_Stack_Gate.Await_Ready;
             if Outcome.Passed then
+               Phase := Mixed_TCP_Fallback;
                declare
                   TCP_Value : Client.Request;
                begin
@@ -342,6 +376,7 @@ begin
                Dual_Stack_Gate.Release;
                raise;
          end;
+         Phase := Mixed_Shutdown;
          Client.Shutdown (HTTP, Timeout => 5.0);
       end;
 
@@ -349,6 +384,7 @@ begin
          HTTP : aliased Client.Client (Capacity => 1);
          Request : Client.Request;
       begin
+         Phase := Pooled_Configure;
          Client.Configure
            (HTTP,
             Flyology.HTTP.Parse_Origin
@@ -363,6 +399,8 @@ begin
          --  connection. This exercises MAX_DATA and MAX_STREAMS credit return
          --  together through the user-facing client and server APIs.
          for Exchange in 1 .. 8_000 loop
+            Phase := Pooled_Exchange;
+            Exchange_Number := Exchange;
             declare
                Reply : Client.Response :=
                  Client.Execute (HTTP, Request, Timeout => 10.0);
@@ -376,9 +414,12 @@ begin
                     "hello Ada");
             end;
          end loop;
+         Exchange_Number := 0;
+         Phase := Pooled_Shutdown;
          Client.Shutdown (HTTP, Timeout => 5.0);
       end;
 
+      Phase := Raw_Handshake;
       Fixtures.Initialize_Client (Transport);
       Sockets.Create_Socket
         (Socket, Raw_Address.Family, Sockets.Socket_Datagram);
@@ -389,14 +430,17 @@ begin
 
       for Attempt in 1 .. 8 loop
          exit when QUIC.Is_Connected (Transport);
+         Attempt_Number := Attempt;
          QUIC_IO.Receive
            (Socket, Transport, Flight, QUIC_Status, Timeout => 10.0);
          pragma Assert
            (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
          QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
       end loop;
+      Attempt_Number := 0;
       pragma Assert (QUIC.Is_Connected (Transport));
 
+      Phase := Raw_Start;
       H3.Initialize (Session, H3.Client);
       declare
          Control : QUIC.Datagram;
@@ -413,6 +457,7 @@ begin
          Stream : QUIC.Stream_ID;
          Packet : QUIC.Datagram;
       begin
+         Phase := Raw_Request;
          H3.Append (Headers, H3.Make_Field (":method", "POST"));
          H3.Append (Headers, H3.Make_Field (":scheme", "https"));
          H3.Append (Headers, H3.Make_Field (":path", "/hello/Ada"));
@@ -448,7 +493,9 @@ begin
          Ended : Boolean := False;
          Payload : Unbounded_String;
       begin
+         Phase := Raw_Response;
          for Attempt in 1 .. 16 loop
+            Attempt_Number := Attempt;
             QUIC_IO.Receive
               (Socket, Transport, Flight, QUIC_Status, Timeout => 10.0);
             pragma Assert
@@ -491,15 +538,20 @@ begin
             end loop;
             exit when Ended;
          end loop;
+         Attempt_Number := 0;
          pragma Assert (Status_Seen);
          pragma Assert (Middleware_Seen);
          pragma Assert (not Alt_Svc_Seen);
          pragma Assert (To_String (Payload) = "hello Ada");
          pragma Assert (Ended);
       end;
+      Phase := Raw_Close;
       Sockets.Close_Socket (Socket);
       exception
-         when others =>
+         when Error : others =>
+            Outcome.Fail
+              (Failure_Context & ": " &
+               Ada.Exceptions.Exception_Information (Error));
             if Sockets.Is_Open (Socket) then
                Sockets.Close_Socket (Socket);
             end if;
