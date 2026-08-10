@@ -407,6 +407,14 @@ no-timeout candidates measured 87.882k and 96.539k around a 95.278k
 finite-timeout baseline. The candidate median was 3.2% lower and latency
 distributions overlapped. Bounded timeout behavior was retained unchanged.
 
+Omitting only the per-handler cancellation descriptor after TLS setup was
+likewise tested as an upper bound, while connection-close and server-shutdown
+interrupts and finite deadlines remained active. One-million-request candidate
+trials bracketed the 97.747k baseline at 80.717k and 102.236k. The result was
+not stable, so cancellation remained fully enabled. This narrows the upstream
+lead to the complete watch/wake/removal cycle rather than any one interrupt
+source lookup.
+
 Raising the showcase TCP request lifetime from 1,000 to 100,000 was rejected:
 three trials measured a 75.100k median, below the earlier 94.385k baseline.
 Keeping the initial small connection set indefinitely preserves uneven loop
