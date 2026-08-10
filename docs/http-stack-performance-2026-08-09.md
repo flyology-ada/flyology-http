@@ -368,6 +368,38 @@ oha -n 300000 -c 16 --http-version 1.1 --insecure --no-tui --json \
   https://127.0.0.1:21443/hello/test
 ```
 
+A five-million-request steady TLS run measured 86.480k requests/s overall;
+its per-second median was 94.962k and the p50/p95/p99 latency was
+0.154/0.322/0.904 ms. Simultaneous ten-second server and client samples are
+retained as `/tmp/flyology-h1-lightweight-server-20260809.sample.txt` and
+`/tmp/flyology-h1-oha-20260809.sample.txt`. The server sample again placed the
+serial request path under `SSL_read`, `Wait_Interruptibly`, and
+`Runtime_Wait_IO_Many`. Every wait registers the socket together with stable
+connection-close, server-shutdown, and token descriptors plus a timeout, then
+the scheduler removes those interests after the wake. Event-loop active work
+was uneven: scheduler samples ranged from 4,019 to 5,882 of 6,691 per loop,
+leaving approximately 0.8k to 2.7k samples per loop for fibers.
+
+The maintained cleartext engine fixture separated TLS from runtime and HTTP
+costs. With the same release profile and explicitly probed 16-loop RTS, a
+300,000-request concurrency sweep measured:
+
+| Concurrency | Requests/s | p50 | p95 | p99 |
+| ---: | ---: | ---: | ---: | ---: |
+| 16 | 95,691 | 0.145 | 0.309 | 0.486 |
+| 32 | 83,468 | 0.281 | 0.942 | 1.905 |
+| 64 | 99,927 | 0.446 | 1.726 | 3.735 |
+| 128 | **109,693** | 0.788 | 3.137 | 6.649 |
+| 256 | 108,314 | 2.000 | 5.278 | 9.221 |
+
+Cleartext and TLS are therefore both about 96k at the 16-connection operating
+point; crypto is not the missing 40--45k requests/s. Sixteen separate
+one-loop processes sharing the cleartext port with `SO_REUSEPORT` were also
+rejected as a placement diagnostic. They reached only 49.984k and 50.122k at
+concurrency 16 and 32, then degraded to 42.368k/29.989k/29.983k at
+64/128/256. Multiplying processes and runtimes costs more than any connection
+distribution benefit; no portal change was retained.
+
 Raising the showcase TCP request lifetime from 1,000 to 100,000 was rejected:
 three trials measured a 75.100k median, below the earlier 94.385k baseline.
 Keeping the initial small connection set indefinitely preserves uneven loop
