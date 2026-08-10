@@ -338,6 +338,47 @@ Sixteen streams supplied most of the useful scaling. Doubling to 32 added
 only 1.8% while materially worsening latency, so 128 in flight was retained
 as the local operating point.
 
+### H1 lightweight follow-up
+
+The H1 follow-up started from merged `main` at `9e0040f` and kept the same
+explicitly probed 16-loop lightweight RTS, unified TLS route, disabled QUIC
+tracing, oha 1.7.0 client, and 16 persistent H1 connections. Three initial
+200,000-request trials measured 93.791k, 96.293k, and 94.385k requests/s
+(94.385k median), with median p50/p95/p99 of approximately
+0.152/0.286/0.403 ms. Splitting the same 16 connections across four concurrent
+oha processes measured 96.373k aggregate, so one oha process was not the
+observed ceiling.
+
+The server sample showed the request-head path in 1,636 of 2,942 active
+samples on a representative worker. Of those, 854 were the expected readiness
+wait and 675 were active `SSL_read` work. The remaining request path repeatedly
+allocated the connection pending string, method, target, and header block for
+same-shaped requests. The parser now retains one bounded spare pending
+allocation and overwrites request fields in place. It does not add a fixed
+per-connection header buffer: GNAT's unbounded-string reuse policy releases an
+oversized allocation when the next request is materially smaller.
+
+An interleaved A/B was run while unrelated machine load had reduced absolute
+rates, so only the adjacent relative result is used. Candidate trials measured
+50.880k and 57.029k requests/s; preserved-baseline trials between them measured
+38.541k and 37.120k. The candidate median was 53.955k versus 37.830k, a 42.6%
+increase, and all 1.2 million measured responses returned status 200. The
+command shape for each trial was:
+
+```sh
+oha -n 300000 -c 16 --http-version 1.1 --insecure --no-tui --json \
+  https://127.0.0.1:21443/hello/test
+```
+
+Raising the showcase TCP request lifetime from 1,000 to 100,000 was rejected:
+three trials measured a 75.100k median, below the earlier 94.385k baseline.
+Keeping the initial small connection set indefinitely preserves uneven loop
+placement; bounded reconnection periodically redistributes it. A response-head
+rewrite with one-second Date caching was also rejected after an adjacent
+300,000-request A/B measured 71.638k versus 72.434k for the preserved binary
+(-1.1%). Native TCP handlers were explicitly excluded from this follow-up; the
+goal remains the 16-loop lightweight runtime.
+
 ### Size sensitivity
 
 The maintained H3 fixture's `--response-bytes` option expands the same route

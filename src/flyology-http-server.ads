@@ -668,6 +668,7 @@ private
       Budget_Handle     : Ingress_Budget_Access := null;
       Reservation_Budget : Ingress_Budget_Access := null;
       Pending          : Unbounded_String;
+      Spare_Pending    : Unbounded_String;
       State            : Connection_State := Reading_HTTP;
       Request_Close    : Boolean := False;
       Response_Begun   : Boolean := False;
