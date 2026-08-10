@@ -400,6 +400,23 @@ concurrency 16 and 32, then degraded to 42.368k/29.989k/29.983k at
 64/128/256. Multiplying processes and runtimes costs more than any connection
 distribution benefit; no portal change was retained.
 
+The full unified router was then served over cleartext to bound HTTP-layer
+work without changing the `/hello/{name}` application path. Three c16 trials
+measured 98.268k, 104.682k, and 99.433k requests/s (99.433k median), while the
+minimal engine's adjacent c16 trial was 95.691k. The routed c128 result was
+99.198k. Within host variance, parsing, parameter routing, and response
+construction add no observable throughput ceiling at c16; the missing 40k is
+below the HTTP layer.
+
+The one-loop control used a separately built and probed one-loop custom RTS.
+At c16, the minimal cleartext engine measured 52.485k requests/s and the
+unified TLS route measured 33.945k, versus roughly 96k for both on 16 loops.
+The 16-loop runtime therefore provides useful parallelism (1.8x cleartext and
+2.8x TLS here), but far less than linear scaling. One-loop TLS saturated by
+c4: c1/c4/c16/c64/c128 measured 18.891k/33.975k/33.945k/32.474k/32.045k.
+The corresponding minimal cleartext sweep measured
+24.783k/52.407k/52.485k/51.219k/45.146k.
+
 Removing the request deadline was tested only to bound timer-registration
 cost, not as a proposed configuration. A short interleave initially suggested
 an 8.1% improvement, but longer one-million-request trials rejected it:
