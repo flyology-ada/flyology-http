@@ -351,19 +351,17 @@ observed ceiling.
 
 The server sample showed the request-head path in 1,636 of 2,942 active
 samples on a representative worker. Of those, 854 were the expected readiness
-wait and 675 were active `SSL_read` work. The remaining request path repeatedly
-allocated the connection pending string, method, target, and header block for
-same-shaped requests. The parser now retains one bounded spare pending
-allocation and overwrites request fields in place. It does not add a fixed
-per-connection header buffer: GNAT's unbounded-string reuse policy releases an
-oversized allocation when the next request is materially smaller.
+wait and 675 were active `SSL_read` work. Header parsing and allocation were
+visible in the remainder, but were not dominant.
 
-An interleaved A/B was run while unrelated machine load had reduced absolute
-rates, so only the adjacent relative result is used. Candidate trials measured
-50.880k and 57.029k requests/s; preserved-baseline trials between them measured
-38.541k and 37.120k. The candidate median was 53.955k versus 37.830k, a 42.6%
-increase, and all 1.2 million measured responses returned status 200. The
-command shape for each trial was:
+Reusing the pending-string allocation and overwriting same-shaped method,
+target, and header fields was rejected. An initial interleaved run was
+invalidated because background compilation loaded the preserved-baseline half
+of the comparison. After all builds stopped, candidate trials measured
+94.955k and 99.629k requests/s while adjacent preserved-baseline trials
+measured 99.214k and 93.747k. The candidate median was 97.292k versus 96.481k,
+only +0.84%, within run variance. All 1.2 million measured responses returned
+status 200. The command shape for each trial was:
 
 ```sh
 oha -n 300000 -c 16 --http-version 1.1 --insecure --no-tui --json \

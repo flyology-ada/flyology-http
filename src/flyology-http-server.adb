@@ -459,18 +459,7 @@ package body Flyology.HTTP.Server is
                   Item.Buffered_Bytes
                     + Natural (Last - Buffer'First + 1));
             end if;
-            declare
-               Incoming : constant String :=
-                 Text (Buffer (Buffer'First .. Last));
-            begin
-               if Current = 0 then
-                  Set_Unbounded_String (Item.Spare_Pending, Incoming);
-                  Item.Pending := Item.Spare_Pending;
-                  Item.Spare_Pending := Null_Unbounded_String;
-               else
-                  Append (Item.Pending, Incoming);
-               end if;
-            end;
+            Append (Item.Pending, Text (Buffer (Buffer'First .. Last)));
          end if;
       end;
    end Receive_More;
@@ -479,7 +468,6 @@ package body Flyology.HTTP.Server is
       Current : constant Natural := Length (Item.Pending);
    begin
       if Count >= Current then
-         Item.Spare_Pending := Item.Pending;
          Item.Pending := Null_Unbounded_String;
       else
          Item.Pending := To_Unbounded_String
@@ -1035,15 +1023,12 @@ package body Flyology.HTTP.Server is
          Validate_Token
            (Request_Line (Request_Line'First .. First_Space - 1),
             "HTTP method");
-         Set_Unbounded_String
-           (Value.Method_Value,
-            Request_Line (Request_Line'First .. First_Space - 1));
-         Item.Current_Is_Head :=
-           Request_Line (Request_Line'First .. First_Space - 1) = "HEAD";
-         Set_Unbounded_String
-           (Value.Target_Value,
-            Request_Line (First_Space + 1 .. Second_Space - 1));
-         for Item of Request_Line (First_Space + 1 .. Second_Space - 1) loop
+         Value.Method_Value := To_Unbounded_String
+           (Request_Line (Request_Line'First .. First_Space - 1));
+         Item.Current_Is_Head := Method (Value) = "HEAD";
+         Value.Target_Value := To_Unbounded_String
+           (Request_Line (First_Space + 1 .. Second_Space - 1));
+         for Item of To_String (Value.Target_Value) loop
             if Character'Pos (Item) <= 32 or else Character'Pos (Item) = 127
             then
                raise Protocol_Error with "control byte in request target";
@@ -1062,13 +1047,11 @@ package body Flyology.HTTP.Server is
             end if;
             Item.Current_Version := Value.Version_Value;
          end;
-         Set_Unbounded_String
-           (Value.Header_Block,
-            (if Header_First > Head'Last
-             then "" else Head (Header_First .. Head'Last)));
-         Validate_Header_Block
-           ((if Header_First > Head'Last
-             then "" else Head (Header_First .. Head'Last)));
+         Value.Header_Block :=
+           (if Header_First > Head'Last
+            then Null_Unbounded_String
+            else To_Unbounded_String (Head (Header_First .. Head'Last)));
+         Validate_Header_Block (To_String (Value.Header_Block));
       end;
 
       declare
