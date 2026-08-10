@@ -400,6 +400,13 @@ concurrency 16 and 32, then degraded to 42.368k/29.989k/29.983k at
 64/128/256. Multiplying processes and runtimes costs more than any connection
 distribution benefit; no portal change was retained.
 
+Removing the request deadline was tested only to bound timer-registration
+cost, not as a proposed configuration. A short interleave initially suggested
+an 8.1% improvement, but longer one-million-request trials rejected it:
+no-timeout candidates measured 87.882k and 96.539k around a 95.278k
+finite-timeout baseline. The candidate median was 3.2% lower and latency
+distributions overlapped. Bounded timeout behavior was retained unchanged.
+
 Raising the showcase TCP request lifetime from 1,000 to 100,000 was rejected:
 three trials measured a 75.100k median, below the earlier 94.385k baseline.
 Keeping the initial small connection set indefinitely preserves uneven loop
