@@ -146,6 +146,39 @@ private package Flyology.HTTP.HTTP_3_Connection is
       Status    : out Operation_Status;
       ACK_Included : out Boolean);
 
+   Max_Prepared_Responses : constant Positive := 8;
+   type Prepared_Response is record
+      Ready              : Boolean := False;
+      Stream             : QUIC.Stream_ID := 0;
+      Data               : Ada.Streams.Stream_Element_Array
+        (1 .. QUIC.Max_Stream_Payload) := (others => 0);
+      Length             : Natural range 0 .. QUIC.Max_Stream_Payload := 0;
+      Response_Code      : Natural range 0 .. 599 := 0;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : QUIC.Stream_Offset := 0;
+      Body_Length        : QUIC.Stream_Offset := 0;
+   end record;
+   type Prepared_Response_Array is
+     array (Positive range <>) of Prepared_Response;
+
+   procedure Prepare_Response
+     (Item      : in out Connection;
+      Transport : QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : QPACK_Field_Section_Policy.Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Output    : out Prepared_Response;
+      Status    : out Operation_Status);
+
+   procedure Build_Prepared_Responses
+     (Item         : in out Connection;
+      Transport    : in out QUIC.Connection;
+      Responses    : Prepared_Response_Array;
+      Now          : QUIC.Timestamp;
+      Packet       : out QUIC.Datagram;
+      Status       : out Operation_Status;
+      ACK_Included : out Boolean);
+
    procedure Build_Data
      (Item      : in out Connection;
       Transport : in out QUIC.Connection;

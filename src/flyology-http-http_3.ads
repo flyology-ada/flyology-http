@@ -336,6 +336,54 @@ package Flyology.HTTP.HTTP_3 is
       Status    : out Operation_Status;
       ACK_Included : out Boolean);
 
+   --  Maximum complete responses combined into one QUIC packet.
+   Max_Prepared_Responses : constant Positive := 8;
+
+   --  One validated and encoded complete response awaiting transport commit.
+   type Prepared_Response is private;
+   --  Bounded collection of complete responses awaiting one transport commit.
+   type Prepared_Response_Array is
+     array (Positive range <>) of Prepared_Response;
+
+   --  Validate and encode a complete response without consuming QUIC packet
+   --  or congestion credit. The bounded result can later be committed alone
+   --  or with other streams by Send_Prepared_Responses.
+   --  @param Item Initialized HTTP/3 session
+   --  @param Transport Connected QUIC transport used for validation
+   --  @param Stream Request stream receiving the response
+   --  @param Headers Response header fields
+   --  @param Data Complete response body
+   --  @param Output Prepared response when Status is Success
+   --  @param Status Preparation outcome
+   procedure Prepare_Response
+     (Item      : in out Session;
+      Transport : QUIC.Connection;
+      Stream    : QUIC.Stream_ID;
+      Headers   : Header_Block;
+      Data      : Ada.Streams.Stream_Element_Array;
+      Output    : out Prepared_Response;
+      Status    : out Operation_Status);
+
+   --  Commit one or more prepared responses in a single protected QUIC
+   --  packet. Frame_Too_Large leaves every response uncommitted so callers
+   --  can retry smaller groups or use Send_Response.
+   --  @param Item Initialized HTTP/3 session
+   --  @param Transport Connected QUIC transport to update transactionally
+   --  @param Responses Prepared responses to commit
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
+   --  @param Packet Datagram to transmit when Status is Success
+   --  @param Status Commit outcome
+   --  @param ACK_Included Whether the datagram carries an ACK frame
+   procedure Send_Prepared_Responses
+     (Item         : in out Session;
+      Transport    : in out QUIC.Connection;
+      Responses    : in out Prepared_Response_Array;
+      Now          : QUIC.Timestamp;
+      Packet       : out QUIC.Datagram;
+      Status       : out Operation_Status;
+      ACK_Included : out Boolean)
+   with Pre => Responses'Length in 1 .. Max_Prepared_Responses;
+
    --  Encode and protect one DATA frame.
    --  @param Item Initialized HTTP/3 session
    --  @param Transport Connected QUIC connection
@@ -401,6 +449,18 @@ private
 
    type Session is new Ada.Finalization.Limited_Controlled with record
       Backend : System.Address := System.Null_Address;
+   end record;
+
+   type Prepared_Response is record
+      Ready              : Boolean := False;
+      Stream             : QUIC.Stream_ID := 0;
+      Data               : Ada.Streams.Stream_Element_Array
+        (1 .. QUIC.Max_Stream_Payload) := (others => 0);
+      Length             : Natural range 0 .. QUIC.Max_Stream_Payload := 0;
+      Response_Code      : Natural range 0 .. 599 := 0;
+      Has_Content_Length : Boolean := False;
+      Content_Length     : QUIC.Stream_Offset := 0;
+      Body_Length        : QUIC.Stream_Offset := 0;
    end record;
 
    --  @exclude

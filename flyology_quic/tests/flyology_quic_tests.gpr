@@ -9,6 +9,7 @@ project Flyology_QUIC_Tests is
      ("flyology-quic-ack_frame_policy-smoke.adb",
       "flyology-quic-ack_range_policy-smoke.adb",
       "flyology-quic-application_connection-smoke.adb",
+      "flyology-quic-application_space-batch_smoke.adb",
       "flyology-quic-application_space-smoke.adb",
       "flyology-quic-application_frame_policy-smoke.adb",
       "flyology-quic-connection_state_policy-smoke.adb",

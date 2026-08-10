@@ -100,6 +100,22 @@ package body Flyology.QUIC.Connections is
            "the QUIC cryptographic provider could not generate randomness";
    end Random_Connection_ID;
 
+   function Total_Length
+     (Fragments : Stream_Fragment_Array) return Natural
+   is
+      Result : Natural := 0;
+   begin
+      for Fragment of Fragments loop
+         if Fragment.Length > Max_Stream_Payload -
+           Natural'Min (Result, Max_Stream_Payload)
+         then
+            return Max_Stream_Payload + 1;
+         end if;
+         Result := Result + Fragment.Length;
+      end loop;
+      return Result;
+   end Total_Length;
+
    function Inspect_Datagram_Header
      (Data : Ada.Streams.Stream_Element_Array;
       Short_Header_Destination_Length : Positive := 8)
@@ -550,6 +566,35 @@ package body Flyology.QUIC.Connections is
       Copy (Internal_Packet, Packet);
       Status := Public_Status (Internal_Status);
    end Build_Stream_Datagram_With_ACK;
+
+   procedure Build_Stream_Batch_Datagram_With_ACK
+     (Item         : in out Connection;
+      Fragments    : Stream_Fragment_Array;
+      Data         : Ada.Streams.Stream_Element_Array;
+      Now          : Timestamp;
+      Packet       : out Datagram;
+      Status       : out Send_Status;
+      ACK_Included : out Boolean)
+   is
+      Internal_Fragments : Application_Space.Stream_Fragment_Array
+        (Fragments'Range);
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      for Index in Fragments'Range loop
+         Internal_Fragments (Index) :=
+           (ID     => Fragments (Index).ID,
+            Offset => Fragments (Index).Offset,
+            Length => Fragments (Index).Length,
+            Fin    => Fragments (Index).Fin);
+      end loop;
+      Connection_Driver.Build_Stream_Batch_Datagram_With_ACK
+        (Impl (Item).Driver, Internal_Fragments, Data,
+         Application_Space.Timestamp (Now), Internal_Packet, Internal_Status,
+         ACK_Included);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Stream_Batch_Datagram_With_ACK;
 
    procedure Build_Stream_Abort_Datagram
      (Item              : in out Connection;

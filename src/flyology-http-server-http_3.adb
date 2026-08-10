@@ -56,6 +56,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
    type Boolean_Array is array (Positive range <>) of Boolean;
    type Connection_ID_Array is
      array (Positive range <>) of QUIC.Connection_ID;
+   type Stream_ID_Array is array (Positive range <>) of QUIC.Stream_ID;
    type Endpoint_Array is array (Positive range <>) of Sockets.Endpoint;
 
    function Same_ID (Left, Right : QUIC.Connection_ID) return Boolean is
@@ -152,6 +153,11 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Transport : QUIC.Connection;
       Session   : H3.Session;
       Response_Headers : H3.Header_Block;
+      Pending_Responses : H3.Prepared_Response_Array
+        (1 .. H3.Max_Prepared_Responses);
+      Pending_Streams : Stream_ID_Array (1 .. H3.Max_Prepared_Responses) :=
+        (others => 0);
+      Pending_Count : Natural range 0 .. H3.Max_Prepared_Responses := 0;
       H3_Started : Boolean := False;
       ACK_Pending : Boolean := False;
       Closed    : Boolean := False;
@@ -357,6 +363,96 @@ package body Flyology.HTTP.Server.HTTP_3 is
    end Flush_Pending_ACK;
 
    procedure Receive_One
+     (Item : in out Connection_State; Timeout : Duration);
+
+   procedure Flush_Pending_Responses
+     (Item : in out Connection_State; Timeout : Duration)
+   is
+      Packet       : QUIC.Datagram;
+      Status       : H3.Operation_Status;
+      ACK_Included : Boolean;
+
+      procedure Commit
+        (First, Last : Positive)
+      is
+         Released : H3.Operation_Status;
+      begin
+         loop
+            H3.Send_Prepared_Responses
+              (Item.Session, Item.Transport,
+               Item.Pending_Responses (First .. Last), Now (Item), Packet,
+               Status, ACK_Included);
+            exit when Status /= H3.Transport_Blocked;
+            Receive_One (Item, Timeout);
+         end loop;
+         if Status /= H3.Succeeded then
+            raise Flyology.IO.Device_Error with
+              "HTTP/3 prepared response failed: " &
+              H3.Operation_Status'Image (Status);
+         end if;
+         Send (Item, Packet, Timeout);
+         if ACK_Included then
+            Item.ACK_Pending := False;
+         end if;
+         for Index in First .. Last loop
+            H3.Release_Request
+              (Item.Session, Item.Transport, Item.Pending_Streams (Index),
+               Released);
+            if Released /= H3.Succeeded then
+               raise Flyology.IO.Device_Error with
+                 "HTTP/3 prepared request release failed: " &
+                 H3.Operation_Status'Image (Released);
+            end if;
+         end loop;
+      end Commit;
+   begin
+      if Item.Pending_Count = 0 then
+         return;
+      end if;
+      if Debug.Enabled then
+         Debug.Log
+           ("h3", "response-batch",
+            "count=" & Natural'Image (Item.Pending_Count));
+      end if;
+      H3.Send_Prepared_Responses
+        (Item.Session, Item.Transport,
+         Item.Pending_Responses (1 .. Item.Pending_Count), Now (Item), Packet,
+         Status, ACK_Included);
+      if Status = H3.Frame_Too_Large and then Item.Pending_Count > 1 then
+         for Index in 1 .. Item.Pending_Count loop
+            Commit (Index, Index);
+         end loop;
+      elsif Status = H3.Transport_Blocked then
+         Commit (1, Item.Pending_Count);
+      elsif Status = H3.Succeeded then
+         Send (Item, Packet, Timeout);
+         if ACK_Included then
+            Item.ACK_Pending := False;
+         end if;
+         for Index in 1 .. Item.Pending_Count loop
+            declare
+               Released : H3.Operation_Status;
+            begin
+               H3.Release_Request
+                 (Item.Session, Item.Transport, Item.Pending_Streams (Index),
+                  Released);
+               if Released /= H3.Succeeded then
+                  raise Flyology.IO.Device_Error with
+                    "HTTP/3 prepared request release failed: " &
+                    H3.Operation_Status'Image (Released);
+               end if;
+            end;
+         end loop;
+      else
+         raise Flyology.IO.Device_Error with
+           "HTTP/3 prepared response failed: " &
+           H3.Operation_Status'Image (Status);
+      end if;
+      Item.Pending_Count := 0;
+      Item.Pending_Streams := (others => 0);
+   end Flush_Pending_Responses;
+
+   procedure Receive_One
      (Item : in out Connection_State; Timeout : Duration)
    is
       Packet : Stream_Element_Array (1 .. QUIC.Max_Datagram_Length);
@@ -460,6 +556,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Head_Request     : Boolean := False;
       Response_Begun   : Boolean := False;
       Response_Ended   : Boolean := False;
+      Response_Buffered : Boolean := False;
    end record;
 
    overriding function Response_Started
@@ -628,6 +725,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Packet : QUIC.Datagram;
       Status : H3.Operation_Status;
    begin
+      Flush_Pending_Responses
+        (Item.Owner.all, Remaining (Item.Deadline));
       loop
          H3.Send_Headers
            (Item.Owner.Session, Item.Owner.Transport, Item.Stream, Fields,
@@ -652,6 +751,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Packet : QUIC.Datagram;
       Status : H3.Operation_Status;
    begin
+      Flush_Pending_Responses
+        (Item.Owner.all, Remaining (Item.Deadline));
       loop
          H3.Send_Data
            (Item.Owner.Session, Item.Owner.Transport, Item.Stream, Data, Fin,
@@ -674,32 +775,31 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Data     : Stream_Element_Array;
       Combined : out Boolean)
    is
-      Packet : QUIC.Datagram;
       Status : H3.Operation_Status;
-      ACK_Included : Boolean;
+      Prepared : H3.Prepared_Response;
    begin
-      loop
-         H3.Send_Response
-           (Item.Owner.Session, Item.Owner.Transport, Item.Stream, Fields,
-            Data, Now (Item.Owner.all), Packet, Status, ACK_Included);
-         exit when Status in H3.Succeeded | H3.Frame_Too_Large;
-         if Status /= H3.Transport_Blocked then
-            raise Flyology.IO.Device_Error with
-              "HTTP/3 complete response failed: " &
-              H3.Operation_Status'Image (Status);
-         end if;
-         Wait_For_Transport (Item);
-      end loop;
+      H3.Prepare_Response
+        (Item.Owner.Session, Item.Owner.Transport, Item.Stream, Fields, Data,
+         Prepared, Status);
       Combined := Status = H3.Succeeded;
       if not Combined then
+         if Status /= H3.Frame_Too_Large then
+            raise Flyology.IO.Device_Error with
+              "HTTP/3 complete response preparation failed: " &
+              H3.Operation_Status'Image (Status);
+         end if;
          return;
       end if;
-      Send (Item.Owner.all, Packet, Remaining (Item.Deadline));
-      if ACK_Included then
-         Item.Owner.ACK_Pending := False;
+      Item.Owner.Pending_Count := Item.Owner.Pending_Count + 1;
+      Item.Owner.Pending_Responses (Item.Owner.Pending_Count) := Prepared;
+      Item.Owner.Pending_Streams (Item.Owner.Pending_Count) := Item.Stream;
+      if Item.Owner.Pending_Count = H3.Max_Prepared_Responses then
+         Flush_Pending_Responses
+           (Item.Owner.all, Remaining (Item.Deadline));
       end if;
       Item.Response_Begun := True;
       Item.Response_Ended := True;
+      Item.Response_Buffered := True;
    end Try_Send_Response;
 
    procedure Append_Field
@@ -1157,6 +1257,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Packet : QUIC.Datagram;
       Status : H3.Operation_Status;
    begin
+      Flush_Pending_Responses
+        (Item.Owner.all, Remaining (Item.Deadline));
       if Item.Response_Ended then
          return;
       end if;
@@ -1257,7 +1359,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Send (State.all, Control, Handshake_Timeout);
       end Start_HTTP_3;
 
-      procedure Dispatch_Request (Slot : Positive) is
+      procedure Dispatch_Request
+        (Slot : Positive; Response_Buffered : out Boolean) is
          Method : constant String :=
            To_String (Requests (Slot).Value.Method_Value);
          Target : constant String :=
@@ -1276,6 +1379,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
             Deadline,
             Secure_HTTPS);
       begin
+         Response_Buffered := False;
          if Method = "CONNECT" or else Target = "" then
             raise Protocol_Error with
               "HTTP/3 CONNECT is not supported by the application adapter";
@@ -1313,6 +1417,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
                   X.Mark_Failed;
                end if;
          end;
+         Response_Buffered := Backend.Response_Buffered;
          Served := Served + 1;
          if Debug.Enabled
            and then
@@ -1452,15 +1557,22 @@ package body Flyology.HTTP.Server.HTTP_3 is
                   raise Protocol_Error with
                     "HTTP/3 stream ended without request";
                end if;
-               Dispatch_Request (Positive (Slot));
-               H3.Release_Request
-                 (State.Session, State.Transport,
-                  Requests (Slot).Stream, H3_Status);
-               if H3_Status /= H3.Succeeded then
-                  raise Protocol_Error with
-                    "HTTP/3 request release failed: " &
-                    H3.Operation_Status'Image (H3_Status);
-               end if;
+               declare
+                  Response_Buffered : Boolean;
+               begin
+                  Dispatch_Request
+                    (Positive (Slot), Response_Buffered);
+                  if not Response_Buffered then
+                     H3.Release_Request
+                       (State.Session, State.Transport,
+                        Requests (Slot).Stream, H3_Status);
+                     if H3_Status /= H3.Succeeded then
+                        raise Protocol_Error with
+                          "HTTP/3 request release failed: " &
+                          H3.Operation_Status'Image (H3_Status);
+                     end if;
+                  end if;
+               end;
                Release (Positive (Slot));
                if Served < Max_Requests and then Request_Credit_Due then
                   Return_Request_Credit;
@@ -1547,6 +1659,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
                when H3.Succeeded =>
                   Process_Event (Value);
                when H3.No_Event =>
+                  Flush_Pending_Responses
+                    (State.all, Remaining (Connection_Deadline));
                   Receive_One (State.all, Remaining (Connection_Deadline));
                when others =>
                   Close_For_H3_Error
@@ -1558,6 +1672,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
                exit when Remaining (Connection_Deadline) = 0.0;
          end;
       end loop;
+      Flush_Pending_Responses
+        (State.all, Remaining (Connection_Deadline));
       Cleanup;
    exception
       when others =>

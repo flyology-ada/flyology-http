@@ -526,6 +526,156 @@ package body Flyology.QUIC.Application_Space is
       Result.Status := Sent;
    end Build_Stream_Packet;
 
+   procedure Build_Stream_Batch_Packet
+     (Item        : in out State;
+      Fragments   : Stream_Fragment_Array;
+      Data        : Ada.Streams.Stream_Element_Array;
+      Now         : Timestamp;
+      Packet      : out Ada.Streams.Stream_Element_Array;
+      Result      : out Send_Result;
+      Include_ACK : Boolean := False)
+   is
+      Frame          : Stream_Frame_Policy.Encode_Result;
+      ACK_Frame      : ACK_Frame_Policy.Encode_Result;
+      Plaintext      : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Retransmittable_Length) := (others => 0);
+      Plaintext_Length : Natural range 0 .. Max_Retransmittable_Length := 0;
+      Data_Offset    : Natural := 0;
+      Built          : Application_Connection.Build_Result;
+      Record_Status  : Sent_Packet_Policy.Record_Status;
+      Account_Status : Recovery_Policy.Send_Status;
+      Flow_Status    : Flow_Control_Policy.Reserve_Status;
+      Candidate_Flow : Flow_Control_Policy.State := Item.Flow;
+      Sent_Packet    : Sent_Packet_Policy.Sent_Packet;
+   begin
+      Packet := (others => 0);
+      Result := (others => <>);
+      if Sent_Packet_Policy.Retained (Item.Sent) =
+        Sent_Packet_Policy.Max_Sent_Packets
+        or else Free_Retransmittable_Frame (Item) = 0
+        or else Free_Packet_Frame_Mapping (Item) = 0
+      then
+         Result.Status := Recovery_Capacity_Exceeded;
+         return;
+      elsif not Recovery_Policy.Can_Send
+        (Item.Recovery,
+         Sent_Packet_Policy.Packet_Byte_Count (Max_Datagram_Length))
+      then
+         Result.Status := Congestion_Blocked;
+         return;
+      end if;
+
+      ACK_Frame := (others => <>);
+      if Include_ACK then
+         ACK_Frame := Application_Connection.Encode_ACK
+           (Item.Packets, ACK_Delay => 0);
+      end if;
+      if ACK_Frame.Status = ACK_Frame_Policy.Encoded then
+         Plaintext
+           (1 .. Ada.Streams.Stream_Element_Offset (ACK_Frame.Length)) :=
+             ACK_Frame.Data
+               (1 .. Ada.Streams.Stream_Element_Offset (ACK_Frame.Length));
+         Plaintext_Length := ACK_Frame.Length;
+         Result.ACK_Included := True;
+      end if;
+
+      for Fragment of Fragments loop
+         declare
+            First : Ada.Streams.Stream_Element_Offset;
+            Last  : Ada.Streams.Stream_Element_Offset;
+         begin
+            if not Stream_Was_Opened (Item, Fragment.ID) then
+               Result.Status := Stream_Not_Sendable;
+               return;
+            elsif Fragment.Length > Data'Length - Data_Offset then
+               Result.Status := Internal_State_Error;
+               return;
+            end if;
+
+            Flow_Control_Policy.Reserve_Send
+              (Candidate_Flow, Fragment.ID, Fragment.Offset, Fragment.Length,
+               Fragment.Fin, Flow_Status);
+            if Flow_Status /= Flow_Control_Policy.Reserved then
+               Result.Status := Send_Status_For (Flow_Status);
+               return;
+            end if;
+
+            First := Data'First
+              + Ada.Streams.Stream_Element_Offset (Data_Offset);
+            Last := First
+              + Ada.Streams.Stream_Element_Offset (Fragment.Length) - 1;
+            Frame := Stream_Frame_Policy.Encode
+              (Fragment.ID, Fragment.Offset, Fragment.Fin,
+               Data (First .. Last));
+            if Frame.Status /= Stream_Frame_Policy.Encoded then
+               Result.Status := Stream_Range_Too_Large;
+               return;
+            elsif Frame.Length >
+              Max_Retransmittable_Length - Plaintext_Length
+            then
+               Result.Status := Packet_Too_Large;
+               return;
+            end if;
+            Plaintext
+              (Ada.Streams.Stream_Element_Offset (Plaintext_Length + 1)
+                 .. Ada.Streams.Stream_Element_Offset
+                      (Plaintext_Length + Frame.Length)) :=
+                Frame.Data
+                  (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length));
+            Plaintext_Length := Plaintext_Length + Frame.Length;
+            Data_Offset := Data_Offset + Fragment.Length;
+         end;
+      end loop;
+      if Data_Offset /= Data'Length then
+         Result.Status := Internal_State_Error;
+         return;
+      end if;
+
+      Application_Connection.Build_One_RTT
+        (Item.Packets,
+         Plaintext
+           (1 .. Ada.Streams.Stream_Element_Offset (Plaintext_Length)),
+         Packet, Built);
+      Result.Number := Built.Number;
+      if Built.Status /= Application_Connection.Built then
+         Result.Status := Send_Status_For (Built.Status);
+         return;
+      elsif Built.Packet_Length > Max_Datagram_Length then
+         Result.Status := Packet_Too_Large;
+         return;
+      end if;
+
+      Item.Flow := Candidate_Flow;
+      Result.Packet_Length := Built.Packet_Length;
+      Sent_Packet :=
+        (Number        => Built.Number,
+         Sent_At       => Now,
+         Bytes         => Sent_Packet_Policy.Packet_Byte_Count
+           (Built.Packet_Length),
+         ACK_Eliciting => True,
+         In_Flight     => True);
+      Sent_Packet_Policy.Record_Sent
+        (Item.Sent, Sent_Packet, Record_Status);
+      if Record_Status /= Sent_Packet_Policy.Recorded then
+         Result.Status := Internal_State_Error;
+         return;
+      end if;
+      Recovery_Policy.On_Packet_Sent
+        (Item.Recovery, Sent_Packet, Permit_Probe => False,
+         Status => Account_Status);
+      if Account_Status /= Recovery_Policy.Accounted then
+         Result.Status := Internal_State_Error;
+         return;
+      end if;
+      Item.Has_Latest_ACK_Eliciting := True;
+      Item.Latest_ACK_Eliciting := Now;
+      Retain_New_Frame
+        (Item, Built.Number,
+         Plaintext
+           (1 .. Ada.Streams.Stream_Element_Offset (Plaintext_Length)));
+      Result.Status := Sent;
+   end Build_Stream_Batch_Packet;
+
    procedure Build_Tracked_Frame_Packet
      (Item         : in out State;
       Plaintext    : Ada.Streams.Stream_Element_Array;
