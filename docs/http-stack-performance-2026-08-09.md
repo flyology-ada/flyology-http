@@ -432,6 +432,116 @@ not stable, so cancellation remained fully enabled. This narrows the upstream
 lead to the complete watch/wake/removal cycle rather than any one interrupt
 source lookup.
 
+### Persistent socket-readiness follow-up, 2026-08-10
+
+The upstream runtime investigation subsequently confirmed that the complete
+readiness lifecycle, rather than HTTP parsing or TLS crypto, was the material
+remaining H1 cost on Darwin. Flyology PR
+[#32](https://github.com/flyology-ada/flyology/pull/32) first improved the
+watch path; local unified TLS H1 moved from a 94.54k to a 104.26k requests/s
+median at concurrency 16 (+10.3%), and the maintained cleartext fixture's
+peak moved from 108.31k to 128.10k (+18.3%). H2 remained about 148--149.5k and
+H3 measured 148.4k requests/s after that slice.
+
+Profiles still showed repeated Darwin readiness detach work. Flyology PR
+[#33](https://github.com/flyology-ada/flyology/pull/33) retained orphaned
+`EV_ONESHOT` knotes until the event arrived or the descriptor closed, avoiding
+detach-time delete transactions without weakening close handling. Linux kept
+eager cleanup. In Flyology's maintained fixture, three-trial 16-loop c128
+throughput moved from 118.52k to 140.88k requests/s (+18.86%) and p95 latency
+fell 52.88%; the one-loop c16 control changed -1.36%. That scaling split
+supports contention and repeated event-registration work as the cause, rather
+than request construction or a universally faster shortcut.
+
+The exact Flyology main revision used here is
+`5b41f8dd820f03a0b17f594f279e2cdd67e23350`; the implementation revision is
+`26bd2fff5c649b007e6f89e2d3eb722ae87f72f0`. The maintained index updater
+published it through alire-index PR
+[#6](https://github.com/flyology-ada/alire-index/pull/6), merged as
+`bdab357f93f987979d969546d2bcfde1f3c20492`. `alr update flyology` then
+resolved that exact revision from the project index.
+
+The adjacent HTTP comparison used separately prepared and verified 16-loop
+lightweight runtime roots:
+
+```text
+control:   build/perf-rts-l16-24f30674
+candidate: build/perf-rts-l16-5b41f8dd
+```
+
+Both roots contained `Flyology prepared RTS version 1`, declared
+`Lightweight := True`, and fixed `Prepared_Pool_Size := 16`. Release builds
+selected the roots explicitly with `--RTS`; QUIC tracing was disabled. The
+preserved unified candidate binary SHA-256 was
+`f09006b3f2ea5d3561968ce6f3e6f05a6c5522072fb2435d5cb3caf728ee6fca`,
+the unified control was
+`a56746ce5c2010a3a0ae06c1d5367a75021ad6b4e450d8006a4448d56748f655`,
+the candidate cleartext fixture was
+`c36072178b0e06cc20de14520d6e1f1716a71b678cb928916f89125abab6fdf7`,
+and its control was
+`05a0fb7eea6323ae64a714813edca27da5f8cad09c4ed97fd9cfa572daa023f6`.
+
+Each unified H1/TLS point below is the median of three adjacent 300,000-request
+trials against the same `/hello/test` routed handler. The client command shape
+was:
+
+```sh
+oha -n 300000 -c "$concurrency" --http-version 1.1 \
+  --insecure --no-tui --json https://127.0.0.1:21443/hello/test
+```
+
+`-c 128` means up to 128 in-flight requests using persistent H1 connection
+reuse; it is not a single-client-stream measurement.
+
+| Client concurrency | 24f30674 requests/s | 5b41f8dd requests/s | Change |
+| ---: | ---: | ---: | ---: |
+| 16 | 105,560 | 107,172 | +1.53% |
+| 64 | 111,527 | 125,020 | +12.10% |
+| 128 | 114,426 | **136,535** | **+19.32%** |
+
+All 5.4 million responses across the two cohorts were status 200. Candidate
+c128 trials were 128.77k, 136.54k, and 139.05k requests/s. Their p50 values
+were 0.499/0.461/0.410 ms and p95 values 0.589/0.788/0.837 ms; median p95 fell
+from approximately 1.333 ms to 0.788 ms (-40.9%). Throughput collapsed to
+about 75k at c192, while c256 produced timeouts and only about 60k, locating
+the useful local H1 operating region near c128 rather than at unbounded
+concurrency.
+
+The maintained minimal cleartext `/plaintext` control was throughput-neutral
+to slightly negative at its already higher-concurrency plateau: c128 moved
+124.84k to 126.58k (+1.39%), c256 moved 129.71k to 126.55k (-2.44%), and c384
+moved 132.27k to 127.72k (-3.44%). Median p95 nevertheless fell about
+50--54% at all three points. The accepted runtime change therefore removes
+readiness lifecycle latency generally, while unified TLS H1 converts the
+reduced 16-loop contention into material throughput. It is not an HTTP parser
+or routing fast path.
+
+The same candidate unified binary retained the other protocols:
+
+```sh
+oha -n 200000 -c 4 -p 16 --http-version 2 \
+  --insecure --no-tui --json https://127.0.0.1:21443/hello/test
+
+FLYOLOGY_QUIC_TRACE=false build/oracle/aioquic/bin/python \
+  showcases/http3_benchmark.py --port 21443 --path /hello/test \
+  --requests 800000 --workers 8 --connections 8 --streams 16 --timeout 20
+```
+
+H2 trials measured 144.34k, 146.48k, and 128.68k requests/s (144.34k median;
+the late third run followed the long thermal campaign). All 600,000 responses
+were status 200. H3 measured **147,005 requests/s** over 800,000 valid
+responses, with eight persistent connections, 16 streams per connection
+(128 maximum in flight), 100,000 requests reused per connection, and
+p50/p95/p99 of 0.654/0.812/0.973 ms. Thus H1 now reaches 136.5k median and a
+139.1k best trial on this machine, close to but not yet consistently at the
+approximately 140k H2/H3 band.
+
+Raw JSON is retained locally under
+`/tmp/h1-tls-{24f30674,5b41f8dd}-adj-c*-*.json` (candidate files omit
+`adj`), `/tmp/h1-plain-{24f30674,5b41f8dd}-adj-c*-*.json`, and
+`/tmp/h2-5b41f8dd-*.json`. These short, co-located measurements are useful for
+this adjacent Darwin comparison only; they are not portable capacity claims.
+
 Raising the showcase TCP request lifetime from 1,000 to 100,000 was rejected:
 three trials measured a 75.100k median, below the earlier 94.385k baseline.
 Keeping the initial small connection set indefinitely preserves uneven loop
@@ -746,6 +856,30 @@ FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE=16 \
 - Bounded H3 stress: hostile UDP and 64 malformed cases passed; churn passed
   at 16, 32, 64, and 128 connections; server load passed at 128-way
   concurrency; the Ada client passed 1,024/1,024 requests.
+
+The complete qualification was repeated after resolving Flyology
+`5b41f8dd820f03a0b17f594f279e2cdd67e23350`. `./scripts/test.sh` passed the
+behavioral, QUIC policy, crypto, and recovery suites. H2 again passed native
+and lightweight Go/Node/nghttpd interop, fault campaigns, bounded soak, and
+h2spec 146/146. H3 passed aioquic and quic-go in both client and server roles,
+and h3spec passed 49/49. The bounded 16-loop H3 stress command used peak
+concurrency 128, 128 client workers, and four requests per worker; hostile
+UDP, 64 malformed cases, churn through 128 connections, 128-way server load,
+and all 512 Ada-client requests passed. The qualification RTS marker reported
+lightweight pool size 1 and the stress RTS marker reported lightweight pool
+size 16; neither H3 suite used GNAT's default RTS.
+
+```sh
+./scripts/test.sh
+./scripts/http2-test.sh qualification
+FLYOLOGY_QUIC_TRACE=false ./scripts/test-http3-interop.sh all
+FLYOLOGY_QUIC_TRACE=false ./scripts/test-http3-h3spec.sh
+FLYOLOGY_HTTP3_STRESS_PEAK_CONCURRENCY=128 \
+FLYOLOGY_HTTP3_CLIENT_STRESS_WORKERS=128 \
+FLYOLOGY_HTTP3_CLIENT_STRESS_REQUESTS=4 \
+FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE=16 \
+FLYOLOGY_QUIC_TRACE=false ./scripts/test-http3-stress.sh
+```
 
 ## Remaining bottlenecks
 
