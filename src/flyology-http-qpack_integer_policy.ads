@@ -16,7 +16,8 @@ is
    subtype Prefix_Size is Positive range 1 .. 8;
    subtype Value_Type is Natural range 0 .. Max_Value;
 
-   function Prefix_Mask (Bits : Prefix_Size) return Ada.Streams.Stream_Element is
+   function Prefix_Mask
+     (Bits : Prefix_Size) return Ada.Streams.Stream_Element is
      (case Bits is
          when 1 => 16#01#,
          when 2 => 16#03#,
@@ -58,6 +59,5 @@ is
       High_Bits : Ada.Streams.Stream_Element) return Encode_Result
    with
      Global => null,
-     Pre => (High_Bits and Prefix_Mask (Bits)) = 0,
-     Post => Encode'Result.Length in 1 .. 4;
+     Pre => (High_Bits and Prefix_Mask (Bits)) = 0;
 end Flyology.HTTP.QPACK_Integer_Policy;

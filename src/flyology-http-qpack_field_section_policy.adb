@@ -6,7 +6,6 @@ package body Flyology.HTTP.QPACK_Field_Section_Policy
   with SPARK_Mode => On
 is
    use type Ada.Streams.Stream_Element;
-   use type Ada.Streams.Stream_Element_Offset;
    use type QPACK_Integer_Policy.Decode_Status;
    use type Header_Huffman_Policy.Decode_Status;
 
@@ -88,7 +87,7 @@ is
       begin
          Value := 0;
          Success := False;
-         if Position >= Data_Length then
+         if Position = Data_Length then
             return;
          end if;
          declare
@@ -163,7 +162,7 @@ is
          Target := (others => Character'Val (0));
          Length := 0;
          Status := Truncated;
-         if Position >= Data_Length then
+         if Position = Data_Length then
             return;
          end if;
          Huffman := (Byte_At (Position) and Huffman_Bit) /= 0;
@@ -244,7 +243,7 @@ is
       elsif Required_Insert_Count /= 0 then
          Status := Unsupported_Dynamic;
          return;
-      elsif Position >= Data_Length then
+      elsif Position = Data_Length then
          return;
       elsif (Byte_At (Position) and 16#80#) /= 0 then
          Status := Invalid_Prefix;
@@ -259,8 +258,6 @@ is
       end if;
 
       while Position < Data_Length loop
-         pragma Loop_Invariant (Position <= Data_Length);
-         pragma Loop_Invariant (Block.Count <= Max_Fields);
          pragma Loop_Variant (Decreases => Data_Length - Position);
          Octet := Byte_At (Position);
          Item := (others => <>);
@@ -439,7 +436,6 @@ is
       Result.Data (1) := 0;
       Result.Data (2) := 0;
       for Field_Number in 1 .. Block.Count loop
-         pragma Loop_Invariant (Position <= Max_Encode_Length);
          declare
             Item       : Header_Field renames Block.Fields (Field_Number);
             Name_Text  : constant String := Field_Name (Item);

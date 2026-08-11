@@ -1,7 +1,6 @@
 package body Flyology.HTTP.HTTP_3_Frame_Policy
   with SPARK_Mode => On
 is
-   use type Ada.Streams.Stream_Element_Offset;
    use type Varint_Policy.Decode_Status;
    use type Varint_Policy.Value_Type;
 

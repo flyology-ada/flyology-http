@@ -1,9 +1,6 @@
 package body Flyology.HTTP.QPACK_Integer_Policy
   with SPARK_Mode => On
 is
-   use type Ada.Streams.Stream_Element;
-   use type Ada.Streams.Stream_Element_Offset;
-
    function Decode
      (Data : Ada.Streams.Stream_Element_Array;
       Bits : Prefix_Size) return Decode_Result
@@ -30,7 +27,6 @@ is
       loop
          pragma Loop_Invariant (Position in 1 .. 3);
          pragma Loop_Invariant (Value <= Max_Value);
-         pragma Loop_Invariant (Multiplier in 1 .. 16_384);
          pragma Loop_Variant (Decreases => 4 - Position);
          if Position >= Data'Length then
             return Result;

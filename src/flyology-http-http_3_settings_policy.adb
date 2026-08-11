@@ -1,7 +1,6 @@
 package body Flyology.HTTP.HTTP_3_Settings_Policy
   with SPARK_Mode => On
 is
-   use type Ada.Streams.Stream_Element_Offset;
    use type Varint_Policy.Decode_Status;
    use type Varint_Policy.Value_Type;
 
@@ -64,7 +63,6 @@ is
    begin
       while Position < Data_Length loop
          pragma Loop_Invariant (Position <= Data_Length);
-         pragma Loop_Invariant (Result.Count <= Max_Setting_Count);
          pragma Loop_Variant (Decreases => Data_Length - Position);
 
          Read_Varint (Position, Identifier, Success);

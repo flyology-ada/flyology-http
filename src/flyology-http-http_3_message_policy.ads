@@ -1,4 +1,3 @@
-with Flyology.HTTP.HTTP_3_Frame_Policy;
 with Flyology.QUIC.Varint_Policy;
 
 --  Internal, proved HTTP/3 request-stream message sequencing.

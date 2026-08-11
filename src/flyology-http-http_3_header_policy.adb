@@ -97,7 +97,9 @@ is
    begin
       if Is_Prohibited (Name) then
          return Prohibited_Field;
-      elsif Name = "te" and then (not Allow_TE or else Value /= "trailers") then
+      elsif Name = "te"
+        and then (not Allow_TE or else Value /= "trailers")
+      then
          return Invalid_TE;
       end if;
       return Valid;
@@ -289,7 +291,8 @@ is
          if not Valid_Scheme (Scheme) then
             Result.Status := Invalid_Scheme;
             return Result;
-         elsif (Scheme = "http" or else Scheme = "https") and then Path'Length = 0
+         elsif (Scheme = "http" or else Scheme = "https")
+           and then Path'Length = 0
          then
             Result.Status := Invalid_Path;
             return Result;

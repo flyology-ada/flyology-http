@@ -21,7 +21,6 @@ package body Flyology.HTTP.Server.HTTP_2 is
    use Ada.Streams;
    use type Ada.Real_Time.Time;
    use type Flyology.HTTP.Server.Applications.Response_State;
-   use type Flyology.IO.Descriptor;
    use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_32;
    package Bytes renames Flyology.Bytes;

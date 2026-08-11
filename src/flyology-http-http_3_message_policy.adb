@@ -1,3 +1,5 @@
+with Flyology.HTTP.HTTP_3_Frame_Policy;
+
 package body Flyology.HTTP.HTTP_3_Message_Policy
   with SPARK_Mode => On
 is

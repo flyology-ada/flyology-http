@@ -1,10 +1,6 @@
-with Flyology.QUIC.Varint_Policy;
-
 package body Flyology.HTTP.HTTP_3_Stream_Policy
   with SPARK_Mode => On
 is
-   use type Varint_Policy.Value_Type;
-
    function Is_Client_Initiated
      (Stream_ID : Varint_Policy.Value_Type) return Boolean is
        ((Stream_ID and 1) = 0);
