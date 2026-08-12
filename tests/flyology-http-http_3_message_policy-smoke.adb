@@ -1,3 +1,5 @@
+with Flyology.HTTP.HTTP_3_Frame_Policy;
+
 procedure Flyology.HTTP.HTTP_3_Message_Policy.Smoke is
    Request  : Request_State;
    R_Update : Request_Update;
