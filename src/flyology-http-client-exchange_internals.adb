@@ -119,6 +119,65 @@ package body Exchange_Internals is
             end if;
          end if;
       end Cleanup;
+
+      procedure Adopt_Stream_Socket is
+      begin
+         Connection := new Pooled_Connection;
+         Connections.Take (State.Manager, Socket, Connection.Channel);
+         State.Pool.Publish_Connecting (Slot_Index, Connection);
+         if Scheme (State.Origin_Value) = Secure_HTTPS then
+            if State.Protocol_Policy = HTTP_1_Only then
+               Flyology.IO.Connections.TLS.Upgrade
+                 (Connection.Channel, State.Backend.all,
+                  Flyology.IO.TLS.Client, Host (State.Origin_Value),
+                  Remaining (Started, Timeout), Token);
+            else
+               declare
+                  use Flyology.IO.TLS.ALPN;
+                  Protocols : Protocol_List := Offer ("h2");
+               begin
+                  if State.Protocol_Policy in
+                    Negotiate_HTTP_2 | Negotiate_HTTP_3
+                  then
+                     Append (Protocols, "http/1.1");
+                  end if;
+                  Flyology.IO.Connections.TLS.Upgrade
+                    (Item        => Connection.Channel,
+                     Backend     => Flyology.IO.TLS.ALPN.Provider'Class
+                       (State.Backend.all),
+                     Side        => Flyology.IO.TLS.Client,
+                     Server_Name => Host (State.Origin_Value),
+                     Protocols   => Protocols,
+                     Timeout     => Remaining (Started, Timeout),
+                     Token       => Token);
+                  declare
+                     Selected : constant String :=
+                       Flyology.IO.Connections.TLS.Selected_Protocol
+                         (Connection.Channel);
+                  begin
+                     if Selected = "h2" then
+                        Connection.Protocol := HTTP_2_Transport;
+                     elsif State.Protocol_Policy in
+                       Negotiate_HTTP_2 | Negotiate_HTTP_3
+                       and then
+                         (Selected = "" or else Selected = "http/1.1")
+                     then
+                        Connection.Protocol := HTTP_1_Transport;
+                     else
+                        raise Protocol_Error with
+                          "TLS peer did not negotiate required HTTP/2";
+                     end if;
+                  end;
+               end;
+            end if;
+         elsif State.Protocol_Policy = HTTP_2_Prior_Knowledge then
+            Connection.Protocol := HTTP_2_Transport;
+         end if;
+         if Connection.Protocol = HTTP_2_Transport then
+            H2_Connections.Create
+              (Connection.HTTP_2, Connection.Channel'Unchecked_Access);
+         end if;
+      end Adopt_Stream_Socket;
    begin
       declare
          Sources : Flyology.IO.Interrupt_Set (1 .. 2);
@@ -129,6 +188,28 @@ package body Exchange_Internals is
 #end if;
          Interrupt_Sources (State, Token, Sources, Count);
          Check_Deadline (Started, Timeout);
+         if State.Transport = Unix_Domain_Transport then
+            begin
+               Sockets.Create_Unix_Stream_Socket (Socket);
+               Check_Deadline (Started, Timeout);
+               Sockets.Connect
+                 (Socket,
+                  Sockets.Unix_Pathname (To_String (State.Unix_Path)),
+                  Remaining (Started, Timeout),
+                  Sources (1 .. Count));
+            exception
+               when Sockets.Operation_Interrupted =>
+                  Translate_Interruption (State, Token);
+               when Error : Sockets.Socket_Error |
+                    Flyology.IO.Device_Error =>
+                  raise Connection_Error with
+                    "Unix socket HTTP connection failed at " &
+                    To_String (State.Unix_Path) & ": " &
+                    Ada.Exceptions.Exception_Message (Error);
+            end;
+            Adopt_Stream_Socket;
+            return;
+         end if;
          declare
             Addresses : constant Flyology.IO.DNS.Address_Array :=
               Flyology.IO.DNS.Resolve
@@ -428,60 +509,7 @@ package body Exchange_Internals is
          State.Pool.Publish_Connecting (Slot_Index, Connection);
          return;
       end if;
-      Connection := new Pooled_Connection;
-      Connections.Take (State.Manager, Socket, Connection.Channel);
-      State.Pool.Publish_Connecting (Slot_Index, Connection);
-      if Scheme (State.Origin_Value) = Secure_HTTPS then
-         if State.Protocol_Policy = HTTP_1_Only then
-            Flyology.IO.Connections.TLS.Upgrade
-              (Connection.Channel, State.Backend.all,
-               Flyology.IO.TLS.Client, Host (State.Origin_Value),
-               Remaining (Started, Timeout), Token);
-         else
-            declare
-               use Flyology.IO.TLS.ALPN;
-               Protocols : Protocol_List := Offer ("h2");
-            begin
-               if State.Protocol_Policy in
-                 Negotiate_HTTP_2 | Negotiate_HTTP_3
-               then
-                  Append (Protocols, "http/1.1");
-               end if;
-               Flyology.IO.Connections.TLS.Upgrade
-                 (Item        => Connection.Channel,
-                  Backend     => Flyology.IO.TLS.ALPN.Provider'Class
-                    (State.Backend.all),
-                  Side        => Flyology.IO.TLS.Client,
-                  Server_Name => Host (State.Origin_Value),
-                  Protocols   => Protocols,
-                  Timeout     => Remaining (Started, Timeout),
-                  Token       => Token);
-               declare
-                  Selected : constant String :=
-                    Flyology.IO.Connections.TLS.Selected_Protocol
-                      (Connection.Channel);
-               begin
-                  if Selected = "h2" then
-                     Connection.Protocol := HTTP_2_Transport;
-                  elsif State.Protocol_Policy in
-                    Negotiate_HTTP_2 | Negotiate_HTTP_3
-                    and then (Selected = "" or else Selected = "http/1.1")
-                  then
-                     Connection.Protocol := HTTP_1_Transport;
-                  else
-                     raise Protocol_Error with
-                       "TLS peer did not negotiate required HTTP/2";
-                  end if;
-               end;
-            end;
-         end if;
-      elsif State.Protocol_Policy = HTTP_2_Prior_Knowledge then
-         Connection.Protocol := HTTP_2_Transport;
-      end if;
-      if Connection.Protocol = HTTP_2_Transport then
-         H2_Connections.Create
-           (Connection.HTTP_2, Connection.Channel'Unchecked_Access);
-      end if;
+      Adopt_Stream_Socket;
    exception
       when Flyology.IO.DNS.Operation_Cancelled =>
          Cleanup;

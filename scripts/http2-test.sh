@@ -324,6 +324,7 @@ run_showcase_usage () {
   "$http_root/showcases/bin/http_client_cli" --help >"$usage_dir/help"
   grep -q -- '--http2-only' "$usage_dir/help"
   grep -q -- '--http2-prior-knowledge' "$usage_dir/help"
+  grep -q -- '--unix-socket' "$usage_dir/help"
   if "$http_root/showcases/bin/http_client_cli" \
     --http1.1 --http2 https://localhost/ \
     >"$usage_dir/output" 2>"$usage_dir/error"
@@ -341,6 +342,15 @@ run_showcase_usage () {
     exit 1
   fi
   grep -q -- '--http2-prior-knowledge' "$usage_dir/error"
+  if "$http_root/showcases/bin/http_client_cli" \
+    --unix-socket /tmp/example.sock https://localhost/ \
+    >"$usage_dir/output" 2>"$usage_dir/error"
+  then
+    rm -rf "$usage_dir"
+    printf '%s\n' "Unix transport accepted an HTTPS URL" >&2
+    exit 1
+  fi
+  grep -q -- '--unix-socket requires an http:// URL' "$usage_dir/error"
   rm -rf "$usage_dir"
   printf '%s\n' "HTTP/2 showcase CLI: PASS option validation"
 }

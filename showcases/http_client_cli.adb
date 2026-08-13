@@ -115,6 +115,8 @@ procedure HTTP_Client_CLI is
          "      --max-body BYTES     output bound; zero is unlimited" &
            ASCII.LF &
          "      --ca-file PATH       PEM trust file for HTTPS" & ASCII.LF &
+         "      --unix-socket PATH   connect through a pathname Unix socket" &
+           ASCII.LF &
          "      --http1.1            require HTTP/1.1 (default)" &
            ASCII.LF &
          "      --http2              negotiate HTTP/2 with HTTP/1.1 fallback" &
@@ -141,6 +143,7 @@ procedure HTTP_Client_CLI is
       URL             : Unbounded.Unbounded_String;
       Output_Path     : Unbounded.Unbounded_String;
       CA_File         : Unbounded.Unbounded_String;
+      Unix_Path       : Unbounded.Unbounded_String;
       Timeout         : Duration := 30.0;
       Max_Body        : Natural := 64 * 1_024 * 1_024;
       Method_Explicit : Boolean := False;
@@ -254,6 +257,9 @@ procedure HTTP_Client_CLI is
             elsif Argument = "--ca-file" then
                CA_File := Unbounded.To_Unbounded_String
                  (Next_Value (Argument));
+            elsif Argument = "--unix-socket" then
+               Unix_Path := Unbounded.To_Unbounded_String
+                 (Next_Value (Argument));
             elsif Argument = "--http1.1" then
                Select_Protocol (Client.HTTP_1_Only, Argument);
             elsif Argument = "--http2" then
@@ -303,12 +309,26 @@ procedure HTTP_Client_CLI is
             raise Usage_Error with
               "--http2 and --http2-only require an https:// URL; " &
               "use --http2-prior-knowledge for cleartext HTTP/2";
+         elsif Unbounded.Length (Unix_Path) /= 0
+           and then
+             (Secure
+                or else Protocol_Mode not in
+                  Client.HTTP_1_Only | Client.HTTP_2_Prior_Knowledge)
+         then
+            raise Usage_Error with
+              "--unix-socket requires an http:// URL and either HTTP/1.1 " &
+              "or --http2-prior-knowledge";
          end if;
          Client.Set_Target (Request, Unbounded.To_String (Parts.Target));
          if Verbose then
             Text_IO.Put_Line
               (Text_IO.Standard_Error,
                "* protocol selection: " & Protocol_Selection);
+            if Unbounded.Length (Unix_Path) /= 0 then
+               Text_IO.Put_Line
+                 (Text_IO.Standard_Error,
+                  "* Unix socket: " & Unbounded.To_String (Unix_Path));
+            end if;
             Text_IO.Put_Line
               (Text_IO.Standard_Error,
                "> " & Unbounded.To_String (Trace_Method) & " " &
@@ -333,7 +353,12 @@ procedure HTTP_Client_CLI is
             end if;
             Text_IO.Put_Line (Text_IO.Standard_Error, ">");
          end if;
-         if Secure then
+         if Unbounded.Length (Unix_Path) /= 0 then
+            Client.Configure
+              (HTTP, Parts.Origin_Value,
+               Client.Unix_Socket (Unbounded.To_String (Unix_Path)),
+               Protocol_Mode, Pool);
+         elsif Secure then
             OpenSSL.Initialize_Client
               (Backend, CA_File => Unbounded.To_String (CA_File));
             if Protocol_Mode = Client.HTTP_1_Only then

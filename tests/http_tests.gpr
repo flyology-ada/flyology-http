@@ -66,6 +66,7 @@ project HTTP_Tests is
       "http_client_body_adapters_smoke.adb",
       "http_client_upload_controls_smoke.adb",
       "http_client_streaming_smoke.adb",
+      "http_unix_client_smoke.adb",
       "http_client_rfc_corpus.adb",
       "http_client_parser_matrix.adb",
       "http_client_parser_randomized.adb",

@@ -74,6 +74,32 @@ The `flyology_http` dependency brings in Flyology. Applications configure and
 prepare Flyology's version-matched runtime as described in the
 [Flyology guide](https://flyology.org/guide/).
 
+## Unix socket clients
+
+On macOS and Linux, a client can keep its HTTP authority separate from a
+pathname Unix-domain transport. This is suitable for local APIs such as the
+Docker Engine socket:
+
+```ada
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("http://localhost"),
+   Client.Unix_Socket ("/var/run/docker.sock"));
+Client.Set_Target (Request, "/_ping");
+declare
+   Response : Client.Response :=
+     Client.Execute (HTTP, Request, Timeout => 5.0);
+begin
+   Consume (Client.Read_All (Response));
+end;
+```
+
+The Unix transport supports HTTP/1.1 and cleartext HTTP/2 prior knowledge. The
+service owns the socket entry and its permissions; the client never removes or
+modifies it. For a manual request, run
+`./showcases/run_http_client_cli.sh --unix-socket /var/run/docker.sock
+http://localhost/version`. The automated tests do not require Docker.
+
 ## Unified HTTP/1.1, HTTP/2, and HTTP/3 server
 
 Register the routes once and call the router's unified `Serve` overload. It

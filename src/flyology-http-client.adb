@@ -62,6 +62,8 @@ package body Flyology.HTTP.Client is
    type Transport_Protocol is
      (HTTP_1_Transport, HTTP_2_Transport, HTTP_3_Transport);
 
+   type Connect_Transport is (Internet_Transport, Unix_Domain_Transport);
+
    --  Match the server's generous default lifetime while completed stream
    --  storage is recycled inside the bounded concurrent-stream profile.
    HTTP_3_Requests_Per_Connection : constant Positive := 100_000;
@@ -255,6 +257,8 @@ package body Flyology.HTTP.Client is
       HTTP_3_Certificate : Flyology.Bytes.Unbounded_Bytes;
       HTTP_3_Alternative : HTTP_3_Discovery;
       Connect_Policy : Connect_Target_Filter := null;
+      Transport      : Connect_Transport := Internet_Transport;
+      Unix_Path      : Unbounded_String;
       Is_Configured : Boolean := False;
    end record;
 
@@ -633,6 +637,12 @@ package body Flyology.HTTP.Client is
    function Known_Length (Bytes : Body_Size) return Body_Length is
      (Is_Known => True, Bytes => Bytes);
 
+   function Unix_Socket (Path : String) return Unix_Socket_Transport is
+      Validated : constant Sockets.Unix_Path := Sockets.Unix_Pathname (Path);
+   begin
+      return (Path => To_Unbounded_String (Sockets.Image (Validated)));
+   end Unix_Socket;
+
    procedure Configure
      (Item         : in out Client;
       Origin_Value : Origin;
@@ -664,6 +674,50 @@ package body Flyology.HTTP.Client is
       Item.Control.State.Origin_Value := Origin_Value;
       Item.Control.State.Protocol_Policy := Mode;
       Item.Control.State.Connect_Policy := Connect_Policy;
+      Item.Control.State.Pool.Configure (Pool);
+      Item.Control.State.Is_Configured := True;
+   exception
+      when others =>
+         if Item.Control.State /= null
+           and then not Item.Control.State.Is_Configured
+         then
+            Release_State (Item.Control.State);
+         end if;
+         raise;
+   end Configure;
+
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Transport    : Unix_Socket_Transport;
+      Pool         : Pool_Configuration := Default_Pool_Configuration) is
+   begin
+      Configure (Item, Origin_Value, Transport, HTTP_1_Only, Pool);
+   end Configure;
+
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Transport    : Unix_Socket_Transport;
+      Mode         : Protocol_Mode;
+      Pool         : Pool_Configuration := Default_Pool_Configuration) is
+   begin
+      if Item.Control.State /= null then
+         raise Program_Error with "HTTP client is already configured";
+      elsif Scheme (Origin_Value) /= Plain_HTTP then
+         raise Program_Error with
+           "Unix socket HTTP transport requires a cleartext origin";
+      elsif Mode not in HTTP_1_Only | HTTP_2_Prior_Knowledge then
+         raise Program_Error with
+           "Unix socket transport supports HTTP/1.1 or HTTP/2 prior knowledge";
+      elsif Length (Transport.Path) = 0 then
+         raise Program_Error with "Unix socket transport is not initialized";
+      end if;
+      Item.Control.State := new Client_State (Item.Capacity);
+      Item.Control.State.Origin_Value := Origin_Value;
+      Item.Control.State.Protocol_Policy := Mode;
+      Item.Control.State.Transport := Unix_Domain_Transport;
+      Item.Control.State.Unix_Path := Transport.Path;
       Item.Control.State.Pool.Configure (Pool);
       Item.Control.State.Is_Configured := True;
    exception

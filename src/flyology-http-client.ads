@@ -97,10 +97,29 @@ package Flyology.HTTP.Client is
       Negotiate_HTTP_3,
       Require_HTTP_3);
 
-   --  Optional veto over one resolved connect target. Configure retains it and
-   --  the client consults it once for every address the origin host resolves
-   --  to, before any socket is created for that address, so an application can
-   --  refuse loopback, link-local, or private destinations that a name
+   --  Explicit Unix-domain stream transport configuration for macOS and
+   --  Linux. The HTTP origin remains independent and supplies the request
+   --  authority; this value selects only the local socket used to carry
+   --  exchanges. The client retains an owned copy of the pathname when
+   --  configured. It never creates, removes, changes permissions on, or
+   --  assumes ownership of the filesystem entry. Filesystem permissions
+   --  control connection admission but do not by themselves authenticate the
+   --  peer; applications remain responsible for the local security boundary.
+   type Unix_Socket_Transport is private;
+
+   --  Construct a pathname Unix-domain stream transport. Path is operating-
+   --  system configuration, not an HTTP request target. It must be nonempty,
+   --  contain no NUL byte, and fit the host sockaddr_un pathname capacity.
+   --  @param Path Filesystem pathname of the Unix-domain socket
+   --  @return Validated transport configuration
+   --  @exception Constraint_Error Path is empty, contains NUL, or is too long
+   function Unix_Socket (Path : String) return Unix_Socket_Transport;
+
+   --  Optional veto over one resolved Internet connect target. Configure
+   --  retains it, and the client consults it once for every address the origin
+   --  host resolves to before any socket is created for that address. An
+   --  application can refuse loopback, link-local, or private destinations
+   --  that a name
    --  resolves to. Returning False skips that address and the client tries the
    --  next one; refusing every resolved address raises Connection_Error and
    --  opens no socket. Permitted IPv4 and IPv6 addresses are established in
@@ -334,6 +353,41 @@ package Flyology.HTTP.Client is
       Pool         : Pool_Configuration := Default_Pool_Configuration;
       Connect_Policy : Connect_Target_Filter := null);
 
+   --  Bind a client to one cleartext HTTP origin carried over a pathname
+   --  Unix-domain stream socket. Origin_Value supplies Host and HTTP/2
+   --  :authority; Transport supplies only the connect pathname. Configure
+   --  does not open the socket. Connect_Policy is intentionally absent
+   --  because no DNS address or Internet endpoint is used.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Cleartext origin and request authority
+   --  @param Transport Explicit pathname Unix-domain socket transport
+   --  @param Pool Pool retention policy
+   --  @exception Program_Error Item is configured, Origin_Value is HTTPS, or
+   --     configuration arguments are invalid
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Transport    : Unix_Socket_Transport;
+      Pool         : Pool_Configuration := Default_Pool_Configuration);
+
+   --  Bind a client to a cleartext Unix-domain stream transport with an
+   --  explicit protocol. Mode must be HTTP_1_Only or
+   --  HTTP_2_Prior_Knowledge. TLS negotiation and HTTP/3 are not Unix socket
+   --  transport modes.
+   --  @param Item Unconfigured client
+   --  @param Origin_Value Cleartext origin and request authority
+   --  @param Transport Explicit pathname Unix-domain socket transport
+   --  @param Mode HTTP/1.1 or HTTP/2 prior-knowledge behavior
+   --  @param Pool Pool retention policy
+   --  @exception Program_Error Item is configured, Origin_Value is HTTPS,
+   --     Mode is unsupported, or configuration arguments are invalid
+   procedure Configure
+     (Item         : in out Client;
+      Origin_Value : Origin;
+      Transport    : Unix_Socket_Transport;
+      Mode         : Protocol_Mode;
+      Pool         : Pool_Configuration := Default_Pool_Configuration);
+
    --  Bind a new client to one origin using an explicit TLS provider. The
    --  client retains independently owned provider state, so Backend may be
    --  finalized after Configure returns. This overload is required for HTTPS
@@ -446,7 +500,8 @@ package Flyology.HTTP.Client is
    --  @return Response head with a streaming body lease
    --  @exception Client_Closed Client is stopping
    --  @exception Connection_Error Resolution fails, the connect policy
-   --     refuses every resolved address, or all address attempts fail
+   --     refuses every resolved address, all Internet address attempts fail,
+   --     or a configured Unix socket cannot be connected
    --  @exception Constraint_Error Request fields, target, or method-body
    --     combination is unsupported; CONNECT is not implemented
    --  @exception Protocol_Error Response framing is malformed or unsupported
@@ -480,7 +535,8 @@ package Flyology.HTTP.Client is
    --  @return Response head with a streaming response body lease
    --  @exception Client_Closed Client is stopping
    --  @exception Connection_Error Resolution fails, the connect policy
-   --     refuses every resolved address, or all address attempts fail
+   --     refuses every resolved address, all Internet address attempts fail,
+   --     or a configured Unix socket cannot be connected
    --  @exception Constraint_Error Request metadata is unsupported or already
    --     contains a retained body
    --  @exception Request_Body_Error Source violates its progress contract or
@@ -675,6 +731,10 @@ private
    --  a multiplexed protocol stream.
    type Client_State (Capacity : Positive);
    type Client_State_Access is access Client_State;
+
+   type Unix_Socket_Transport is record
+      Path : Ada.Strings.Unbounded.Unbounded_String;
+   end record;
 
    --  @exclude
    --  @param Value Origin serialized by the HTTP/1 implementation

@@ -52,6 +52,7 @@
           <p class="toc-title">On this page</p>
           <ol>
             <li><a href="#client-setup">Configure a client</a></li>
+            <li><a href="#client-unix">Use a Unix socket</a></li>
             <li><a href="#client-http3">Discover or require HTTP/3</a></li>
             <li><a href="#client-request">Build a request</a></li>
             <li><a href="#client-bodies">Stream request bodies</a></li>
@@ -95,6 +96,30 @@ Client.Configure
             </div>
             <p><a href="../../api/fa54f2c15df49722ee965de4d64bd16b7cce37f87e4a0cf25f766e6be782bf39.html#775fcb8b50aa63b38922a44075d1e92c7add389e8add88b3232f90c6ac59115b"><code>Parse_Origin</code></a> accepts only a scheme, host, and optional port. It rejects user information, queries, fragments, and nontrivial paths. Omitted ports become 80 or 443.</p>
             <p>For a complete endpoint URL, follow the <a href="../iri/#http-client">identifier guide</a> to derive the origin without splitting strings by hand. The client never mixes origins or TLS state, and it has no public connection-checkout operation. Mutable requests and body sources still require application synchronization or per-call ownership.</p>
+          </section>
+
+          <section id="client-unix"><span class="step-label">CLIENT / UNIX</span><h2>Keep the HTTP authority separate from a Unix socket.</h2>
+            <p>A <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#3dad2a04410650ee2326d9460e2149fee75c4514e48095d89b0b441c5e7a58fa"><code>Unix_Socket_Transport</code></a> selects a pathname Unix-domain stream socket without changing the HTTP origin. Construct it with <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#6426fe599d3ac14ff14c384e3b417241d79f9e74872e9e03b3ed5ebcb0b25c21"><code>Unix_Socket</code></a>, then pass it to the Unix transport <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#90243cefaa49efeee7f94fb2e7fd64ec42d7d8ba96178163678a25fbd01f73e0"><code>Configure</code></a> overload. The origin still supplies the HTTP/1.1 <code>Host</code> field and HTTP/2 <code>:authority</code>.</p>
+            <figure class="code-panel"><figcaption>Docker Engine ping over its local socket</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">HTTP : aliased Client.Client (Capacity =&gt; 2);
+Request : Client.Request;
+
+Client.Configure
+  (HTTP,
+   Flyology.HTTP.Parse_Origin ("http://localhost"),
+   Client.Unix_Socket ("/var/run/docker.sock"));
+Client.Set_Target (Request, "/_ping");
+
+declare
+   Response : Client.Response :=
+     Client.Execute (HTTP, Request, Timeout =&gt; 5.0);
+begin
+   pragma Assert (Client.Status (Response) = 200);
+   Consume (Client.Read_All (Response));
+end;</code></pre></figure>
+            <p>The same request, response streaming, deadline, cancellation, stale-connection retry, diagnostics, and shutdown operations apply to Unix transports. The pool belongs to one configured client, so its identity includes both the retained socket pathname and the retained HTTP authority. When a daemon closes pooled connections and replaces its socket entry, the next safe stale retry opens the configured pathname again.</p>
+            <p>Unix transport configuration supports cleartext HTTP/1.1 and <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#2e9ce321fb3e4b0720f1dcf6efe1ff06d7fc98902b8e0ca6a45f0f9f58610710"><code>HTTP_2_Prior_Knowledge</code></a>. It does not add HTTP/3, TLS negotiation, or an HTTP/1.1 Upgrade handshake. Pathname Unix sockets are supported on macOS and Linux; they are not a portable Windows transport.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The client does not create, remove, own, change permissions on, or change ownership of the socket entry. The daemon or service manager owns that lifecycle. Directory and socket permissions govern who can connect, but they do not authenticate the daemon to the client. Protect the filesystem namespace and verify the service boundary appropriate to the host.</p></aside>
+            <p>The maintained CLI provides an optional Docker Engine smoke check: <code>./showcases/run_http_client_cli.sh --unix-socket /var/run/docker.sock http://localhost/version</code>. The automated suite uses local test daemons and does not require Docker.</p>
           </section>
 
           <section id="client-http3"><span class="step-label">CLIENT / H3</span><h2>Discover HTTP/3 without changing request code.</h2>
