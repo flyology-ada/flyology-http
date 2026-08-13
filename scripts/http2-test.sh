@@ -351,6 +351,20 @@ run_showcase_usage () {
     exit 1
   fi
   grep -q -- '--unix-socket requires an http:// URL' "$usage_dir/error"
+  if "$http_root/showcases/bin/http_client_cli" \
+    --unix-socket '' http://127.0.0.1:1/ \
+    >"$usage_dir/output" 2>"$usage_dir/error"
+  then
+    rm -rf "$usage_dir"
+    printf '%s\n' "empty Unix socket path was accepted" >&2
+    exit 1
+  fi
+  grep -q 'Unix socket pathname is empty' "$usage_dir/error"
+  if grep -q 'resolved HTTP endpoints' "$usage_dir/error"; then
+    rm -rf "$usage_dir"
+    printf '%s\n' "empty Unix socket path selected Internet transport" >&2
+    exit 1
+  fi
   rm -rf "$usage_dir"
   printf '%s\n' "HTTP/2 showcase CLI: PASS option validation"
 }

@@ -144,6 +144,7 @@ procedure HTTP_Client_CLI is
       Output_Path     : Unbounded.Unbounded_String;
       CA_File         : Unbounded.Unbounded_String;
       Unix_Path       : Unbounded.Unbounded_String;
+      Unix_Socket_Set : Boolean := False;
       Timeout         : Duration := 30.0;
       Max_Body        : Natural := 64 * 1_024 * 1_024;
       Method_Explicit : Boolean := False;
@@ -260,6 +261,7 @@ procedure HTTP_Client_CLI is
             elsif Argument = "--unix-socket" then
                Unix_Path := Unbounded.To_Unbounded_String
                  (Next_Value (Argument));
+               Unix_Socket_Set := True;
             elsif Argument = "--http1.1" then
                Select_Protocol (Client.HTTP_1_Only, Argument);
             elsif Argument = "--http2" then
@@ -309,7 +311,7 @@ procedure HTTP_Client_CLI is
             raise Usage_Error with
               "--http2 and --http2-only require an https:// URL; " &
               "use --http2-prior-knowledge for cleartext HTTP/2";
-         elsif Unbounded.Length (Unix_Path) /= 0
+         elsif Unix_Socket_Set
            and then
              (Secure
                 or else Protocol_Mode not in
@@ -324,7 +326,7 @@ procedure HTTP_Client_CLI is
             Text_IO.Put_Line
               (Text_IO.Standard_Error,
                "* protocol selection: " & Protocol_Selection);
-            if Unbounded.Length (Unix_Path) /= 0 then
+            if Unix_Socket_Set then
                Text_IO.Put_Line
                  (Text_IO.Standard_Error,
                   "* Unix socket: " & Unbounded.To_String (Unix_Path));
@@ -353,7 +355,7 @@ procedure HTTP_Client_CLI is
             end if;
             Text_IO.Put_Line (Text_IO.Standard_Error, ">");
          end if;
-         if Unbounded.Length (Unix_Path) /= 0 then
+         if Unix_Socket_Set then
             Client.Configure
               (HTTP, Parts.Origin_Value,
                Client.Unix_Socket (Unbounded.To_String (Unix_Path)),
