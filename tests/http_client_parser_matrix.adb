@@ -136,9 +136,16 @@ begin
      ("HTTP/1.1 200 OK" & CRLF &
       "Transfer-Encoding: chunked" & CRLF & CRLF &
       "0" & CRLF & "X: incomplete" & CRLF);
-   Reject_Protocol
+   Validate
      ("HTTP/1.1 204 No Content" & CRLF &
       "Content-Length: 0" & CRLF & CRLF);
+   Reject_Protocol
+     ("HTTP/1.1 204 No Content" & CRLF &
+      "Content-Length: 1" & CRLF & CRLF & "x");
+   Reject_Protocol
+     ("HTTP/1.1 204 No Content" & CRLF &
+      "Transfer-Encoding: chunked" & CRLF & CRLF &
+      "0" & CRLF & CRLF);
    Reject_Protocol
      ("HTTP/1.1 103 Early Hints" & CRLF &
       "Content-Length: 0" & CRLF & CRLF &

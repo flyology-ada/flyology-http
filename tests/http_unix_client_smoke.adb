@@ -118,6 +118,23 @@ procedure HTTP_Unix_Client_Smoke is
       end;
    end Check_Response;
 
+   procedure Check_Empty_Response
+     (HTTP : aliased in out Client.Client;
+      Target : String;
+      Expected_Status : Flyology.HTTP.Status_Code)
+   is
+      Ask : Client.Request;
+   begin
+      Client.Set_Target (Ask, Target);
+      declare
+         Reply : Client.Response := Client.Execute (HTTP, Ask, Timeout => 5.0);
+      begin
+         pragma Assert (Client.Status (Reply) = Expected_Status);
+         pragma Assert
+           (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
+      end;
+   end Check_Empty_Response;
+
 begin
    -------------------------------------------------------------------------
    --  HTTP/1.1 retains an authority independent from the socket pathname,
@@ -178,6 +195,19 @@ begin
             begin
                pragma Assert
                  (Ada.Strings.Fixed.Index
+                    (Request, "GET /no-content HTTP/1.1" & CRLF) = 1);
+            end;
+            --  Docker uses this formally forbidden but unambiguous framing
+            --  on successful DELETE and POST operations.
+            Send
+              (Peer, "HTTP/1.1 204 No Content" & CRLF &
+                 "Content-Length: 0" & CRLF & CRLF);
+
+            declare
+               Request : constant String := Read_Request (Peer, 0);
+            begin
+               pragma Assert
+                 (Ada.Strings.Fixed.Index
                     (Request, "GET /pooled HTTP/1.1" & CRLF) = 1);
             end;
             Send
@@ -229,6 +259,7 @@ begin
               (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
                  "post");
          end;
+         Check_Empty_Response (HTTP, "/no-content", 204);
          Check_Response (HTTP, "/pooled", "pooled");
          declare
             Before : constant Client.Client_Diagnostics :=

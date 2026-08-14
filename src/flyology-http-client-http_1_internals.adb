@@ -653,9 +653,10 @@ package body HTTP_1_Internals is
          Data.Reusable := False;
       end if;
       if Data.Status_Value = 204
-        and then (Length_Present or else Transfer_Count > 0)
+        and then (Transfer_Count > 0
+                    or else (Length_Present and then Length_Value /= 0))
       then
-         raise Protocol_Error with "204 response contains body framing";
+         raise Protocol_Error with "204 response contains a nonempty body";
       elsif Data.Status_Value = 205
         and then (Transfer_Count > 0
                     or else (Length_Present and then Length_Value /= 0))
@@ -669,10 +670,11 @@ package body HTTP_1_Internals is
         or else Data.Status_Value in 100 .. 199 | 204 | 205 | 304
       then
          --  RFC 9112 6.3 terminates these messages at the first empty line
-         --  whatever framing fields are present, so Content-Length stays
-         --  legal here and must not be rejected. It does mean the peer
-         --  counts octets it is forbidden to deliver, which is the one case
-         --  where a late write can desynchronize the pooled transport.
+         --  whatever framing fields are present. Although RFC 9110 8.6
+         --  forbids Content-Length on 204, Docker sends Content-Length: 0;
+         --  tolerate only that harmless compatibility form. A nonzero
+         --  length or any Transfer-Encoding was rejected above because a
+         --  late body write can desynchronize the pooled transport.
          Data.Mode := No_Body;
          Undelivered_Framing :=
            Transfer_Count > 0
