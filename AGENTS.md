@@ -21,3 +21,24 @@
   unit or declaration entry. This includes the separate `flyology_iri` crate.
 - Use focused Problem/Solution commit messages consistent with the parent
   Flyology repository.
+
+## Releases
+
+- Automatic index publication is driven by immutable annotated tags named
+  `<crate>/v<version>`, such as `flyology_http/v0.1.0`.
+- Before tagging, set the released crate's `alire.toml` to the exact stable
+  version, replace inappropriate `-dev` dependency constraints with stable
+  constraints, and run its required checks plus `alr show`. Its manifest name
+  and version must exactly match the tag.
+- Indexed crates in this repository are `flyology_http`, `flyology_iri`,
+  and `flyology_quic`. Tag each released crate independently, even when
+  several tags point to one monorepo commit.
+- Create and push the tag only after committing the release-ready manifests:
+
+  ```sh
+  git tag -a <crate>/v<version> -m "Release <crate> <version>"
+  git push origin refs/tags/<crate>/v<version>
+  ```
+
+- Never move, replace, or reuse a published release tag. Put the next
+  development-version change in a later commit.
