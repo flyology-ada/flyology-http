@@ -9,6 +9,22 @@ Pinned inputs:
 - Ada URL 4.0.0: `32dabc8d39a919633f31f692c358012b2105fd61`
 - URL dataset: `ef7065196980ab7956bacc60b4bda663939f659c`
 
+Prepare and run those inputs from the `flyology_iri` directory:
+
+```sh
+./scripts/prepare-benchmark.sh
+./scripts/benchmark.sh
+```
+
+The preparation script creates
+`../build/flyology-iri-benchmark/ada-url/url-dataset/out.txt`, preserving the
+path expected by Ada's benchmark while keeping third-party benchmark data in
+the repository's ignored build directory. These inputs are script-managed
+rather than Git submodules because neither checkout is needed to build, test,
+or use the crate. `FLYOLOGY_IRI_BENCHMARK_ROOT` can select another managed
+directory. `ADA_URL_ROOT` and `ADA_URL_DATASET` remain available for existing
+checkouts, but `benchmark.sh` verifies that both are at the revisions above.
+
 The local harness times whole-corpus loops with a monotonic clock. `can_parse`
 constructs nothing. `parse_href` builds the compact representation and consumes
 the stored serialization length, matching Ada's `url_aggregator` benchmark

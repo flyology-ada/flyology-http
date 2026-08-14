@@ -83,14 +83,12 @@ v4's `benchdata` target and runs the corresponding `can_parse` and compact
 parse-plus-href-length operations:
 
 ```sh
-gh repo clone ada-url/ada /tmp/ada-url
-gh repo clone ada-url/url-dataset /tmp/url-dataset
-git -C /tmp/ada-url checkout 32dabc8d39a919633f31f692c358012b2105fd61
-git -C /tmp/url-dataset checkout ef7065196980ab7956bacc60b4bda663939f659c
-ADA_URL_ROOT=/tmp/ada-url \
-  ./scripts/benchmark.sh /tmp/url-dataset/out.txt
+./scripts/prepare-benchmark.sh
+./scripts/benchmark.sh
 ```
 
-The script prints both revisions, the number accepted by each implementation,
-and nanoseconds per URL. See [BENCHMARKS.md](BENCHMARKS.md) for pinned results
-and interpretation.
+The preparation script checks out both pinned inputs under the repository's
+ignored `build/flyology-iri-benchmark/` directory. The benchmark refuses
+unpinned revisions and prints both revisions, the number accepted by each
+implementation, and nanoseconds per URL. See
+[BENCHMARKS.md](BENCHMARKS.md) for pinned results and interpretation.
