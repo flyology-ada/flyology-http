@@ -1,6 +1,6 @@
 name = "flyology_http"
 description = "HTTP client and server library for Flyology tasks"
-version = "0.1.0-dev"
+version = "0.1.0"
 
 authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
@@ -11,11 +11,8 @@ tags = ["ada", "http", "client", "server", "websocket", "sse"]
 project-files = ["flyology_http.gpr"]
 
 [[depends-on]]
-flyology = "~0.1.0-dev"
-flyology_quic = "*"
-
-[[pins]]
-flyology_quic = { path = "flyology_quic" }
+flyology = "~0.1.0"
+flyology_quic = "~0.1.0"
 
 [[actions]]
 type = "test"
