@@ -1,6 +1,6 @@
 name = "servletada_ews_app"
 description = "ServletAda/EWS adapter for Flyology HTTP comparisons"
-version = "0.1.0-dev"
+version = "0.1.1-dev"
 licenses = "MIT OR Apache-2.0"
 authors = ["Flyology contributors"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]

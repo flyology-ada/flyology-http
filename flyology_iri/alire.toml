@@ -1,6 +1,6 @@
 name = "flyology_iri"
 description = "Allocation-conscious URI, IRI, and URL reference parser"
-version = "0.1.0"
+version = "0.1.1-dev"
 
 authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]

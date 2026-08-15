@@ -1,6 +1,6 @@
 name = "flyology_http_showcases"
 description = "Optional dependencies for Flyology HTTP showcases"
-version = "0.1.0-dev"
+version = "0.1.1-dev"
 
 authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
