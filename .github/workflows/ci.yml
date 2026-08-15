@@ -60,6 +60,28 @@ jobs:
       - name: Check the WPT gate wiring
         run: ./flyology_iri/scripts/wpt-gate-test.sh
 
+  proof:
+    name: SPARK proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Prove QUIC and HTTP policy units
+        run: ./scripts/prove.sh
+
   http2-qualification:
     name: HTTP/2 qualification
     runs-on: ubuntu-latest
@@ -151,3 +173,68 @@ jobs:
         run: ./scripts/test-http3-h3spec.sh
       - name: Run bounded HTTP/3 stress campaign
         run: ./scripts/test-http3-stress.sh
+
+  websocket-conformance:
+    name: WebSocket conformance (${{ matrix.profile }}, ${{ matrix.lane }})
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: core
+            lane: lightweight
+          - profile: core
+            lane: native
+          - profile: core-wss
+            lane: lightweight
+          - profile: core-wss
+            lane: native
+          - profile: limits
+            lane: lightweight
+          - profile: limits
+            lane: native
+          - profile: compression
+            lane: lightweight
+          - profile: compression
+            lane: native
+          - profile: compression-wss
+            lane: lightweight
+          - profile: compression-wss
+            lane: native
+          - profile: performance
+            lane: lightweight
+          - profile: performance
+            lane: native
+          - profile: performance-wss
+            lane: lightweight
+          - profile: performance-wss
+            lane: native
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Locate OpenSSL 3 modules
+        if: contains(matrix.profile, '-wss')
+        run: |
+          ssl_library=$(ldconfig -p | awk '$1 == "libssl.so.3" && !found { print $NF; found=1 }')
+          crypto_library=$(ldconfig -p | awk '$1 == "libcrypto.so.3" && !found { print $NF; found=1 }')
+          test -n "$ssl_library"
+          test -n "$crypto_library"
+          library_directory=$(dirname -- "$ssl_library")
+          test "$library_directory" = "$(dirname -- "$crypto_library")"
+          printf 'FLYOLOGY_OPENSSL_LIBRARY_DIR=%s\n' "$library_directory" >> "$GITHUB_ENV"
+      - name: Run Autobahn qualification
+        run: ./scripts/websocket-conformance.sh "${{ matrix.profile }}" "${{ matrix.lane }}"
