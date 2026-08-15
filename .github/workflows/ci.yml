@@ -80,6 +80,8 @@ jobs:
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
       - name: Prove QUIC and HTTP policy units
+        env:
+          FLYOLOGY_PROOF_LEVEL: "2"
         run: ./scripts/prove.sh
 
   http2-qualification:
