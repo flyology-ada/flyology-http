@@ -46,6 +46,7 @@ run_gprbuild () {
 }
 
 cd "$crate_root/tests"
+alr build --stop-after=generation
 run_gprbuild --RTS="$test_rts" -f -p -j0 -P flyology_quic_tests.gpr
 
 for test in \
