@@ -2,13 +2,14 @@
 set -eu
 
 crate_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+proof_level=${FLYOLOGY_PROOF_LEVEL:-1}
 
 cd "$crate_root/proof"
 alr build --stop-after=generation
 alr gnatprove \
   -P "$crate_root/flyology_quic.gpr" \
   --mode=all \
-  --level=1 \
+  --level="$proof_level" \
   -j0 \
   --output=oneline \
   --output-header \

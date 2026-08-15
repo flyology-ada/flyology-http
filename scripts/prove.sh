@@ -3,6 +3,7 @@ set -eu
 
 http_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 alr=$("$http_root/scripts/find-alr.sh")
+proof_level=${FLYOLOGY_PROOF_LEVEL:-1}
 
 "$http_root/flyology_quic/scripts/prove.sh"
 
@@ -11,7 +12,7 @@ cd "$http_root/proof"
 "$alr" gnatprove \
   -P "$http_root/flyology_http.gpr" \
   --mode=all \
-  --level=1 \
+  --level="$proof_level" \
   -j0 \
   --output=oneline \
   --output-header \
