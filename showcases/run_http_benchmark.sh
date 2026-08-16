@@ -4,6 +4,7 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 showcase_root="$project_root/showcases"
 alr=$("$project_root/scripts/find-alr.sh")
+flyology_root=$("$project_root/scripts/resolve-flyology-root.sh")
 requests=${1:-100000}
 concurrency=${2:-256}
 handlers=${3:-256}
@@ -47,7 +48,7 @@ fi
 "$showcase_root/prepare-alire.sh" "$profile" >/dev/null
 FLYOLOGY_DEFAULT=lightweight FLYOLOGY_LOOP_POOL_SIZE="$loops" \
   FLYOLOGY_RTS_DIR="$project_root/build/rts" \
-  "$project_root/scripts/prepare-rts.sh" >/dev/null
+  "$flyology_root/scripts/prepare-rts.sh" >/dev/null
 cd "$showcase_root"
 FLYOLOGY_SHOWCASE_PROFILE="$profile" "$alr" exec -- env -u GPR_CONFIG gprbuild \
   --RTS="$project_root/build/rts" \
