@@ -2,18 +2,25 @@ with Ada.Characters.Handling;
 with Ada.Exceptions;
 with Ada.Real_Time;
 with Ada.Strings.Fixed;
+with Ada.Unchecked_Conversion;
+with Ada.Unchecked_Deallocation;
 with Flyology.HTTP.Decoded_Path_Policy;
 with Flyology.HTTP.Route_Parameter_Policy;
 with Flyology.HTTP.Server.Connections;
 with Flyology.HTTP.Server.HTTP_2;
 with Flyology.HTTP.Server.HTTP_3;
+with Flyology.Atomic_Primitives;
 with Flyology.IO.Connections.TLS;
 with Flyology.IO.Structured_Servers;
 with Flyology.IO.TLS;
+with System.Address_To_Access_Conversions;
+with System.Storage_Elements;
 
 package body Flyology.HTTP.Server.Routing is
 
    use type Ada.Real_Time.Time;
+   use type Interfaces.Unsigned_64;
+   use type System.Address;
 
    package App renames Flyology.HTTP.Server.Applications;
    package Decoded_Path_Policy renames
@@ -24,6 +31,151 @@ package body Flyology.HTTP.Server.Routing is
    use type App.Response_State;
    use type App.Upgrade_Mode;
    use type Decoded_Path_Policy.Path_Disposition;
+
+   package Generation_Conversions is new
+     System.Address_To_Access_Conversions (Generation_Holder);
+
+   function As_Generation is new Ada.Unchecked_Conversion
+     (Generation_Conversions.Object_Pointer, Generation_Access);
+
+   procedure Free_Configuration is new Ada.Unchecked_Deallocation
+     (Router_Configuration, Configuration_Access);
+   procedure Free_Generation is new Ada.Unchecked_Deallocation
+     (Generation_Holder, Generation_Access);
+
+   protected Identity_Source is
+      procedure Next_Route (Value : out Route_ID);
+      procedure Next_Middleware (Value : out Middleware_ID);
+   private
+      Route_Value      : Interfaces.Unsigned_64 := 0;
+      Middleware_Value : Interfaces.Unsigned_64 := 0;
+   end Identity_Source;
+
+   protected body Identity_Source is
+      procedure Next_Route (Value : out Route_ID) is
+      begin
+         if Route_Value = Interfaces.Unsigned_64'Last then
+            raise Route_Error with "HTTP route identity space exhausted";
+         end if;
+         Route_Value := Route_Value + 1;
+         Value := Route_ID (Route_Value);
+      end Next_Route;
+
+      procedure Next_Middleware (Value : out Middleware_ID) is
+      begin
+         if Middleware_Value = Interfaces.Unsigned_64'Last then
+            raise Route_Error with
+              "HTTP middleware identity space exhausted";
+         end if;
+         Middleware_Value := Middleware_Value + 1;
+         Value := Middleware_ID (Middleware_Value);
+      end Next_Middleware;
+   end Identity_Source;
+
+   function Address_Word (Value : System.Address) return Interfaces.Unsigned_64
+   is
+     (Interfaces.Unsigned_64
+        (System.Storage_Elements.To_Integer (Value)));
+
+   function Word_Address (Value : Interfaces.Unsigned_64) return System.Address
+   is
+     (System.Storage_Elements.To_Address
+        (System.Storage_Elements.Integer_Address (Value)));
+
+   function To_Generation (Value : System.Address) return Generation_Access is
+     (if Value = System.Null_Address then null
+      else As_Generation (Generation_Conversions.To_Pointer (Value)));
+
+   function Current_Generation (Item : Router) return Generation_Access is
+      Bits : constant Interfaces.Unsigned_64 :=
+        Flyology.Atomic_Primitives.Load_Acquire_U64
+          (Item.Current_Generation'Address);
+   begin
+      return To_Generation (Word_Address (Bits));
+   end Current_Generation;
+
+   function Current_Configuration
+     (Item : Router) return Configuration_Access
+   is
+      Generation : constant Generation_Access := Current_Generation (Item);
+   begin
+      if Generation = null or else Generation.Configuration = null then
+         raise Program_Error with "HTTP router is not initialized";
+      end if;
+      return Generation.Configuration;
+   end Current_Configuration;
+
+   protected body Publication_Gate is
+      procedure Initialize (Generation : System.Address) is
+      begin
+         Latest := Generation;
+      end Initialize;
+
+      procedure Try_Publish
+        (Expected : System.Address;
+         Desired  : System.Address;
+         Accepted : out Boolean)
+      is
+      begin
+         Accepted := Latest = Expected;
+         if Accepted then
+            Latest := Desired;
+         end if;
+      end Try_Publish;
+   end Publication_Gate;
+
+   overriding procedure Initialize (Item : in out Router) is
+      Configuration : Configuration_Access :=
+        new Router_Configuration (Item.Capacity, Item.Slashes);
+      Generation : Generation_Access :=
+        new Generation_Holder'
+          (Configuration => Configuration,
+           Next          => System.Null_Address);
+      Address : constant System.Address := Generation.all'Address;
+   begin
+      Item.First_Generation := Address;
+      Item.Publisher.Initialize (Address);
+      Flyology.Atomic_Primitives.Store_Release_U64
+        (Item.Current_Generation'Address, Address_Word (Address));
+   exception
+      when others =>
+         if Generation /= null then
+            Free_Generation (Generation);
+         end if;
+         if Configuration /= null then
+            Free_Configuration (Configuration);
+         end if;
+         raise;
+   end Initialize;
+
+   overriding procedure Finalize (Item : in out Router) is
+      Address : System.Address := Item.First_Generation;
+   begin
+      Flyology.Atomic_Primitives.Store_Release_U64
+        (Item.Current_Generation'Address, 0);
+      while Address /= System.Null_Address loop
+         declare
+            Generation : Generation_Access := To_Generation (Address);
+            Next       : constant System.Address := Generation.Next;
+         begin
+            if Generation.Configuration /= null then
+               Free_Configuration (Generation.Configuration);
+            end if;
+            Free_Generation (Generation);
+            Address := Next;
+         end;
+      end loop;
+      Item.First_Generation := System.Null_Address;
+   end Finalize;
+
+   overriding procedure Finalize (Item : in out Update_State) is
+   begin
+      if Item.Candidate /= null then
+         Free_Configuration (Item.Candidate);
+      end if;
+      Item.Owner := System.Null_Address;
+      Item.Base := System.Null_Address;
+   end Finalize;
 
    function Exception_Summary
      (Error : Ada.Exceptions.Exception_Occurrence) return String is
@@ -389,7 +541,7 @@ package body Flyology.HTTP.Server.Routing is
    --  Mounting copies the router's routes and middleware, so a registration
    --  afterwards cannot reach the copies. Refusing it at setup keeps the
    --  ordering hazard from becoming a silently unprotected mounted route.
-   procedure Check_Not_Mounted (Item : Router) is
+   procedure Check_Not_Mounted (Item : Router_Configuration) is
    begin
       if Item.Mounted then
          raise Route_Error with
@@ -398,7 +550,7 @@ package body Flyology.HTTP.Server.Routing is
    end Check_Not_Mounted;
 
    procedure Check_Add
-     (Item : Router; Method, Pattern : String)
+     (Item : Router_Configuration; Method, Pattern : String)
    is
    begin
       Check_Not_Mounted (Item);
@@ -419,50 +571,59 @@ package body Flyology.HTTP.Server.Routing is
       end loop;
    end Check_Add;
 
-   function Route_Count (Item : Router) return Natural is (Item.Count);
+   function Route_Count (Item : Router) return Natural is
+     (Current_Configuration (Item).Count);
 
    function Describe_Route
      (Item  : Router;
       Index : Positive) return Route_Description
    is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
    begin
-      if Index > Item.Count then
+      if Index > Configuration.Count then
          raise Constraint_Error with "HTTP route introspection index invalid";
       end if;
       return
-        (Method           => Item.Routes (Index).Method,
-         Pattern          => Item.Routes (Index).Pattern,
-         Name             => Item.Routes (Index).Name,
-         Policy           => Item.Routes (Index).Policy,
-         Middleware_Count => Item.Routes (Index).Middleware_Count);
+        (ID               => Configuration.Routes (Index).ID,
+         Method           => Configuration.Routes (Index).Method,
+         Pattern          => Configuration.Routes (Index).Pattern,
+         Name             => Configuration.Routes (Index).Name,
+         Policy           => Configuration.Routes (Index).Policy,
+         Middleware_Count => Configuration.Routes (Index).Middleware_Count);
    end Describe_Route;
 
    function Global_Middleware_Count (Item : Router) return Natural is
-     (Item.Middleware_Count);
+     (Current_Configuration (Item).Middleware_Count);
 
    function Describe_Global_Middleware
      (Item  : Router;
       Index : Positive) return Middleware_Description
    is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
    begin
-      if Index > Item.Middleware_Count then
+      if Index > Configuration.Middleware_Count then
          raise Constraint_Error with
            "HTTP global middleware introspection index invalid";
       end if;
       return
-        (Name  => Item.Middleware (Index).Name,
-         Stage => Item.Middleware (Index).Stage);
+        (ID    => Configuration.Middleware (Index).ID,
+         Name  => Configuration.Middleware (Index).Name,
+         Stage => Configuration.Middleware (Index).Stage);
    end Describe_Global_Middleware;
 
    function Route_Middleware_Count
      (Item        : Router;
       Route_Index : Positive) return Natural
    is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
    begin
-      if Route_Index > Item.Count then
+      if Route_Index > Configuration.Count then
          raise Constraint_Error with "HTTP route introspection index invalid";
       end if;
-      return Item.Routes (Route_Index).Middleware_Count;
+      return Configuration.Routes (Route_Index).Middleware_Count;
    end Route_Middleware_Count;
 
    function Describe_Route_Middleware
@@ -470,21 +631,113 @@ package body Flyology.HTTP.Server.Routing is
       Route_Index      : Positive;
       Middleware_Index : Positive) return Middleware_Description
    is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
    begin
-      if Route_Index > Item.Count then
+      if Route_Index > Configuration.Count then
          raise Constraint_Error with "HTTP route introspection index invalid";
       elsif Middleware_Index >
-        Item.Routes (Route_Index).Middleware_Count
+        Configuration.Routes (Route_Index).Middleware_Count
       then
          raise Constraint_Error with
            "HTTP route middleware introspection index invalid";
       end if;
       return
-        (Name  => Item.Routes (Route_Index).Middleware
+        (ID    => Configuration.Routes (Route_Index).Middleware
+                    (Middleware_Index).ID,
+         Name  => Configuration.Routes (Route_Index).Middleware
                     (Middleware_Index).Name,
-         Stage => Item.Routes (Route_Index).Middleware
+         Stage => Configuration.Routes (Route_Index).Middleware
                     (Middleware_Index).Stage);
    end Describe_Route_Middleware;
+
+   procedure Find_Route
+     (Item  : Router;
+      Name  : String;
+      Route : out Route_ID;
+      Found : out Boolean)
+   is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
+   begin
+      for Index in 1 .. Configuration.Count loop
+         if To_String (Configuration.Routes (Index).Name) = Name then
+            Route := Configuration.Routes (Index).ID;
+            Found := True;
+            return;
+         end if;
+      end loop;
+      Route := No_Route;
+      Found := False;
+   end Find_Route;
+
+   function Route_Index
+     (Item : Router_Configuration;
+      ID   : Route_ID) return Natural
+   is
+   begin
+      for Index in 1 .. Item.Count loop
+         if Item.Routes (Index).ID = ID then
+            return Index;
+         end if;
+      end loop;
+      return 0;
+   end Route_Index;
+
+   procedure Add_To_Configuration
+     (Item    : in out Router_Configuration;
+      Method  : String;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String;
+      Policy  : Route_Policy;
+      Validate_Ambiguity : Boolean)
+   is
+      Effective_Name : constant String :=
+        (if Name = "" then Method & " " & Pattern else Name);
+      Pattern_Segments : Segment_List;
+   begin
+      if Validate_Ambiguity then
+         Check_Add (Item, Method, Pattern);
+      else
+         Check_Not_Mounted (Item);
+         Validate_Method (Method);
+         Validate_Pattern (Pattern);
+         if Item.Count = Item.Capacity then
+            raise Route_Error with "HTTP router capacity exhausted";
+         end if;
+      end if;
+      Split_Path (Pattern, Pattern_Segments);
+      if Policy.Max_Body > Max_Request_Body then
+         raise Route_Error with "route body limit exceeds server maximum";
+      end if;
+      if Validate_Ambiguity then
+         for Index in 1 .. Item.Count loop
+            if To_String (Item.Routes (Index).Name) = Effective_Name then
+               raise Route_Error with "duplicate HTTP route name";
+            end if;
+         end loop;
+      end if;
+      Identity_Source.Next_Route (Route);
+      Item.Count := Item.Count + 1;
+      Item.Routes (Item.Count) :=
+        (ID                  => Route,
+         Method              => To_Unbounded_String (Method),
+         Pattern             => To_Unbounded_String (Pattern),
+         Pattern_Segments    => Pattern_Segments,
+         Pattern_Specificity => Specificity (Pattern),
+         Name                => To_Unbounded_String (Effective_Name),
+         Handler             => Handler,
+         Policy              => Policy,
+         Middleware =>
+           (others =>
+              (ID        => No_Middleware,
+               Component => null,
+               Stage     => Request_Head,
+               Name      => Null_Unbounded_String)),
+         Middleware_Count => 0);
+   end Add_To_Configuration;
 
    procedure Add
      (Item    : in out Router;
@@ -494,35 +747,27 @@ package body Flyology.HTTP.Server.Routing is
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy)
    is
-      Effective_Name : constant String :=
-        (if Name = "" then Method & " " & Pattern else Name);
-      Pattern_Segments : Segment_List;
+      Ignored : Route_ID;
    begin
-      Check_Add (Item, Method, Pattern);
-      Split_Path (Pattern, Pattern_Segments);
-      if Policy.Max_Body > Max_Request_Body then
-         raise Route_Error with "route body limit exceeds server maximum";
-      end if;
-      for Index in 1 .. Item.Count loop
-         if To_String (Item.Routes (Index).Name) = Effective_Name then
-            raise Route_Error with "duplicate HTTP route name";
-         end if;
-      end loop;
-      Item.Count := Item.Count + 1;
-      Item.Routes (Item.Count) :=
-        (Method              => To_Unbounded_String (Method),
-         Pattern             => To_Unbounded_String (Pattern),
-         Pattern_Segments    => Pattern_Segments,
-         Pattern_Specificity => Specificity (Pattern),
-         Name                => To_Unbounded_String (Effective_Name),
-         Handler             => Handler,
-         Policy              => Policy,
-         Middleware =>
-           (others =>
-              (Component => null,
-               Stage     => Request_Head,
-               Name      => Null_Unbounded_String)),
-         Middleware_Count => 0);
+      Add
+        (Item, Method, Pattern, Handler, Ignored, Name, Policy);
+   end Add;
+
+   procedure Add
+     (Item    : in out Router;
+      Method  : String;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy)
+   is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
+   begin
+      Add_To_Configuration
+        (Configuration.all, Method, Pattern, Handler, Route, Name, Policy,
+         Validate_Ambiguity => True);
    end Add;
 
    procedure Add_Middleware
@@ -531,16 +776,44 @@ package body Flyology.HTTP.Server.Routing is
       Stage     : Middleware_Stage := Request_Head;
       Name      : String := "")
    is
+      Ignored : Middleware_ID;
+   begin
+      Add_Middleware (Item, Component, Ignored, Stage, Name);
+   end Add_Middleware;
+
+   procedure Add_Middleware_To_Configuration
+     (Item       : in out Router_Configuration;
+      Component  : not null Middleware_Access;
+      Middleware : out Middleware_ID;
+      Stage      : Middleware_Stage;
+      Name       : String)
+   is
    begin
       Check_Not_Mounted (Item);
       if Item.Middleware_Count = Max_Global_Middleware then
          raise Route_Error with "global HTTP middleware capacity exhausted";
       end if;
+      Identity_Source.Next_Middleware (Middleware);
       Item.Middleware_Count := Item.Middleware_Count + 1;
       Item.Middleware (Item.Middleware_Count) :=
-        (Component => Component,
+        (ID        => Middleware,
+         Component => Component,
          Stage     => Stage,
          Name      => To_Unbounded_String (Name));
+   end Add_Middleware_To_Configuration;
+
+   procedure Add_Middleware
+     (Item       : in out Router;
+      Component  : not null Middleware_Access;
+      Middleware : out Middleware_ID;
+      Stage      : Middleware_Stage := Request_Head;
+      Name       : String := "")
+   is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
+   begin
+      Add_Middleware_To_Configuration
+        (Configuration.all, Component, Middleware, Stage, Name);
    end Add_Middleware;
 
    procedure Add_Route_Middleware
@@ -550,26 +823,78 @@ package body Flyology.HTTP.Server.Routing is
       Stage     : Middleware_Stage := Request_Head;
       Middleware_Name : String := "")
    is
+      Ignored : Middleware_ID;
    begin
-      Check_Not_Mounted (Item);
-      for Index in 1 .. Item.Count loop
-         if To_String (Item.Routes (Index).Name) = Name then
-            if Item.Routes (Index).Middleware_Count = Max_Route_Middleware
-            then
-               raise Route_Error with
-                 "route HTTP middleware capacity exhausted";
-            end if;
-            Item.Routes (Index).Middleware_Count :=
-              Item.Routes (Index).Middleware_Count + 1;
-            Item.Routes (Index).Middleware
-              (Item.Routes (Index).Middleware_Count) :=
-                (Component => Component,
-                 Stage     => Stage,
-                 Name      => To_Unbounded_String (Middleware_Name));
-            return;
+      Add_Route_Middleware
+        (Item, Name, Component, Ignored, Stage, Middleware_Name);
+   end Add_Route_Middleware;
+
+   procedure Add_Route_Middleware
+     (Item            : in out Router;
+      Name            : String;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage := Request_Head;
+      Middleware_Name : String := "")
+   is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
+      Route          : Route_ID := No_Route;
+   begin
+      for Index in 1 .. Configuration.Count loop
+         if To_String (Configuration.Routes (Index).Name) = Name then
+            Route := Configuration.Routes (Index).ID;
+            exit;
          end if;
       end loop;
-      raise Route_Error with "unknown HTTP route name";
+      if Route = No_Route then
+         raise Route_Error with "unknown HTTP route name";
+      end if;
+      Add_Route_Middleware
+        (Item, Route, Component, Middleware, Stage, Middleware_Name);
+   end Add_Route_Middleware;
+
+   procedure Add_Route_Middleware_To_Configuration
+     (Item            : in out Router_Configuration;
+      Route           : Route_ID;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage;
+      Middleware_Name : String)
+   is
+      Index : constant Natural := Route_Index (Item, Route);
+   begin
+      Check_Not_Mounted (Item);
+      if Index = 0 then
+         raise Route_Error with "unknown HTTP route identity";
+      elsif Item.Routes (Index).Middleware_Count = Max_Route_Middleware then
+         raise Route_Error with "route HTTP middleware capacity exhausted";
+      end if;
+      Identity_Source.Next_Middleware (Middleware);
+      Item.Routes (Index).Middleware_Count :=
+        Item.Routes (Index).Middleware_Count + 1;
+      Item.Routes (Index).Middleware
+        (Item.Routes (Index).Middleware_Count) :=
+          (ID        => Middleware,
+           Component => Component,
+           Stage     => Stage,
+           Name      => To_Unbounded_String (Middleware_Name));
+   end Add_Route_Middleware_To_Configuration;
+
+   procedure Add_Route_Middleware
+     (Item            : in out Router;
+      Route           : Route_ID;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage := Request_Head;
+      Middleware_Name : String := "")
+   is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
+   begin
+      Add_Route_Middleware_To_Configuration
+        (Configuration.all, Route, Component, Middleware, Stage,
+         Middleware_Name);
    end Add_Route_Middleware;
 
    procedure Get
@@ -580,12 +905,30 @@ package body Flyology.HTTP.Server.Routing is
       Add (Item, "GET", Pattern, Handler, Name, Policy);
    end Get;
 
+   procedure Get
+     (Item : in out Router; Pattern : String;
+      Handler : not null Handler_Access; Route : out Route_ID;
+      Name : String := "";
+      Policy : Route_Policy := Default_Route_Policy) is
+   begin
+      Add (Item, "GET", Pattern, Handler, Route, Name, Policy);
+   end Get;
+
    procedure Head
      (Item : in out Router; Pattern : String;
       Handler : not null Handler_Access; Name : String := "";
       Policy : Route_Policy := Default_Route_Policy) is
    begin
       Add (Item, "HEAD", Pattern, Handler, Name, Policy);
+   end Head;
+
+   procedure Head
+     (Item : in out Router; Pattern : String;
+      Handler : not null Handler_Access; Route : out Route_ID;
+      Name : String := "";
+      Policy : Route_Policy := Default_Route_Policy) is
+   begin
+      Add (Item, "HEAD", Pattern, Handler, Route, Name, Policy);
    end Head;
 
    procedure Post
@@ -596,12 +939,30 @@ package body Flyology.HTTP.Server.Routing is
       Add (Item, "POST", Pattern, Handler, Name, Policy);
    end Post;
 
+   procedure Post
+     (Item : in out Router; Pattern : String;
+      Handler : not null Handler_Access; Route : out Route_ID;
+      Name : String := "";
+      Policy : Route_Policy := Default_Route_Policy) is
+   begin
+      Add (Item, "POST", Pattern, Handler, Route, Name, Policy);
+   end Post;
+
    procedure Put
      (Item : in out Router; Pattern : String;
       Handler : not null Handler_Access; Name : String := "";
       Policy : Route_Policy := Default_Route_Policy) is
    begin
       Add (Item, "PUT", Pattern, Handler, Name, Policy);
+   end Put;
+
+   procedure Put
+     (Item : in out Router; Pattern : String;
+      Handler : not null Handler_Access; Route : out Route_ID;
+      Name : String := "";
+      Policy : Route_Policy := Default_Route_Policy) is
+   begin
+      Add (Item, "PUT", Pattern, Handler, Route, Name, Policy);
    end Put;
 
    procedure Patch
@@ -612,12 +973,30 @@ package body Flyology.HTTP.Server.Routing is
       Add (Item, "PATCH", Pattern, Handler, Name, Policy);
    end Patch;
 
+   procedure Patch
+     (Item : in out Router; Pattern : String;
+      Handler : not null Handler_Access; Route : out Route_ID;
+      Name : String := "";
+      Policy : Route_Policy := Default_Route_Policy) is
+   begin
+      Add (Item, "PATCH", Pattern, Handler, Route, Name, Policy);
+   end Patch;
+
    procedure Delete
      (Item : in out Router; Pattern : String;
       Handler : not null Handler_Access; Name : String := "";
       Policy : Route_Policy := Default_Route_Policy) is
    begin
       Add (Item, "DELETE", Pattern, Handler, Name, Policy);
+   end Delete;
+
+   procedure Delete
+     (Item : in out Router; Pattern : String;
+      Handler : not null Handler_Access; Route : out Route_ID;
+      Name : String := "";
+      Policy : Route_Policy := Default_Route_Policy) is
+   begin
+      Add (Item, "DELETE", Pattern, Handler, Route, Name, Policy);
    end Delete;
 
    procedure Options
@@ -628,26 +1007,418 @@ package body Flyology.HTTP.Server.Routing is
       Add (Item, "OPTIONS", Pattern, Handler, Name, Policy);
    end Options;
 
+   procedure Options
+     (Item : in out Router; Pattern : String;
+      Handler : not null Handler_Access; Route : out Route_ID;
+      Name : String := "";
+      Policy : Route_Policy := Default_Route_Policy) is
+   begin
+      Add (Item, "OPTIONS", Pattern, Handler, Route, Name, Policy);
+   end Options;
+
+   procedure Require_Candidate (Change : Update) is
+   begin
+      if Change.State.Candidate = null then
+         raise Program_Error with "HTTP router update has no candidate";
+      end if;
+   end Require_Candidate;
+
+   procedure Validate_Configuration (Item : Router_Configuration) is
+   begin
+      if Item.Count > Item.Capacity then
+         raise Route_Error with "HTTP router capacity exhausted";
+      end if;
+      for Index in 1 .. Item.Count loop
+         Validate_Method (To_String (Item.Routes (Index).Method));
+         Validate_Pattern (To_String (Item.Routes (Index).Pattern));
+         if Item.Routes (Index).ID = No_Route then
+            raise Route_Error with "HTTP route has no identity";
+         elsif Length (Item.Routes (Index).Name) = 0 then
+            raise Route_Error with "empty HTTP route name";
+         elsif Item.Routes (Index).Policy.Max_Body > Max_Request_Body then
+            raise Route_Error with "route body limit exceeds server maximum";
+         end if;
+         for Prior in 1 .. Index - 1 loop
+            if Item.Routes (Prior).ID = Item.Routes (Index).ID then
+               raise Route_Error with "duplicate HTTP route identity";
+            elsif Item.Routes (Prior).Name = Item.Routes (Index).Name then
+               raise Route_Error with "duplicate HTTP route name";
+            elsif Item.Routes (Prior).Method = Item.Routes (Index).Method
+              and then Patterns_Overlap
+                (To_String (Item.Routes (Prior).Pattern),
+                 To_String (Item.Routes (Index).Pattern))
+              and then Item.Routes (Prior).Pattern_Specificity =
+                Item.Routes (Index).Pattern_Specificity
+            then
+               raise Route_Error with "ambiguous HTTP route registration";
+            end if;
+         end loop;
+         for Middleware_Index in
+           1 .. Item.Routes (Index).Middleware_Count
+         loop
+            if Item.Routes (Index).Middleware (Middleware_Index).ID =
+              No_Middleware
+            then
+               raise Route_Error with "HTTP middleware has no identity";
+            end if;
+         end loop;
+      end loop;
+      for Index in 1 .. Item.Middleware_Count loop
+         if Item.Middleware (Index).ID = No_Middleware then
+            raise Route_Error with "HTTP middleware has no identity";
+         end if;
+      end loop;
+   end Validate_Configuration;
+
+   procedure Begin_Update (Item : Router; Change : in out Update) is
+      Generation : constant Generation_Access := Current_Generation (Item);
+   begin
+      if Change.State.Candidate /= null then
+         raise Program_Error with "HTTP router update is already active";
+      elsif Generation = null or else Generation.Configuration = null then
+         raise Program_Error with "HTTP router is not initialized";
+      end if;
+      Change.State.Owner := Item'Address;
+      Change.State.Base := Generation.all'Address;
+      Change.State.Candidate :=
+        new Router_Configuration'(Generation.Configuration.all);
+   end Begin_Update;
+
+   procedure Add
+     (Change  : in out Update;
+      Method  : String;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy)
+   is
+   begin
+      Require_Candidate (Change);
+      Add_To_Configuration
+        (Change.State.Candidate.all,
+         Method, Pattern, Handler, Route, Name, Policy,
+         Validate_Ambiguity => False);
+   end Add;
+
+   procedure Remove (Change : in out Update; Route : Route_ID) is
+      Index : Natural;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      Index := Route_Index (Change.State.Candidate.all, Route);
+      if Index = 0 then
+         raise Route_Error with "unknown HTTP route identity";
+      end if;
+      for Cursor in Index .. Change.State.Candidate.Count - 1 loop
+         Change.State.Candidate.Routes (Cursor) :=
+           Change.State.Candidate.Routes (Cursor + 1);
+      end loop;
+      Change.State.Candidate.Routes (Change.State.Candidate.Count) :=
+        (others => <>);
+      Change.State.Candidate.Count := Change.State.Candidate.Count - 1;
+   end Remove;
+
+   procedure Replace_Handler
+     (Change  : in out Update;
+      Route   : Route_ID;
+      Handler : not null Handler_Access)
+   is
+      Index : Natural;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      Index := Route_Index (Change.State.Candidate.all, Route);
+      if Index = 0 then
+         raise Route_Error with "unknown HTTP route identity";
+      end if;
+      Change.State.Candidate.Routes (Index).Handler := Handler;
+   end Replace_Handler;
+
+   procedure Set_Policy
+     (Change : in out Update;
+      Route  : Route_ID;
+      Policy : Route_Policy)
+   is
+      Index : Natural;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      Index := Route_Index (Change.State.Candidate.all, Route);
+      if Index = 0 then
+         raise Route_Error with "unknown HTTP route identity";
+      elsif Policy.Max_Body > Max_Request_Body then
+         raise Route_Error with "route body limit exceeds server maximum";
+      end if;
+      Change.State.Candidate.Routes (Index).Policy := Policy;
+   end Set_Policy;
+
+   procedure Set_Match
+     (Change  : in out Update;
+      Route   : Route_ID;
+      Method  : String;
+      Pattern : String)
+   is
+      Index    : Natural;
+      Segments : Segment_List;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      Validate_Method (Method);
+      Validate_Pattern (Pattern);
+      Index := Route_Index (Change.State.Candidate.all, Route);
+      if Index = 0 then
+         raise Route_Error with "unknown HTTP route identity";
+      end if;
+      Split_Path (Pattern, Segments);
+      Change.State.Candidate.Routes (Index).Method :=
+        To_Unbounded_String (Method);
+      Change.State.Candidate.Routes (Index).Pattern :=
+        To_Unbounded_String (Pattern);
+      Change.State.Candidate.Routes (Index).Pattern_Segments := Segments;
+      Change.State.Candidate.Routes (Index).Pattern_Specificity :=
+        Specificity (Pattern);
+   end Set_Match;
+
+   procedure Rename
+     (Change : in out Update;
+      Route  : Route_ID;
+      Name   : String)
+   is
+      Index : Natural;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      if Name'Length = 0 then
+         raise Route_Error with "empty HTTP route name";
+      end if;
+      Index := Route_Index (Change.State.Candidate.all, Route);
+      if Index = 0 then
+         raise Route_Error with "unknown HTTP route identity";
+      end if;
+      Change.State.Candidate.Routes (Index).Name := To_Unbounded_String (Name);
+   end Rename;
+
+   procedure Add_Middleware
+     (Change     : in out Update;
+      Component  : not null Middleware_Access;
+      Middleware : out Middleware_ID;
+      Stage      : Middleware_Stage := Request_Head;
+      Name       : String := "")
+   is
+   begin
+      Require_Candidate (Change);
+      Add_Middleware_To_Configuration
+        (Change.State.Candidate.all, Component, Middleware, Stage, Name);
+   end Add_Middleware;
+
+   procedure Add_Route_Middleware
+     (Change          : in out Update;
+      Route           : Route_ID;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage := Request_Head;
+      Middleware_Name : String := "")
+   is
+   begin
+      Require_Candidate (Change);
+      Add_Route_Middleware_To_Configuration
+        (Change.State.Candidate.all, Route, Component, Middleware, Stage,
+         Middleware_Name);
+   end Add_Route_Middleware;
+
+   procedure Remove_From_Chain
+     (Chain      : in out Middleware_Array;
+      Count      : in out Natural;
+      Middleware : Middleware_ID;
+      Removed    : in out Boolean)
+   is
+   begin
+      for Index in 1 .. Count loop
+         if Chain (Index).ID = Middleware then
+            for Cursor in Index .. Count - 1 loop
+               Chain (Cursor) := Chain (Cursor + 1);
+            end loop;
+            Chain (Count) := (others => <>);
+            Count := Count - 1;
+            Removed := True;
+            return;
+         end if;
+      end loop;
+   end Remove_From_Chain;
+
+   procedure Remove_Middleware
+     (Change     : in out Update;
+      Middleware : Middleware_ID)
+   is
+      Removed : Boolean := False;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      Remove_From_Chain
+        (Change.State.Candidate.Middleware,
+         Change.State.Candidate.Middleware_Count,
+         Middleware, Removed);
+      for Index in 1 .. Change.State.Candidate.Count loop
+         Remove_From_Chain
+           (Change.State.Candidate.Routes (Index).Middleware,
+            Change.State.Candidate.Routes (Index).Middleware_Count,
+            Middleware, Removed);
+      end loop;
+      if not Removed then
+         raise Route_Error with "unknown HTTP middleware identity";
+      end if;
+   end Remove_Middleware;
+
+   procedure Replace_Middleware
+     (Change     : in out Update;
+      Middleware : Middleware_ID;
+      Component  : not null Middleware_Access)
+   is
+      Replaced : Boolean := False;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      for Index in 1 .. Change.State.Candidate.Middleware_Count loop
+         if Change.State.Candidate.Middleware (Index).ID = Middleware then
+            Change.State.Candidate.Middleware (Index).Component := Component;
+            Replaced := True;
+         end if;
+      end loop;
+      for Route in 1 .. Change.State.Candidate.Count loop
+         for Index in
+           1 .. Change.State.Candidate.Routes (Route).Middleware_Count
+         loop
+            if Change.State.Candidate.Routes (Route).Middleware (Index).ID =
+              Middleware
+            then
+               Change.State.Candidate.Routes (Route).Middleware
+                 (Index).Component := Component;
+               Replaced := True;
+            end if;
+         end loop;
+      end loop;
+      if not Replaced then
+         raise Route_Error with "unknown HTTP middleware identity";
+      end if;
+   end Replace_Middleware;
+
+   procedure Set_Middleware_Stage
+     (Change     : in out Update;
+      Middleware : Middleware_ID;
+      Stage      : Middleware_Stage)
+   is
+      Replaced : Boolean := False;
+   begin
+      Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
+      for Index in 1 .. Change.State.Candidate.Middleware_Count loop
+         if Change.State.Candidate.Middleware (Index).ID = Middleware then
+            Change.State.Candidate.Middleware (Index).Stage := Stage;
+            Replaced := True;
+         end if;
+      end loop;
+      for Route in 1 .. Change.State.Candidate.Count loop
+         for Index in
+           1 .. Change.State.Candidate.Routes (Route).Middleware_Count
+         loop
+            if Change.State.Candidate.Routes (Route).Middleware (Index).ID =
+              Middleware
+            then
+               Change.State.Candidate.Routes (Route).Middleware
+                 (Index).Stage := Stage;
+               Replaced := True;
+            end if;
+         end loop;
+      end loop;
+      if not Replaced then
+         raise Route_Error with "unknown HTTP middleware identity";
+      end if;
+   end Set_Middleware_Stage;
+
+   procedure Set_Automatic_Admission
+     (Change          : in out Update;
+      Concurrency     : Natural := 0;
+      Rate_Per_Second : Natural := 0)
+   is
+   begin
+      Require_Candidate (Change);
+      Change.State.Candidate.Automatic_Concurrency := Concurrency;
+      Change.State.Candidate.Automatic_Rate := Rate_Per_Second;
+   end Set_Automatic_Admission;
+
+   procedure Set_Authentication_Challenge
+     (Change    : in out Update;
+      Challenge : String)
+   is
+   begin
+      Require_Candidate (Change);
+      if Challenge'Length = 0 then
+         raise Route_Error with "empty HTTP authentication challenge";
+      end if;
+      for Value of Challenge loop
+         if Character'Pos (Value) < 32 or else Character'Pos (Value) = 127
+         then
+            raise Route_Error with
+              "control byte in HTTP authentication challenge";
+         end if;
+      end loop;
+      Change.State.Candidate.Challenge := To_Unbounded_String (Challenge);
+   end Set_Authentication_Challenge;
+
+   procedure Commit (Item : in out Router; Change : in out Update) is
+      Generation : Generation_Access;
+      Address    : System.Address;
+      Accepted   : Boolean;
+   begin
+      Require_Candidate (Change);
+      if Change.State.Owner /= Item'Address then
+         raise Route_Error with "HTTP router update belongs to another router";
+      end if;
+      Validate_Configuration (Change.State.Candidate.all);
+      Generation :=
+        new Generation_Holder'
+          (Configuration => Change.State.Candidate,
+           Next          => System.Null_Address);
+      Address := Generation.all'Address;
+      Item.Publisher.Try_Publish (Change.State.Base, Address, Accepted);
+      if not Accepted then
+         Free_Generation (Generation);
+         raise Stale_Update with "HTTP router generation was replaced";
+      end if;
+      Generation.Next := Item.First_Generation;
+      Item.First_Generation := Address;
+      Flyology.Atomic_Primitives.Store_Release_U64
+        (Item.Current_Generation'Address, Address_Word (Address));
+      Change.State.Candidate := null;
+      Change.State.Owner := System.Null_Address;
+      Change.State.Base := System.Null_Address;
+   end Commit;
+
    procedure Set_Automatic_Admission
      (Item            : in out Router;
       Concurrency     : Natural := 0;
       Rate_Per_Second : Natural := 0)
    is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
    begin
-      Item.Automatic_Concurrency := Concurrency;
-      Item.Automatic_Rate := Rate_Per_Second;
+      Configuration.Automatic_Concurrency := Concurrency;
+      Configuration.Automatic_Rate := Rate_Per_Second;
    end Set_Automatic_Admission;
 
    function Automatic_Concurrency (Item : Router) return Natural is
-     (Item.Automatic_Concurrency);
+     (Current_Configuration (Item).Automatic_Concurrency);
 
    function Automatic_Rate_Per_Second (Item : Router) return Natural is
-     (Item.Automatic_Rate);
+     (Current_Configuration (Item).Automatic_Rate);
 
    procedure Set_Authentication_Challenge
      (Item      : in out Router;
       Challenge : String)
    is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
    begin
       if Challenge'Length = 0 then
          raise Route_Error with "empty HTTP authentication challenge";
@@ -659,13 +1430,18 @@ package body Flyology.HTTP.Server.Routing is
               "control byte in HTTP authentication challenge";
          end if;
       end loop;
-      Item.Challenge := To_Unbounded_String (Challenge);
+      Configuration.Challenge := To_Unbounded_String (Challenge);
    end Set_Authentication_Challenge;
 
    function Authentication_Challenge (Item : Router) return String is
-     (if Length (Item.Challenge) = 0
-      then App.Default_Authentication_Challenge
-      else To_String (Item.Challenge));
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
+   begin
+      return
+        (if Length (Configuration.Challenge) = 0
+         then App.Default_Authentication_Challenge
+         else To_String (Configuration.Challenge));
+   end Authentication_Challenge;
 
    function Join_Pattern (Prefix, Pattern : String) return String is
    begin
@@ -686,53 +1462,72 @@ package body Flyology.HTTP.Server.Routing is
       Source      : in out Router;
       Name_Prefix : String := "")
    is
+      Destination : constant Configuration_Access :=
+        Current_Configuration (Item);
+      Source_Configuration : constant Configuration_Access :=
+        Current_Configuration (Source);
    begin
-      Check_Not_Mounted (Item);
+      Check_Not_Mounted (Destination.all);
       Validate_Pattern (Prefix, Static_Only => True);
-      if Source.Count > Item.Capacity - Item.Count then
+      if Source_Configuration.Count >
+        Destination.Capacity - Destination.Count
+      then
          raise Route_Error with "HTTP router capacity exhausted by mount";
       end if;
-      for Index in 1 .. Source.Count loop
+      for Index in 1 .. Source_Configuration.Count loop
          declare
             --  Source is a variable view now that mounting seals it, so its
             --  discriminant-dependent route component cannot be renamed.
             New_Index : Positive;
          begin
-            if Source.Middleware_Count
-              + Source.Routes (Index).Middleware_Count > Max_Route_Middleware
+            if Source_Configuration.Middleware_Count
+              + Source_Configuration.Routes (Index).Middleware_Count >
+                Max_Route_Middleware
             then
                raise Route_Error with
                  "mounted HTTP middleware capacity exhausted";
             end if;
             Add
               (Item,
-               To_String (Source.Routes (Index).Method),
+               To_String (Source_Configuration.Routes (Index).Method),
                Join_Pattern
-                 (Prefix, To_String (Source.Routes (Index).Pattern)),
-               Source.Routes (Index).Handler,
-               (if Name_Prefix = "" then To_String (Source.Routes (Index).Name)
-               else Name_Prefix & To_String (Source.Routes (Index).Name)),
-               Source.Routes (Index).Policy);
-            New_Index := Item.Count;
-            for Middleware_Index in 1 .. Source.Middleware_Count loop
-               Item.Routes (New_Index).Middleware_Count :=
-                 Item.Routes (New_Index).Middleware_Count + 1;
-               Item.Routes (New_Index).Middleware
-                 (Item.Routes (New_Index).Middleware_Count) :=
-                   Source.Middleware (Middleware_Index);
+                 (Prefix,
+                  To_String (Source_Configuration.Routes (Index).Pattern)),
+               Source_Configuration.Routes (Index).Handler,
+               (if Name_Prefix = "" then
+                  To_String (Source_Configuration.Routes (Index).Name)
+                else Name_Prefix &
+                  To_String (Source_Configuration.Routes (Index).Name)),
+               Source_Configuration.Routes (Index).Policy);
+            New_Index := Destination.Count;
+            for Middleware_Index in
+              1 .. Source_Configuration.Middleware_Count
+            loop
+               Destination.Routes (New_Index).Middleware_Count :=
+                 Destination.Routes (New_Index).Middleware_Count + 1;
+               Destination.Routes (New_Index).Middleware
+                 (Destination.Routes (New_Index).Middleware_Count) :=
+                   Source_Configuration.Middleware (Middleware_Index);
+               Identity_Source.Next_Middleware
+                 (Destination.Routes (New_Index).Middleware
+                    (Destination.Routes (New_Index).Middleware_Count).ID);
             end loop;
             for Middleware_Index in
-              1 .. Source.Routes (Index).Middleware_Count
+              1 .. Source_Configuration.Routes (Index).Middleware_Count
             loop
-               Item.Routes (New_Index).Middleware_Count :=
-                 Item.Routes (New_Index).Middleware_Count + 1;
-               Item.Routes (New_Index).Middleware
-                 (Item.Routes (New_Index).Middleware_Count) :=
-                   Source.Routes (Index).Middleware (Middleware_Index);
+               Destination.Routes (New_Index).Middleware_Count :=
+                 Destination.Routes (New_Index).Middleware_Count + 1;
+               Destination.Routes (New_Index).Middleware
+                 (Destination.Routes (New_Index).Middleware_Count) :=
+                   Source_Configuration.Routes (Index).Middleware
+                     (Middleware_Index);
+               Identity_Source.Next_Middleware
+                 (Destination.Routes (New_Index).Middleware
+                    (Destination.Routes (New_Index).Middleware_Count).ID);
             end loop;
          end;
       end loop;
-      Source.Mounted := True;
+      Source_Configuration.Mounted := True;
    end Mount;
 
    function Match_Path
@@ -866,8 +1661,8 @@ package body Flyology.HTTP.Server.Routing is
       end if;
    end Automatic_Response;
 
-   procedure Dispatch
-     (Item    : in out Router;
+   procedure Dispatch_Configuration
+     (Item    : Router_Configuration;
       Context : in out App_Context;
       X       : in out App.Exchange)
    is
@@ -1157,6 +1952,17 @@ package body Flyology.HTTP.Server.Routing is
          else
             X.Mark_Failed;
          end if;
+   end Dispatch_Configuration;
+
+   procedure Dispatch
+     (Item    : in out Router;
+      Context : in out App_Context;
+      X       : in out App.Exchange)
+   is
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
+   begin
+      Dispatch_Configuration (Configuration.all, Context, X);
    end Dispatch;
 
    procedure Dispatch
