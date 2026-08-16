@@ -8,6 +8,9 @@ with Flyology.IO.TLS.ALPN;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Middleware;
 with Flyology.QUIC.Connections;
+private with Ada.Finalization;
+private with Interfaces;
+private with System;
 
 --  Provides deterministic method-and-path routing above HTTP.Server.
 --  @formal App_Context Application-owned context passed to every endpoint
@@ -112,6 +115,32 @@ package Flyology.HTTP.Server.Routing is
    --  Invalid route registration or decoded request path.
    Route_Error : exception;
 
+   --  Raised when an update was built from a configuration generation that
+   --  has since been replaced.
+   Stale_Update : exception;
+
+   --  Opaque runtime identity of one logical route. Identities are assigned
+   --  by registration, remain stable across route updates, and are never
+   --  reused after removal. They are meaningful only within this routing
+   --  package instance and are not persistent deployment identifiers.
+   type Route_ID is private;
+
+   --  Identity that does not designate a route.
+   No_Route : constant Route_ID;
+
+   --  Opaque runtime identity of one middleware registration. The same
+   --  component may be registered more than once and receives a distinct
+   --  identity each time.
+   type Middleware_ID is private;
+
+   --  Identity that does not designate middleware.
+   No_Middleware : constant Middleware_ID;
+
+   --  Transactional candidate cloned from one published router generation.
+   --  Mutations affect only the candidate until Commit atomically publishes
+   --  it. A candidate based on a superseded generation is rejected.
+   type Update is limited private;
+
    --  Bounded route registry. Registration is intended during application
    --  setup, before concurrent dispatch begins.
    --  @field Capacity Maximum registered routes
@@ -122,14 +151,16 @@ package Flyology.HTTP.Server.Routing is
    is tagged limited private;
 
    --  Immutable copy of one registered route's public configuration.
-   --  Introspection is intended for diagnostics after setup; it is not part of
-   --  request dispatch and adds no work to the routing hot path.
+   --  Introspection snapshots the currently published generation and is not
+   --  part of request dispatch.
+   --  @field ID Stable runtime route identity
    --  @field Method Configured HTTP method
    --  @field Pattern Configured path pattern
    --  @field Name Stable route name
    --  @field Policy Route-local application policy
    --  @field Middleware_Count Route-local or mounted middleware count
    type Route_Description is record
+      ID               : Route_ID;
       Method           : Ada.Strings.Unbounded.Unbounded_String;
       Pattern          : Ada.Strings.Unbounded.Unbounded_String;
       Name             : Ada.Strings.Unbounded.Unbounded_String;
@@ -140,15 +171,17 @@ package Flyology.HTTP.Server.Routing is
    --  Immutable copy of one middleware registration.
    --  An empty name means the application used the source-compatible unnamed
    --  registration form.
+   --  @field ID Stable runtime middleware registration identity
    --  @field Name Application-provided diagnostic name
    --  @field Stage Body-admission boundary where the component runs
    type Middleware_Description is record
+      ID    : Middleware_ID;
       Name  : Ada.Strings.Unbounded.Unbounded_String;
       Stage : Middleware_Stage;
    end record;
 
-   --  Return the number of configured routes without allocating.
-   --  Registration and introspection must not occur concurrently.
+   --  Return the number of configured routes without allocating. The result
+   --  describes the generation current when this call takes its snapshot.
    --  @param Item Router registry
    --  @return Number of routes in registration order
    function Route_Count (Item : Router) return Natural;
@@ -196,6 +229,18 @@ package Flyology.HTTP.Server.Routing is
       Route_Index      : Positive;
       Middleware_Index : Positive) return Middleware_Description;
 
+   --  Resolve a unique configured route name to its runtime identity.
+   --  The copied identity remains stable across updates until removal.
+   --  @param Item Router registry
+   --  @param Name Configured route name
+   --  @param Route Resolved identity, or No_Route when absent
+   --  @param Found Whether Name identifies a route
+   procedure Find_Route
+     (Item  : Router;
+      Name  : String;
+      Route : out Route_ID;
+      Found : out Boolean);
+
    --  Append global middleware. Global components wrap every matched route in
    --  registration order and are copied into mounted subrouter routes.
    --  @param Item Router registry
@@ -209,6 +254,19 @@ package Flyology.HTTP.Server.Routing is
       Component : not null Middleware_Access;
       Stage     : Middleware_Stage := Request_Head;
       Name      : String := "");
+
+   --  Append global middleware and return its runtime registration identity.
+   --  @param Item Router registry
+   --  @param Component Around-handler component
+   --  @param Middleware Assigned registration identity
+   --  @param Stage Body-admission boundary for the component
+   --  @param Name Optional stable diagnostic name for introspection
+   procedure Add_Middleware
+     (Item       : in out Router;
+      Component  : not null Middleware_Access;
+      Middleware : out Middleware_ID;
+      Stage      : Middleware_Stage := Request_Head;
+      Name       : String := "");
 
    --  Append middleware to one route selected by its unique configured name.
    --  Route-local components run after router-global components.
@@ -224,6 +282,39 @@ package Flyology.HTTP.Server.Routing is
       Name      : String;
       Component : not null Middleware_Access;
       Stage     : Middleware_Stage := Request_Head;
+      Middleware_Name : String := "");
+
+   --  Append middleware to one route selected by name and return its runtime
+   --  registration identity.
+   --  @param Item Router registry
+   --  @param Name Configured route name
+   --  @param Component Around-handler component
+   --  @param Middleware Assigned registration identity
+   --  @param Stage Body-admission boundary for the component
+   --  @param Middleware_Name Optional stable diagnostic name
+   procedure Add_Route_Middleware
+     (Item            : in out Router;
+      Name            : String;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage := Request_Head;
+      Middleware_Name : String := "");
+
+   --  Append middleware to one route identity and return the registration
+   --  identity. This setup-time overload avoids name lookup for applications
+   --  that retain route identities.
+   --  @param Item Router registry
+   --  @param Route Route receiving the component
+   --  @param Component Around-handler component
+   --  @param Middleware Assigned registration identity
+   --  @param Stage Body-admission boundary for the component
+   --  @param Middleware_Name Optional stable diagnostic name
+   procedure Add_Route_Middleware
+     (Item            : in out Router;
+      Route           : Route_ID;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage := Request_Head;
       Middleware_Name : String := "");
 
    --  Register one exact method and path pattern.
@@ -243,6 +334,23 @@ package Flyology.HTTP.Server.Routing is
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
+   --  Register one route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Method Case-sensitive HTTP method token
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name; empty derives Method and Pattern
+   --  @param Policy Route-local application policy
+   procedure Add
+     (Item    : in out Router;
+      Method  : String;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
    --  Register a GET route. HEAD falls back to it when no exact HEAD exists.
    --  @param Item Router registry
    --  @param Pattern Route path pattern
@@ -253,6 +361,21 @@ package Flyology.HTTP.Server.Routing is
      (Item    : in out Router;
       Pattern : String;
       Handler : not null Handler_Access;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
+   --  Register a GET route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name
+   --  @param Policy Route-local policy
+   procedure Get
+     (Item    : in out Router;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
@@ -269,6 +392,21 @@ package Flyology.HTTP.Server.Routing is
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
+   --  Register a HEAD route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name
+   --  @param Policy Route-local policy
+   procedure Head
+     (Item    : in out Router;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
    --  Register a POST route.
    --  @param Item Router registry
    --  @param Pattern Route path pattern
@@ -279,6 +417,21 @@ package Flyology.HTTP.Server.Routing is
      (Item    : in out Router;
       Pattern : String;
       Handler : not null Handler_Access;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
+   --  Register a POST route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name
+   --  @param Policy Route-local policy
+   procedure Post
+     (Item    : in out Router;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
@@ -295,6 +448,21 @@ package Flyology.HTTP.Server.Routing is
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
+   --  Register a PUT route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name
+   --  @param Policy Route-local policy
+   procedure Put
+     (Item    : in out Router;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
    --  Register a PATCH route.
    --  @param Item Router registry
    --  @param Pattern Route path pattern
@@ -305,6 +473,21 @@ package Flyology.HTTP.Server.Routing is
      (Item    : in out Router;
       Pattern : String;
       Handler : not null Handler_Access;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
+   --  Register a PATCH route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name
+   --  @param Policy Route-local policy
+   procedure Patch
+     (Item    : in out Router;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
@@ -321,6 +504,21 @@ package Flyology.HTTP.Server.Routing is
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
+   --  Register a DELETE route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name
+   --  @param Policy Route-local policy
+   procedure Delete
+     (Item    : in out Router;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
    --  Register an OPTIONS route.
    --  @param Item Router registry
    --  @param Pattern Route path pattern
@@ -334,12 +532,174 @@ package Flyology.HTTP.Server.Routing is
       Name    : String := "";
       Policy  : Route_Policy := Default_Route_Policy);
 
+   --  Register an OPTIONS route and return its stable runtime identity.
+   --  @param Item Router registry
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name
+   --  @param Policy Route-local policy
+   procedure Options
+     (Item    : in out Router;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
+   --  Clone the current immutable router generation into Change. Change must
+   --  not already contain an uncommitted candidate.
+   --  @param Item Router whose current generation is the update base
+   --  @param Change Empty update object receiving the candidate
+   procedure Begin_Update (Item : Router; Change : in out Update);
+
+   --  Add one route to an unpublished candidate.
+   --  @param Change Active candidate
+   --  @param Method Case-sensitive HTTP method token
+   --  @param Pattern Route path pattern
+   --  @param Handler Application endpoint
+   --  @param Route Assigned route identity
+   --  @param Name Stable route name; empty derives Method and Pattern
+   --  @param Policy Route-local application policy
+   procedure Add
+     (Change  : in out Update;
+      Method  : String;
+      Pattern : String;
+      Handler : not null Handler_Access;
+      Route   : out Route_ID;
+      Name    : String := "";
+      Policy  : Route_Policy := Default_Route_Policy);
+
+   --  Remove one route from an unpublished candidate. Its identity is never
+   --  reused, including when the same name is subsequently registered.
+   --  @param Change Active candidate
+   --  @param Route Route to remove
+   --  @exception Route_Error Route is not present in the candidate
+   procedure Remove (Change : in out Update; Route : Route_ID);
+
+   --  Replace one route's endpoint while preserving its identity and match.
+   --  @param Change Active candidate
+   --  @param Route Route to change
+   --  @param Handler Replacement endpoint
+   procedure Replace_Handler
+     (Change  : in out Update;
+      Route   : Route_ID;
+      Handler : not null Handler_Access);
+
+   --  Replace one route's complete application policy.
+   --  @param Change Active candidate
+   --  @param Route Route to change
+   --  @param Policy Replacement route policy
+   procedure Set_Policy
+     (Change : in out Update;
+      Route  : Route_ID;
+      Policy : Route_Policy);
+
+   --  Replace one route's method and pattern together while preserving its
+   --  identity. Whole-candidate ambiguity validation occurs during Commit.
+   --  @param Change Active candidate
+   --  @param Route Route to change
+   --  @param Method Replacement method token
+   --  @param Pattern Replacement path pattern
+   procedure Set_Match
+     (Change  : in out Update;
+      Route   : Route_ID;
+      Method  : String;
+      Pattern : String);
+
+   --  Replace one route's unique diagnostic and external lookup name.
+   --  @param Change Active candidate
+   --  @param Route Route to rename
+   --  @param Name Nonempty replacement name
+   procedure Rename
+     (Change : in out Update;
+      Route  : Route_ID;
+      Name   : String);
+
+   --  Add one global middleware registration to a candidate.
+   --  @param Change Active candidate
+   --  @param Component Around-handler component
+   --  @param Middleware Assigned registration identity
+   --  @param Stage Body-admission boundary
+   --  @param Name Optional diagnostic name
+   procedure Add_Middleware
+     (Change     : in out Update;
+      Component  : not null Middleware_Access;
+      Middleware : out Middleware_ID;
+      Stage      : Middleware_Stage := Request_Head;
+      Name       : String := "");
+
+   --  Add middleware to one candidate route.
+   --  @param Change Active candidate
+   --  @param Route Route receiving the component
+   --  @param Component Around-handler component
+   --  @param Middleware Assigned registration identity
+   --  @param Stage Body-admission boundary
+   --  @param Middleware_Name Optional diagnostic name
+   procedure Add_Route_Middleware
+     (Change          : in out Update;
+      Route           : Route_ID;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage := Request_Head;
+      Middleware_Name : String := "");
+
+   --  Remove a middleware registration wherever its mounted registration is
+   --  referenced in the candidate.
+   --  @param Change Active candidate
+   --  @param Middleware Registration to remove
+   procedure Remove_Middleware
+     (Change     : in out Update;
+      Middleware : Middleware_ID);
+
+   --  Replace a middleware component while preserving its identity, stage,
+   --  name, and position in every chain that references the registration.
+   --  @param Change Active candidate
+   --  @param Middleware Registration to change
+   --  @param Component Replacement around-handler component
+   procedure Replace_Middleware
+     (Change     : in out Update;
+      Middleware : Middleware_ID;
+      Component  : not null Middleware_Access);
+
+   --  Replace a middleware registration's body-admission stage.
+   --  @param Change Active candidate
+   --  @param Middleware Registration to change
+   --  @param Stage Replacement execution stage
+   procedure Set_Middleware_Stage
+     (Change     : in out Update;
+      Middleware : Middleware_ID;
+      Stage      : Middleware_Stage);
+
+   --  Set automatic-response admission policy in a candidate.
+   --  @param Change Active candidate
+   --  @param Concurrency Maximum active automatic responses
+   --  @param Rate_Per_Second Per-client automatic response rate
+   procedure Set_Automatic_Admission
+     (Change          : in out Update;
+      Concurrency     : Natural := 0;
+      Rate_Per_Second : Natural := 0);
+
+   --  Set the fail-closed authentication challenge in a candidate.
+   --  @param Change Active candidate
+   --  @param Challenge Complete WWW-Authenticate field value
+   procedure Set_Authentication_Challenge
+     (Change    : in out Update;
+      Challenge : String);
+
+   --  Validate and atomically publish a complete candidate. Commit raises
+   --  Stale_Update if another candidate replaced its base generation first.
+   --  @param Item Router receiving the candidate
+   --  @param Change Active candidate consumed on success
+   procedure Commit (Item : in out Router; Change : in out Update);
+
    --  Set the per-client admission policy applied to the router's own
    --  automatic responses: 404, 405, CORS preflight, OPTIONS, the trailing
    --  slash redirect, and the malformed-path 400. Those responses match no
    --  route, so they carry no route policy of their own, yet they run the
    --  whole global middleware chain and write a response. Zero is unlimited
-   --  and is the default, which leaves that surface unmetered.
+   --  and is the default, which leaves that surface unmetered. This direct
+   --  setter is setup-only. Use the Update overload after dispatch begins.
    --  @param Item Router registry
    --  @param Concurrency Maximum active automatic responses; zero is
    --  unlimited
@@ -365,6 +725,8 @@ package Flyology.HTTP.Server.Routing is
    --  with no principal installed. The router cannot see the authentication
    --  middleware's own challenge, so an application that does not use Bearer
    --  must state its scheme here. The default is "Bearer".
+   --  This direct setter is setup-only. Use the Update overload after dispatch
+   --  begins.
    --  @param Item Router registry
    --  @param Challenge Complete WWW-Authenticate field value
    --  @exception Route_Error Challenge is empty or carries control bytes
@@ -492,7 +854,7 @@ package Flyology.HTTP.Server.Routing is
    --  h2 or http/1.1. H1/H2 responses advertise the active H3 endpoint with
    --  Alt-Svc; H3 responses do not. Mutable router context must synchronize
    --  access across concurrent protocol workers.
-   --  @param Item Frozen router shared by all protocol workers
+   --  @param Item Router shared by all protocol workers
    --  @param Context Shared application context
    --  @param Endpoint Non-ephemeral local TCP and UDP endpoint
    --  @param TLS_Backend Initialized ALPN-capable TLS server provider
@@ -552,7 +914,7 @@ package Flyology.HTTP.Server.Routing is
    --  at least two transports. Failure of either family stops the whole
    --  server. Route, context, TLS, certificate, timeout, and shutdown
    --  semantics are otherwise identical to the single-endpoint overload.
-   --  @param Item Frozen router shared by all protocol workers
+   --  @param Item Router shared by all protocol workers
    --  @param Context Shared application context
    --  @param IPv4_Endpoint Concrete local IPv4 TCP and UDP endpoint
    --  @param IPv6_Endpoint Concrete local IPv6 TCP and UDP endpoint
@@ -617,7 +979,7 @@ package Flyology.HTTP.Server.Routing is
    --  endpoints must use the same address family and different concrete
    --  ports. Capacities are independent totals for cleartext TCP, secure TCP,
    --  and QUIC connections.
-   --  @param Item Frozen router shared by all protocol workers
+   --  @param Item Router shared by all protocol workers
    --  @param Context Shared application context
    --  @param HTTP_Endpoint Cleartext HTTP/TCP endpoint
    --  @param HTTPS_Endpoint Secure TLS/TCP and QUIC/UDP endpoint
@@ -684,7 +1046,7 @@ package Flyology.HTTP.Server.Routing is
    --  Bind explicit IPv4 and IPv6 cleartext and secure endpoints. Each pair
    --  uses one shared port across address families, while HTTP and HTTPS use
    --  different ports. Capacity values are totals divided between families.
-   --  @param Item Frozen router shared by all protocol workers
+   --  @param Item Router shared by all protocol workers
    --  @param Context Shared application context
    --  @param IPv4_HTTP_Endpoint IPv4 cleartext HTTP/TCP endpoint
    --  @param IPv6_HTTP_Endpoint IPv6 cleartext HTTP/TCP endpoint
@@ -831,7 +1193,7 @@ package Flyology.HTTP.Server.Routing is
 
    --  Serve multiple concurrent HTTP/3 connections through this router on an
    --  unconnected bound UDP socket until Token is requested.
-   --  @param Item Frozen router shared by all connection workers
+   --  @param Item Router shared by all connection workers
    --  @param Context Shared application context; mutable parts synchronize
    --  @param Socket Exclusively owned bound UDP listener
    --  @param Certificate_DER DER-encoded Ed25519 server certificate
@@ -866,6 +1228,12 @@ package Flyology.HTTP.Server.Routing is
 private
    use Ada.Strings.Unbounded;
 
+   type Route_ID is new Interfaces.Unsigned_64;
+   No_Route : constant Route_ID := 0;
+
+   type Middleware_ID is new Interfaces.Unsigned_64;
+   No_Middleware : constant Middleware_ID := 0;
+
    Max_Global_Middleware : constant := 16;
    Max_Route_Middleware  : constant := 16;
    Max_Segments          : constant := 64;
@@ -879,6 +1247,7 @@ private
    end record;
 
    type Middleware_Entry is record
+      ID        : Middleware_ID := No_Middleware;
       Component : Middleware_Access;
       Stage     : Middleware_Stage := Request_Head;
       Name      : Unbounded_String;
@@ -889,6 +1258,7 @@ private
    --  Registration compiles each pattern into bounded segment storage so
    --  dispatch does not split and allocate the same pattern per request.
    type Route_Entry is record
+      ID                  : Route_ID := No_Route;
       Method              : Unbounded_String;
       Pattern             : Unbounded_String;
       Pattern_Segments    : Segment_List;
@@ -901,10 +1271,10 @@ private
    end record;
    type Route_Array is array (Positive range <>) of Route_Entry;
 
-   type Router
-     (Capacity : Positive := 64;
-      Slashes  : Trailing_Slash_Policy := Strict_Slashes)
-   is tagged limited record
+   type Router_Configuration
+     (Capacity : Positive;
+      Slashes  : Trailing_Slash_Policy)
+   is record
       Routes : Route_Array (1 .. Capacity);
       Count  : Natural := 0;
       Middleware : Middleware_Array (1 .. Max_Global_Middleware);
@@ -915,6 +1285,51 @@ private
       --  Empty selects the Default_Challenge, so an unconfigured router
       --  needs no per-object allocation.
       Challenge             : Unbounded_String;
+   end record;
+   type Configuration_Access is access Router_Configuration;
+
+   type Generation_Holder;
+   type Generation_Access is access all Generation_Holder;
+   type Generation_Holder is record
+      Configuration : Configuration_Access;
+      Next          : System.Address := System.Null_Address;
+   end record;
+
+   type Atomic_Word is new Interfaces.Unsigned_64
+     with Size => 64, Alignment => 8;
+
+   protected type Publication_Gate is
+      procedure Initialize (Generation : System.Address);
+      procedure Try_Publish
+        (Expected : System.Address;
+         Desired  : System.Address;
+         Accepted : out Boolean);
+   private
+      Latest : System.Address := System.Null_Address;
+   end Publication_Gate;
+
+   type Router
+     (Capacity : Positive := 64;
+      Slashes  : Trailing_Slash_Policy := Strict_Slashes)
+   is new Ada.Finalization.Limited_Controlled with record
+      Current_Generation : aliased Atomic_Word := 0;
+      First_Generation   : System.Address := System.Null_Address;
+      Publisher          : Publication_Gate;
+   end record;
+
+   overriding procedure Initialize (Item : in out Router);
+   overriding procedure Finalize (Item : in out Router);
+
+   type Update_State is new Ada.Finalization.Limited_Controlled with record
+      Owner     : System.Address := System.Null_Address;
+      Base      : System.Address := System.Null_Address;
+      Candidate : Configuration_Access := null;
+   end record;
+
+   overriding procedure Finalize (Item : in out Update_State);
+
+   type Update is limited record
+      State : Update_State;
    end record;
 
 end Flyology.HTTP.Server.Routing;

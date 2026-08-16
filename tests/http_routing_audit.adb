@@ -1347,6 +1347,358 @@ procedure HTTP_Routing_Audit is
       end;
    end Check_Request_ID_Unpredictability;
 
+   --  Runtime router updates publish a complete immutable generation. Route
+   --  and middleware identities survive replacement, stale candidates fail,
+   --  and concurrent dispatch observes either complete generation.
+   procedure Check_Runtime_Reconfiguration is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      use type Routing.Middleware_ID;
+      use type Routing.Route_ID;
+
+      procedure Handler_One
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "one");
+      end Handler_One;
+
+      procedure Handler_Two
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "two");
+      end Handler_Two;
+
+      procedure Global_One
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Global", "one");
+         Next.Call (State, X);
+      end Global_One;
+
+      procedure Global_Two
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Global", "two");
+         Next.Call (State, X);
+      end Global_Two;
+
+      procedure Local_One
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Local", "one");
+         Next.Call (State, X);
+      end Local_One;
+
+      procedure Local_Two
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Local", "two");
+         Next.Call (State, X);
+      end Local_Two;
+
+      Routes : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+
+      function Response return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /users/42 HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Response;
+
+      User_Route    : Routing.Route_ID;
+      Resolved      : Routing.Route_ID;
+      Global_Layer  : Routing.Middleware_ID;
+      Local_Layer   : Routing.Middleware_ID;
+      Found         : Boolean;
+   begin
+      Routes.Get
+        ("/users/{id}", Handler_One'Access, User_Route,
+         Name => "users.show");
+      Routes.Add_Middleware
+        (Global_One'Access, Global_Layer, Name => "global-version");
+      Routes.Add_Route_Middleware
+        ("users.show", Local_One'Access, Local_Layer,
+         Middleware_Name => "local-version");
+
+      Routes.Find_Route ("users.show", Resolved, Found);
+      Expect ("runtime route found", Found'Image, "TRUE");
+      Expect
+        ("runtime route helper id",
+         Boolean'Image (Resolved = User_Route), "TRUE");
+      Expect
+        ("runtime route description id",
+         Boolean'Image (Routes.Describe_Route (1).ID = User_Route), "TRUE");
+      Expect
+        ("runtime global middleware id",
+         Boolean'Image
+           (Routes.Describe_Global_Middleware (1).ID = Global_Layer),
+         "TRUE");
+      Expect
+        ("runtime local middleware id",
+         Boolean'Image
+           (Routes.Describe_Route_Middleware (1, 1).ID = Local_Layer),
+         "TRUE");
+      declare
+         Output : constant String := Response;
+      begin
+         Expect_In ("runtime initial handler", Output, CRLF & CRLF & "one");
+         Expect_In ("runtime initial global", Output, "X-Global: one");
+         Expect_In ("runtime initial local", Output, "X-Local: one");
+      end;
+
+      declare
+         Change : Routing.Update;
+         Policy : Routing.Route_Policy := Routing.Default_Route_Policy;
+      begin
+         Policy.Timeout := 1.25;
+         Routes.Begin_Update (Change);
+         Routing.Replace_Handler (Change, User_Route, Handler_Two'Access);
+         Routing.Set_Policy (Change, User_Route, Policy);
+         Routing.Replace_Middleware
+           (Change, Global_Layer, Global_Two'Access);
+         Routing.Replace_Middleware
+           (Change, Local_Layer, Local_Two'Access);
+         Routes.Commit (Change);
+      end;
+      declare
+         Output : constant String := Response;
+      begin
+         Expect_In ("runtime replaced handler", Output, CRLF & CRLF & "two");
+         Expect_In ("runtime replaced global", Output, "X-Global: two");
+         Expect_In ("runtime replaced local", Output, "X-Local: two");
+      end;
+      Expect
+        ("runtime route id stable",
+         Boolean'Image
+           (Routes.Describe_Route (1).ID = User_Route), "TRUE");
+      Expect
+        ("runtime middleware id stable",
+         Boolean'Image
+           (Routes.Describe_Route_Middleware (1, 1).ID = Local_Layer),
+         "TRUE");
+      Expect
+        ("runtime policy replaced",
+         Boolean'Image
+           (Routes.Describe_Route (1).Policy.Timeout = 1.25), "TRUE");
+
+      declare
+         First  : Routing.Update;
+         Stale  : Routing.Update;
+         Raised : Boolean := False;
+      begin
+         Routes.Begin_Update (First);
+         Routes.Begin_Update (Stale);
+         Routing.Set_Authentication_Challenge (First, "Basic realm=test");
+         Routes.Commit (First);
+         begin
+            Routing.Set_Authentication_Challenge (Stale, "Bearer");
+            Routes.Commit (Stale);
+         exception
+            when Routing.Stale_Update =>
+               Raised := True;
+         end;
+         Expect ("runtime stale update", Raised'Image, "TRUE");
+         Expect
+           ("runtime candidate parameter",
+            Routes.Authentication_Challenge, "Basic realm=test");
+      end;
+
+      declare
+         Change       : Routing.Update;
+         New_Route    : Routing.Route_ID;
+         New_Global   : Routing.Middleware_ID;
+         Raised_Route : Boolean := False;
+         Raised_Layer : Boolean := False;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Remove (Change, User_Route);
+         Routing.Add
+           (Change, "GET", "/users/{id}", Handler_One'Access, New_Route,
+            Name => "users.show");
+         Routing.Remove_Middleware (Change, Global_Layer);
+         Routing.Add_Middleware
+           (Change, Global_One'Access, New_Global, Name => "global-version");
+         Routes.Commit (Change);
+         Expect
+           ("runtime route ids not reused",
+            Boolean'Image (New_Route /= User_Route), "TRUE");
+         Expect
+           ("runtime middleware ids not reused",
+            Boolean'Image (New_Global /= Global_Layer), "TRUE");
+
+         declare
+            Invalid : Routing.Update;
+         begin
+            Routes.Begin_Update (Invalid);
+            begin
+               Routing.Replace_Handler
+                 (Invalid, User_Route, Handler_Two'Access);
+            exception
+               when Routing.Route_Error =>
+                  Raised_Route := True;
+            end;
+            begin
+               Routing.Replace_Middleware
+                 (Invalid, Global_Layer, Global_Two'Access);
+            exception
+               when Routing.Route_Error =>
+                  Raised_Layer := True;
+            end;
+         end;
+         Expect ("runtime removed route id", Raised_Route'Image, "TRUE");
+         Expect
+           ("runtime removed middleware id", Raised_Layer'Image, "TRUE");
+      end;
+
+      declare
+         Hot_Routes : Routing.Router
+           (Capacity => 1, Slashes => Routing.Strict_Slashes);
+         Hot_Route  : Routing.Route_ID;
+
+         protected Start_Barrier is
+            procedure Start;
+            entry Wait;
+         private
+            Started : Boolean := False;
+         end Start_Barrier;
+
+         protected body Start_Barrier is
+            procedure Start is
+            begin
+               Started := True;
+            end Start;
+
+            entry Wait when Started is
+            begin
+               null;
+            end Wait;
+         end Start_Barrier;
+
+         protected Results is
+            procedure Fail;
+            procedure Finish;
+            entry Wait_Until_Done;
+            function Failure_Count return Natural;
+         private
+            Failures_Seen : Natural := 0;
+            Finished      : Natural := 0;
+         end Results;
+
+         protected body Results is
+            procedure Fail is
+            begin
+               Failures_Seen := Failures_Seen + 1;
+            end Fail;
+
+            procedure Finish is
+            begin
+               Finished := Finished + 1;
+            end Finish;
+
+            entry Wait_Until_Done when Finished = 4 is
+            begin
+               null;
+            end Wait_Until_Done;
+
+            function Failure_Count return Natural is (Failures_Seen);
+         end Results;
+
+         task type Worker;
+
+         task body Worker is
+            Local_State : Context;
+         begin
+            Start_Barrier.Wait;
+            for Iteration in 1 .. 250 loop
+               pragma Unreferenced (Iteration);
+               declare
+                  Wire : aliased Memory_Transport;
+               begin
+                  Wire.Input := To_Unbounded_String
+                    ("GET /hot HTTP/1.1" & CRLF
+                     & "Host: localhost" & CRLF
+                     & "Connection: close" & CRLF & CRLF);
+                  declare
+                     Client : aliased HTTP_Server.Connection (Wire'Access);
+                  begin
+                     Hot_Routes.Serve (Local_State, Client, Test_Peer);
+                  end;
+                  declare
+                     Output : constant String := To_String (Wire.Output);
+                  begin
+                     if Ada.Strings.Fixed.Index (Output, " 200 ") = 0
+                       or else
+                         (Ada.Strings.Fixed.Index
+                            (Output, CRLF & CRLF & "one") = 0
+                          and then Ada.Strings.Fixed.Index
+                            (Output, CRLF & CRLF & "two") = 0)
+                     then
+                        Results.Fail;
+                     end if;
+                  end;
+               end;
+            end loop;
+            Results.Finish;
+         exception
+            when others =>
+               Results.Fail;
+               Results.Finish;
+         end Worker;
+
+         Workers : array (1 .. 4) of Worker;
+         pragma Unreferenced (Workers);
+      begin
+         Hot_Routes.Get
+           ("/hot", Handler_One'Access, Hot_Route, Name => "hot");
+         Start_Barrier.Start;
+         for Generation in 1 .. 100 loop
+            declare
+               Change : Routing.Update;
+            begin
+               Hot_Routes.Begin_Update (Change);
+               Routing.Replace_Handler
+                 (Change, Hot_Route,
+                  (if Generation mod 2 = 0
+                   then Handler_One'Access
+                   else Handler_Two'Access));
+               Hot_Routes.Commit (Change);
+            end;
+         end loop;
+         Results.Wait_Until_Done;
+         Expect
+           ("runtime concurrent generation consistency",
+            Results.Failure_Count'Image, " 0");
+      end;
+   end Check_Runtime_Reconfiguration;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -1359,6 +1711,7 @@ begin
    Check_CORS_List_Member_Validation;
    Check_Response_Header_Replacement;
    Check_Request_ID_Unpredictability;
+   Check_Runtime_Reconfiguration;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
