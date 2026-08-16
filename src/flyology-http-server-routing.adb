@@ -32,16 +32,14 @@ package body Flyology.HTTP.Server.Routing is
    use type App.Upgrade_Mode;
    use type Decoded_Path_Policy.Path_Disposition;
 
-   package Generation_Conversions is new
-     System.Address_To_Access_Conversions (Generation_Holder);
+   package Configuration_Conversions is new
+     System.Address_To_Access_Conversions (Router_Configuration);
 
-   function As_Generation is new Ada.Unchecked_Conversion
-     (Generation_Conversions.Object_Pointer, Generation_Access);
+   function As_Configuration is new Ada.Unchecked_Conversion
+     (Configuration_Conversions.Object_Pointer, Configuration_Access);
 
    procedure Free_Configuration is new Ada.Unchecked_Deallocation
      (Router_Configuration, Configuration_Access);
-   procedure Free_Generation is new Ada.Unchecked_Deallocation
-     (Generation_Holder, Generation_Access);
 
    protected Identity_Source is
       procedure Next_Route (Value : out Route_ID);
@@ -82,33 +80,31 @@ package body Flyology.HTTP.Server.Routing is
      (System.Storage_Elements.To_Address
         (System.Storage_Elements.Integer_Address (Value)));
 
-   function To_Generation (Value : System.Address) return Generation_Access is
+   function To_Configuration
+     (Value : System.Address) return Configuration_Access
+   is
      (if Value = System.Null_Address then null
-      else As_Generation (Generation_Conversions.To_Pointer (Value)));
-
-   function Current_Generation (Item : Router) return Generation_Access is
-      Bits : constant Interfaces.Unsigned_64 :=
-        Flyology.Atomic_Primitives.Load_Acquire_U64
-          (Item.Current_Generation'Address);
-   begin
-      return To_Generation (Word_Address (Bits));
-   end Current_Generation;
+      else As_Configuration (Configuration_Conversions.To_Pointer (Value)));
 
    function Current_Configuration
      (Item : Router) return Configuration_Access
    is
-      Generation : constant Generation_Access := Current_Generation (Item);
+      Bits : constant Interfaces.Unsigned_64 :=
+        Flyology.Atomic_Primitives.Load_Acquire_U64
+          (Item.Current_Configuration'Address);
+      Configuration : constant Configuration_Access :=
+        To_Configuration (Word_Address (Bits));
    begin
-      if Generation = null or else Generation.Configuration = null then
+      if Configuration = null then
          raise Program_Error with "HTTP router is not initialized";
       end if;
-      return Generation.Configuration;
+      return Configuration;
    end Current_Configuration;
 
    protected body Publication_Gate is
-      procedure Initialize (Generation : System.Address) is
+      procedure Initialize (Configuration : System.Address) is
       begin
-         Latest := Generation;
+         Latest := Configuration;
       end Initialize;
 
       procedure Try_Publish
@@ -127,21 +123,14 @@ package body Flyology.HTTP.Server.Routing is
    overriding procedure Initialize (Item : in out Router) is
       Configuration : Configuration_Access :=
         new Router_Configuration (Item.Capacity, Item.Slashes);
-      Generation : Generation_Access :=
-        new Generation_Holder'
-          (Configuration => Configuration,
-           Next          => System.Null_Address);
-      Address : constant System.Address := Generation.all'Address;
+      Address : constant System.Address := Configuration.all'Address;
    begin
-      Item.First_Generation := Address;
+      Item.First_Configuration := Address;
       Item.Publisher.Initialize (Address);
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Generation'Address, Address_Word (Address));
+        (Item.Current_Configuration'Address, Address_Word (Address));
    exception
       when others =>
-         if Generation /= null then
-            Free_Generation (Generation);
-         end if;
          if Configuration /= null then
             Free_Configuration (Configuration);
          end if;
@@ -149,23 +138,21 @@ package body Flyology.HTTP.Server.Routing is
    end Initialize;
 
    overriding procedure Finalize (Item : in out Router) is
-      Address : System.Address := Item.First_Generation;
+      Address : System.Address := Item.First_Configuration;
    begin
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Generation'Address, 0);
+        (Item.Current_Configuration'Address, 0);
       while Address /= System.Null_Address loop
          declare
-            Generation : Generation_Access := To_Generation (Address);
-            Next       : constant System.Address := Generation.Next;
+            Configuration : Configuration_Access :=
+              To_Configuration (Address);
+            Previous : constant System.Address := Configuration.Previous;
          begin
-            if Generation.Configuration /= null then
-               Free_Configuration (Generation.Configuration);
-            end if;
-            Free_Generation (Generation);
-            Address := Next;
+            Free_Configuration (Configuration);
+            Address := Previous;
          end;
       end loop;
-      Item.First_Generation := System.Null_Address;
+      Item.First_Configuration := System.Null_Address;
    end Finalize;
 
    overriding procedure Finalize (Item : in out Update_State) is
@@ -1071,17 +1058,17 @@ package body Flyology.HTTP.Server.Routing is
    end Validate_Configuration;
 
    procedure Begin_Update (Item : Router; Change : in out Update) is
-      Generation : constant Generation_Access := Current_Generation (Item);
+      Configuration : constant Configuration_Access :=
+        Current_Configuration (Item);
    begin
       if Change.State.Candidate /= null then
          raise Program_Error with "HTTP router update is already active";
-      elsif Generation = null or else Generation.Configuration = null then
-         raise Program_Error with "HTTP router is not initialized";
       end if;
       Change.State.Owner := Item'Address;
-      Change.State.Base := Generation.all'Address;
+      Change.State.Base := Configuration.all'Address;
       Change.State.Candidate :=
-        new Router_Configuration'(Generation.Configuration.all);
+        new Router_Configuration'(Configuration.all);
+      Change.State.Candidate.Previous := System.Null_Address;
    end Begin_Update;
 
    procedure Add
@@ -1367,29 +1354,23 @@ package body Flyology.HTTP.Server.Routing is
    end Set_Authentication_Challenge;
 
    procedure Commit (Item : in out Router; Change : in out Update) is
-      Generation : Generation_Access;
-      Address    : System.Address;
-      Accepted   : Boolean;
+      Address  : System.Address;
+      Accepted : Boolean;
    begin
       Require_Candidate (Change);
       if Change.State.Owner /= Item'Address then
          raise Route_Error with "HTTP router update belongs to another router";
       end if;
       Validate_Configuration (Change.State.Candidate.all);
-      Generation :=
-        new Generation_Holder'
-          (Configuration => Change.State.Candidate,
-           Next          => System.Null_Address);
-      Address := Generation.all'Address;
+      Address := Change.State.Candidate.all'Address;
       Item.Publisher.Try_Publish (Change.State.Base, Address, Accepted);
       if not Accepted then
-         Free_Generation (Generation);
          raise Stale_Update with "HTTP router generation was replaced";
       end if;
-      Generation.Next := Item.First_Generation;
-      Item.First_Generation := Address;
+      Change.State.Candidate.Previous := Item.First_Configuration;
+      Item.First_Configuration := Address;
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Generation'Address, Address_Word (Address));
+        (Item.Current_Configuration'Address, Address_Word (Address));
       Change.State.Candidate := null;
       Change.State.Owner := System.Null_Address;
       Change.State.Base := System.Null_Address;

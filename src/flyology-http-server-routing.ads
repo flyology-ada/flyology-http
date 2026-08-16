@@ -1285,21 +1285,15 @@ private
       --  Empty selects the Default_Challenge, so an unconfigured router
       --  needs no per-object allocation.
       Challenge             : Unbounded_String;
+      Previous              : System.Address := System.Null_Address;
    end record;
    type Configuration_Access is access Router_Configuration;
-
-   type Generation_Holder;
-   type Generation_Access is access all Generation_Holder;
-   type Generation_Holder is record
-      Configuration : Configuration_Access;
-      Next          : System.Address := System.Null_Address;
-   end record;
 
    type Atomic_Word is new Interfaces.Unsigned_64
      with Size => 64, Alignment => 8;
 
    protected type Publication_Gate is
-      procedure Initialize (Generation : System.Address);
+      procedure Initialize (Configuration : System.Address);
       procedure Try_Publish
         (Expected : System.Address;
          Desired  : System.Address;
@@ -1312,9 +1306,9 @@ private
      (Capacity : Positive := 64;
       Slashes  : Trailing_Slash_Policy := Strict_Slashes)
    is new Ada.Finalization.Limited_Controlled with record
-      Current_Generation : aliased Atomic_Word := 0;
-      First_Generation   : System.Address := System.Null_Address;
-      Publisher          : Publication_Gate;
+      Current_Configuration : aliased Atomic_Word := 0;
+      First_Configuration   : System.Address := System.Null_Address;
+      Publisher             : Publication_Gate;
    end record;
 
    overriding procedure Initialize (Item : in out Router);
