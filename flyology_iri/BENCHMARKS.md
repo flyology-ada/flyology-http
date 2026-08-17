@@ -1,3 +1,10 @@
+# Benchmarks
+
+Two harnesses. The URL corpus benchmark below times validation and
+construction against Ada URL over a pinned third-party corpus. The resolution
+benchmark further down times the paths that read components back out of an
+already parsed reference, which the corpus benchmark does not reach.
+
 # URL corpus benchmark
 
 The benchmark uses the exact corpus loaded by Ada v4's `benchdata` target:
@@ -58,3 +65,129 @@ These are local development-machine observations, not portable performance
 claims. At this workload and resolution, validation is within one nanosecond of
 Ada's median and construction is within one nanosecond while slightly faster at
 the median.
+
+# Resolution and component benchmark
+
+`can_parse` constructs nothing and `parse_href` consumes only the stored
+serialization length, so neither reaches a component getter. The paths that
+read components back out of a parsed reference are timed separately, by
+`flyology_iri_resolve_benchmark`, which is built on
+[`flyology_bench`](https://flyology.org/guide/benchmarking/). It carries its
+own inputs, so unlike `benchmark.sh` it needs neither the Ada URL checkout nor
+the pinned corpus:
+
+```sh
+./scripts/resolve-benchmark.sh
+```
+
+Five workloads. `components_short`, `components_long`, and `components_huge`
+each read all eight components of a parsed reference, cycling four references
+whose serialized lengths average 44, 235, and 2,009 bytes; the three sizes are
+what make a getter whose cost follows the reference distinguishable from one
+whose cost follows the component. `resolve_short_base` and `resolve_long_base`
+resolve the RFC 3986 section 5.4 relative references, plus the shapes a
+document with a base-URI directive carries, against an 18-byte and a 233-byte
+base.
+
+Batches fold a value derived from each result into an accumulator that
+`Measure_Result_Batched` hands to a barrier after the ending timestamp, and
+each iteration advances to a different input. The fold reads one byte of each
+component as well as its length. That guard is precautionary: disassembling the
+harness shows all eight getter calls emitted either way, because the library is
+a separate project whose bodies `-gnatn2` does not inline into the harness, so
+`-O3` has no opportunity to satisfy a length-only consumer without producing
+the bytes.
+
+`scripts/resolve-benchmark.sh` selects `FLYOLOGY_IRI_BUILD_MODE=release`, the
+mode the corpus medians above also measure, and passes it to the binary.
+The build mode is part of the baseline compatibility fingerprint, because
+release suppresses runtime checks in `flyology_iri.adb` and that body is most
+of what these workloads execute.
+
+Two builds of one library cannot share a process, so a before/after pair joins
+through `Flyology_Bench.Baselines` rather than a paired `Compare`. Its
+fingerprint refuses a comparison across operating system, architecture,
+compiler, or build mode, and deliberately does not include the library
+revision, which is the difference being measured.
+
+## Metric axes
+
+The run requests `Process_Resource_Metrics`, the portable Darwin/Linux set.
+`Linux_Hardware_Metrics` would give a lower-noise instruction count, but its
+axes come from perf and report `Unsupported_Platform` on Darwin. The metrics
+CSV records the collection status of every requested axis rather than leaving
+it assumed; `--metrics-csv=PATH` sends it to a file.
+
+`Process_RSS_Change` measures retained resident growth per operation and reads
+zero for these workloads both before and after any change to transient copying,
+because the allocator reuses memory freed within the same batch. It is the
+wrong instrument for a change to short-lived copies, and a flat reading on it
+is not evidence that nothing moved. `Wall_Time` is the axis that responds, with
+`Thread_CPU_Time` alongside it to show that a wall-time difference is not a
+scheduling artifact.
+
+## Component-copy measurement
+
+Measurements from 2026-08-17 on an Apple M3 Max, macOS 26.5.2, GNAT 16.1.0,
+release build mode. Every one of the thirteen requested axes reported
+`collected` in every run. The host was not idle: an unrelated compiler
+bootstrap held the load average near 25 throughout, so the rounds were
+interleaved before/after/before/after and the repeated pre-change round serves
+as a drift control.
+
+Medians in ns/op, and the `Baselines` verdict against the first pre-change
+round:
+
+| Workload | Before | After | Change | 95% speedup CI |
+| --- | ---: | ---: | ---: | --- |
+| `components_short` | 127.6 | 74.2 | −41.9% | 1.712 .. 1.731 |
+| `components_long` | 124.6 | 82.2 | −33.5% | 1.491 .. 1.518 |
+| `components_huge` | 320.2 | 115.8 | −63.8% | 2.749 .. 2.782 |
+| `resolve_short_base` | 608.8 | 475.8 | −22.2% | 1.276 .. 1.297 |
+| `resolve_long_base` | 980.8 | 823.2 | −15.5% | 1.154 .. 1.210 |
+
+The drift control repeated the pre-change build after the post-change one and
+landed within 3% of its own first round on every workload, against effects of
+15% to 64%. `Thread_CPU_Time` stayed within 1.2% of wall time in every run, so
+the wall-time differences are not descheduling.
+`Process_RSS_Change` and both page-fault axes read zero on both sides.
+
+`components_huge` is the reading that identifies the cause. Before the change
+its median is 2.6 times `components_long`'s at 8.6 times the reference length;
+after it, 1.4 times. What remains scales with the components rather than with
+the reference.
+
+These are local development-machine observations on a loaded host, not portable
+performance claims.
+
+## What the compiler actually emits
+
+Timings alone cannot say which copy disappeared, so the release objects were
+disassembled on both sides. Before, `flyology_iri__scheme` called
+`ada__strings__unbounded__to_string` unconditionally and *ahead of the
+zero-span test*, then took a second `ss_allocate` and `memcpy` for the
+component itself: two copies per getter, one of them the length of the whole
+reference, paid even when the component was absent. After, the same symbol is a
+tail call to `ada__strings__unbounded__slice` on the present path, and the
+absent path allocates the eight bytes of a null string's bounds and returns
+without copying anything.
+
+That also explains the shape of the numbers. At 44 and 235 bytes the win is
+mostly one fewer call and one fewer secondary-stack allocation per getter,
+which is why `components_short` improves as much as `components_long` despite
+copying a fifth as many bytes. At 2,009 bytes the discarded copy dominates and
+the improvement grows to 63.8%.
+
+## Validation cost
+
+The same binary compares `Diagnose` against `Parse` over the assembled
+resolution results. Both subprograms exist in one process, so this one is a
+paired `Compare` and its result does not depend on which build is linked.
+`Diagnose` measures 212.9 ns/op against `Parse`'s 273.4 ns/op, 22.1% less, 95%
+CI [1.272, 1.293], winning 99 of 100 sample pairs.
+
+That difference is the cost of the second `Reference` that `Resolve` builds to
+validate its own assembled result: about 61 ns of the post-change
+`resolve_long_base` median of 823 ns. A `String`-returning `Resolve` that
+validated through `Diagnose` would recover roughly that much for a caller that
+needs the result validated but not its spans.

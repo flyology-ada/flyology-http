@@ -90,5 +90,14 @@ parse-plus-href-length operations:
 The preparation script checks out both pinned inputs under the repository's
 ignored `build/flyology-iri-benchmark/` directory. The benchmark refuses
 unpinned revisions and prints both revisions, the number accepted by each
-implementation, and nanoseconds per URL. See
-[BENCHMARKS.md](BENCHMARKS.md) for pinned results and interpretation.
+implementation, and nanoseconds per URL.
+
+That comparison reaches neither the component getters nor `Resolve`. Those are
+timed separately, by a `flyology_bench` harness that carries its own inputs and
+needs no checkout:
+
+```sh
+./scripts/resolve-benchmark.sh
+```
+
+See [BENCHMARKS.md](BENCHMARKS.md) for pinned results and interpretation.
