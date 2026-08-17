@@ -155,6 +155,14 @@ package Flyology_IRI is
    --  A web URL result is still parsed, because web mode normalizes and the
    --  normalized serialization is the result. The value equals Image of the
    --  Reference this returns for the same arguments.
+   --
+   --  This overloads the Reference-returning Resolve on result type alone.
+   --  Most calls select between them from context, but one whose context
+   --  supplies no type does not: comparing two calls with `=`, or taking an
+   --  attribute of a call, is ambiguous and was legal when only the Reference
+   --  form existed. A qualified expression settles it in place, as in
+   --  String'(Resolve (Base, Relative)) = String'(Resolve (Base, Other)), and
+   --  naming the result in a constant always works.
    --  @param Base Absolute base reference
    --  @param Relative Reference to resolve
    --  @param Max_Length Maximum accepted input and serialized byte length
