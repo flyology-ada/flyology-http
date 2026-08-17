@@ -1,9 +1,16 @@
 with Ada.Characters.Handling;
+with Ada.Unchecked_Deallocation;
 with Flyology_IRI.Web;
 
 package body Flyology_IRI is
 
    package Unbounded renames Ada.Strings.Unbounded;
+
+   type String_Access is access String;
+
+   --  Colon, the two authority slashes, the query mark and the fragment
+   --  mark, with slack.
+   Separator_Headroom : constant := 16;
 
    type Analysis is record
       Error             : Parse_Error;
@@ -1286,32 +1293,51 @@ package body Flyology_IRI is
         & (if Value.Query_Present then "?" & Query (Value) else "");
    end Target;
 
-   procedure Remove_Last_Segment (Output : in out Unbounded.Unbounded_String) is
-      Text : constant String := Unbounded.To_String (Output);
-      Slash : Natural := 0;
-   begin
-      for Index in reverse Text'Range loop
-         if Text (Index) = '/' then
-            Slash := Index;
-            exit;
-         end if;
-      end loop;
-      if Slash = 0 then
-         Unbounded.Set_Unbounded_String (Output, "");
-      else
-         Unbounded.Set_Unbounded_String (Output, Text (Text'First .. Slash - 1));
-      end if;
-   end Remove_Last_Segment;
+   --  RFC 3986 section 5.2 merge and dot-segment removal, stopping short of
+   --  validating what it produced. Both public Resolve forms need the same
+   --  assembled bytes and then validate them differently, so the assembly is
+   --  factored out rather than one form calling the other: composing them
+   --  would make whichever came second validate twice.
+   --
+   --  The assembly writes into a plain String rather than growing an
+   --  Unbounded_String. That is worth more than the returned copy it also
+   --  avoids: the Unbounded shape reallocated on nearly every append, and
+   --  its segment removal did a whole To_String and Set_Unbounded_String for
+   --  each "/../" it collapsed.
 
-   function Remove_Dot_Segments (Input : String) return String is
-      --  The loop below indexes from one, so Input has to be renormalized.
-      --  A constrained subtype does that at the cost of one copy; the
-      --  Unbounded round-trip it replaces did the same renormalization
-      --  through the heap.
+   --  Append Input's dot-segment reduction to Output. Segment removal may
+   --  only take back bytes this call wrote, so it stops at Floor.
+   procedure Append_Dot_Segments
+     (Input    : String;
+      Output   : in out String;
+      Last     : in out Natural;
+      Overflow : in out Boolean)
+   is
       Source   : constant String (1 .. Input'Length) := Input;
+      Floor    : constant Natural := Last;
       Position : Natural := 1;
-      Output   : Unbounded.Unbounded_String;
       Next     : Natural;
+
+      procedure Put (Value : String) is
+      begin
+         if Last + Value'Length > Output'Last then
+            Overflow := True;
+         else
+            Output (Last + 1 .. Last + Value'Length) := Value;
+            Last := Last + Value'Length;
+         end if;
+      end Put;
+
+      procedure Drop_Last_Segment is
+      begin
+         for Index in reverse Floor + 1 .. Last loop
+            if Output (Index) = '/' then
+               Last := Index - 1;
+               return;
+            end if;
+         end loop;
+         Last := Floor;
+      end Drop_Last_Segment;
    begin
       while Position <= Source'Length loop
          if Position + 2 <= Source'Length
@@ -1329,18 +1355,18 @@ package body Flyology_IRI is
          elsif Position + 1 = Source'Length
            and then Source (Position .. Position + 1) = "/."
          then
-            Unbounded.Append (Output, '/');
+            Put ("/");
             exit;
          elsif Position + 3 <= Source'Length
            and then Source (Position .. Position + 3) = "/../"
          then
             Position := Position + 3;
-            Remove_Last_Segment (Output);
+            Drop_Last_Segment;
          elsif Position + 2 = Source'Length
            and then Source (Position .. Position + 2) = "/.."
          then
-            Remove_Last_Segment (Output);
-            Unbounded.Append (Output, '/');
+            Drop_Last_Segment;
+            Put ("/");
             exit;
          elsif Source (Position .. Source'Length) in "." | ".." then
             exit;
@@ -1352,108 +1378,182 @@ package body Flyology_IRI is
             while Next <= Source'Length and then Source (Next) /= '/' loop
                Next := Next + 1;
             end loop;
-            Unbounded.Append (Output, Source (Position .. Next - 1));
+            Put (Source (Position .. Next - 1));
             Position := Next;
          end if;
       end loop;
-      return Unbounded.To_String (Output);
-   end Remove_Dot_Segments;
+   end Append_Dot_Segments;
 
-   --  RFC 3986 section 5.2 merge and dot-segment removal, stopping short of
-   --  validating what it produced. Both public Resolve forms need the same
-   --  assembled bytes and then validate them differently, so the assembly is
-   --  factored out rather than one form calling the other: composing them
-   --  would make whichever came second validate twice.
-   function Assemble
-     (Base       : Reference;
-      Relative   : String;
-      Max_Length : Positive) return String
+   --  Rel arrives already parsed because the caller has to size Output from
+   --  its serialized length before this can run.
+   procedure Assemble_Into
+     (Base     : Reference;
+      Rel      : Reference;
+      Output   : out String;
+      Last     : out Natural;
+      Overflow : out Boolean)
    is
-      Rel      : constant Reference :=
-        Parse (Relative, Base.Syntax_Value, Max_Length);
-      --  Every branch below reads the relative path, and the merge path reads
-      --  it three times. One local keeps the getter to a single call.
       Rel_Path : constant String := Path (Rel);
-      Target   : Unbounded.Unbounded_String;
-      Prefix   : Unbounded.Unbounded_String;
-   begin
-      if not Has_Scheme (Base) then
-         raise Malformed_Reference with "base reference is not absolute";
-      end if;
 
-      if Has_Scheme (Rel) then
-         Unbounded.Append (Target, Scheme (Rel) & ":");
-         if Has_Authority (Rel) then
-            Unbounded.Append (Target, "//" & Authority (Rel));
+      procedure Put (Value : String) is
+      begin
+         if Last + Value'Length > Output'Last then
+            Overflow := True;
+         else
+            Output (Last + 1 .. Last + Value'Length) := Value;
+            Last := Last + Value'Length;
          end if;
-         Unbounded.Append (Target, Remove_Dot_Segments (Rel_Path));
+      end Put;
+   begin
+      Last := Output'First - 1;
+      Overflow := False;
+      if Has_Scheme (Rel) then
+         Put (Scheme (Rel));
+         Put (":");
+         if Has_Authority (Rel) then
+            Put ("//");
+            Put (Authority (Rel));
+         end if;
+         Append_Dot_Segments (Rel_Path, Output, Last, Overflow);
          if Has_Query (Rel) then
-            Unbounded.Append (Target, "?" & Query (Rel));
+            Put ("?");
+            Put (Query (Rel));
          end if;
       else
-         Unbounded.Append (Target, Scheme (Base) & ":");
+         Put (Scheme (Base));
+         Put (":");
          if Has_Authority (Rel) then
-            Unbounded.Append (Target, "//" & Authority (Rel));
-            Unbounded.Append (Target, Remove_Dot_Segments (Rel_Path));
+            Put ("//");
+            Put (Authority (Rel));
+            Append_Dot_Segments (Rel_Path, Output, Last, Overflow);
             if Has_Query (Rel) then
-               Unbounded.Append (Target, "?" & Query (Rel));
+               Put ("?");
+               Put (Query (Rel));
             end if;
          else
             declare
-               --  Read once for the empty-path test, the merge test, and the
-               --  merge itself.
                Base_Path : constant String := Path (Base);
             begin
                if Has_Authority (Base) then
-                  Unbounded.Append (Target, "//" & Authority (Base));
+                  Put ("//");
+                  Put (Authority (Base));
                end if;
                if Rel_Path'Length = 0 then
-                  Unbounded.Append (Target, Base_Path);
+                  Put (Base_Path);
                   if Has_Query (Rel) then
-                     Unbounded.Append (Target, "?" & Query (Rel));
+                     Put ("?");
+                     Put (Query (Rel));
                   elsif Has_Query (Base) then
-                     Unbounded.Append (Target, "?" & Query (Base));
+                     Put ("?");
+                     Put (Query (Base));
                   end if;
                else
                   if Rel_Path (Rel_Path'First) = '/' then
-                     Unbounded.Append
-                       (Target, Remove_Dot_Segments (Rel_Path));
+                     Append_Dot_Segments (Rel_Path, Output, Last, Overflow);
                   else
-                     if Has_Authority (Base)
-                       and then Base_Path'Length = 0
-                     then
-                        Unbounded.Append (Prefix, '/');
-                     else
-                        --  RFC 3986 section 5.2.3 merge excludes the
-                        --  characters after the base path's right-most '/'
-                        --  but retains that '/'.  A base path without any
-                        --  '/' merges to the relative path alone, so Prefix
-                        --  stays empty.
-                        for Index in reverse Base_Path'Range loop
-                           if Base_Path (Index) = '/' then
-                              Unbounded.Set_Unbounded_String
-                                (Prefix,
-                                 Base_Path (Base_Path'First .. Index));
-                              exit;
-                           end if;
-                        end loop;
-                     end if;
-                     Unbounded.Append
-                       (Target,
-                        Remove_Dot_Segments
-                          (Unbounded.To_String (Prefix) & Rel_Path));
+                     declare
+                        Prefix_Last : Natural := Base_Path'First - 1;
+                        Root        : constant Boolean :=
+                          Has_Authority (Base) and then Base_Path'Length = 0;
+                     begin
+                        if not Root then
+                           for Index in reverse Base_Path'Range loop
+                              if Base_Path (Index) = '/' then
+                                 Prefix_Last := Index;
+                                 exit;
+                              end if;
+                           end loop;
+                        end if;
+                        declare
+                           Prefix : constant String :=
+                             (if Root then "/"
+                              else Base_Path (Base_Path'First .. Prefix_Last));
+                           Merged : String (1 .. Prefix'Length
+                                                 + Rel_Path'Length);
+                        begin
+                           Merged (1 .. Prefix'Length) := Prefix;
+                           Merged (Prefix'Length + 1 .. Merged'Last) :=
+                             Rel_Path;
+                           Append_Dot_Segments
+                             (Merged, Output, Last, Overflow);
+                        end;
+                     end;
                   end if;
                   if Has_Query (Rel) then
-                     Unbounded.Append (Target, "?" & Query (Rel));
+                     Put ("?");
+                     Put (Query (Rel));
                   end if;
                end if;
             end;
          end if;
       end if;
       if Has_Fragment (Rel) then
-         Unbounded.Append (Target, "#" & Fragment (Rel));
+         Put ("#");
+         Put (Fragment (Rel));
       end if;
-      return Unbounded.To_String (Target);
+   end Assemble_Into;
+
+   --  Merging and dot-segment removal never produce more than the base, the
+   --  relative reference, and the separators between them, so the serialized
+   --  lengths of the two parsed references bound the result. Both are real
+   --  lengths rather than Max_Length, which may be Positive'Last; sizing from
+   --  the inputs instead would understate a web result, because normalization
+   --  can expand a relative past the bytes it was written with.
+   Stack_Assembly_Limit : constant := 64 * 1_024;
+
+   function Assemble
+     (Base       : Reference;
+      Relative   : String;
+      Max_Length : Positive) return String
+   is
+      procedure Free is new Ada.Unchecked_Deallocation (String, String_Access);
+
+      Rel    : constant Reference :=
+        Parse (Relative, Base.Syntax_Value, Max_Length);
+      Needed : constant Positive :=
+        Image_Length (Base) + Image_Length (Rel) + Separator_Headroom;
+   begin
+      --  Checked before either buffer is taken, so the large path has no
+      --  route out that would leak it.
+      if not Has_Scheme (Base) then
+         raise Malformed_Reference with "base reference is not absolute";
+      end if;
+
+      if Needed <= Stack_Assembly_Limit then
+         declare
+            Buffer   : String (1 .. Needed);
+            Last     : Natural;
+            Overflow : Boolean;
+         begin
+            Assemble_Into (Base, Rel, Buffer, Last, Overflow);
+            if Overflow then
+               raise Program_Error with "resolved reference outgrew its bound";
+            end if;
+            return Buffer (1 .. Last);
+         end;
+      end if;
+
+      --  A caller that raised Max_Length far above the default can push the
+      --  bound past what belongs on the stack. One exact allocation still
+      --  beats the reallocation per append this replaced, and it keeps a
+      --  single copy of the merge.
+      declare
+         Buffer   : String_Access := new String (1 .. Needed);
+         Last     : Natural;
+         Overflow : Boolean;
+      begin
+         Assemble_Into (Base, Rel, Buffer.all, Last, Overflow);
+         if Overflow then
+            Free (Buffer);
+            raise Program_Error with "resolved reference outgrew its bound";
+         end if;
+         declare
+            Result : constant String := Buffer (1 .. Last);
+         begin
+            Free (Buffer);
+            return Result;
+         end;
+      end;
    end Assemble;
 
    function Resolve
