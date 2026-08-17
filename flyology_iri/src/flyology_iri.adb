@@ -7,10 +7,17 @@ package body Flyology_IRI is
    package Unbounded renames Ada.Strings.Unbounded;
 
    type String_Access is access String;
+   procedure Free is new Ada.Unchecked_Deallocation (String, String_Access);
 
    --  Colon, the two authority slashes, the query mark and the fragment
    --  mark, with slack.
    Separator_Headroom : constant := 16;
+
+   --  Above this, assembly scratch goes on the heap instead of the
+   --  stack. Max_Length may be Positive'Last, so a reference pair can
+   --  be arbitrarily large and no size-proportional local may sit on
+   --  the primary stack.
+   Stack_Assembly_Limit : constant := 64 * 1_024;
 
    type Analysis is record
       Error             : Parse_Error;
@@ -1313,14 +1320,24 @@ package body Flyology_IRI is
       Last     : in out Natural;
       Overflow : in out Boolean)
    is
-      Source   : constant String (1 .. Input'Length) := Input;
+      --  The loop indexes from one. Renormalizing through a constrained
+      --  local would put a copy the size of the path on the stack, which the
+      --  large-input path in Assemble exists to avoid, so the offset is
+      --  applied per access instead: logical index I is Input (Origin + I).
+      Origin   : constant Integer := Input'First - 1;
+      Length   : constant Natural := Input'Length;
       Floor    : constant Natural := Last;
       Position : Natural := 1;
       Next     : Natural;
 
+      --  Phrased as a subtraction rather than Last + Value'Length > Output'Last
+      --  so that the comparison cannot wrap. Release builds compile this body
+      --  with -gnatp, so a wrapped guard would admit an unchecked slice
+      --  assignment; Last never exceeds Output'Last, so the difference is
+      --  always a valid Natural.
       procedure Put (Value : String) is
       begin
-         if Last + Value'Length > Output'Last then
+         if Value'Length > Output'Last - Last then
             Overflow := True;
          else
             Output (Last + 1 .. Last + Value'Length) := Value;
@@ -1339,46 +1356,46 @@ package body Flyology_IRI is
          Last := Floor;
       end Drop_Last_Segment;
    begin
-      while Position <= Source'Length loop
-         if Position + 2 <= Source'Length
-           and then Source (Position .. Position + 2) = "../"
+      while Position <= Length loop
+         if Position + 2 <= Length
+           and then Input (Origin + Position .. Origin + Position + 2) = "../"
          then
             Position := Position + 3;
-         elsif Position + 1 <= Source'Length
-           and then Source (Position .. Position + 1) = "./"
+         elsif Position + 1 <= Length
+           and then Input (Origin + Position .. Origin + Position + 1) = "./"
          then
             Position := Position + 2;
-         elsif Position + 2 <= Source'Length
-           and then Source (Position .. Position + 2) = "/./"
+         elsif Position + 2 <= Length
+           and then Input (Origin + Position .. Origin + Position + 2) = "/./"
          then
             Position := Position + 2;
-         elsif Position + 1 = Source'Length
-           and then Source (Position .. Position + 1) = "/."
+         elsif Position + 1 = Length
+           and then Input (Origin + Position .. Origin + Position + 1) = "/."
          then
             Put ("/");
             exit;
-         elsif Position + 3 <= Source'Length
-           and then Source (Position .. Position + 3) = "/../"
+         elsif Position + 3 <= Length
+           and then Input (Origin + Position .. Origin + Position + 3) = "/../"
          then
             Position := Position + 3;
             Drop_Last_Segment;
-         elsif Position + 2 = Source'Length
-           and then Source (Position .. Position + 2) = "/.."
+         elsif Position + 2 = Length
+           and then Input (Origin + Position .. Origin + Position + 2) = "/.."
          then
             Drop_Last_Segment;
             Put ("/");
             exit;
-         elsif Source (Position .. Source'Length) in "." | ".." then
+         elsif Input (Origin + Position .. Origin + Length) in "." | ".." then
             exit;
          else
             Next := Position;
-            if Source (Position) = '/' then
+            if Input (Origin + Position) = '/' then
                Next := Position + 1;
             end if;
-            while Next <= Source'Length and then Source (Next) /= '/' loop
+            while Next <= Length and then Input (Origin + Next) /= '/' loop
                Next := Next + 1;
             end loop;
-            Put (Source (Position .. Next - 1));
+            Put (Input (Origin + Position .. Origin + Next - 1));
             Position := Next;
          end if;
       end loop;
@@ -1395,9 +1412,14 @@ package body Flyology_IRI is
    is
       Rel_Path : constant String := Path (Rel);
 
+      --  Phrased as a subtraction rather than Last + Value'Length > Output'Last
+      --  so that the comparison cannot wrap. Release builds compile this body
+      --  with -gnatp, so a wrapped guard would admit an unchecked slice
+      --  assignment; Last never exceeds Output'Last, so the difference is
+      --  always a valid Natural.
       procedure Put (Value : String) is
       begin
-         if Last + Value'Length > Output'Last then
+         if Value'Length > Output'Last - Last then
             Overflow := True;
          else
             Output (Last + 1 .. Last + Value'Length) := Value;
@@ -1465,17 +1487,60 @@ package body Flyology_IRI is
                            end loop;
                         end if;
                         declare
-                           Prefix : constant String :=
-                             (if Root then "/"
-                              else Base_Path (Base_Path'First .. Prefix_Last));
-                           Merged : String (1 .. Prefix'Length
-                                                 + Rel_Path'Length);
+                           --  Named by bounds into Base_Path rather than
+                           --  copied out of it: a constrained local here
+                           --  would be a second primary-stack object the
+                           --  size of the base path.
+                           Prefix_Length : constant Natural :=
+                             (if Root then 1
+                              else Prefix_Last - Base_Path'First + 1);
+                           Span : constant Natural :=
+                             Prefix_Length + Rel_Path'Length;
+
+                           procedure Fill (Merged : out String) is
+                              From : constant Natural := Merged'First;
+                           begin
+                              if Root then
+                                 Merged (From) := '/';
+                              else
+                                 Merged (From .. From + Prefix_Length - 1) :=
+                                   Base_Path
+                                     (Base_Path'First .. Prefix_Last);
+                              end if;
+                              Merged (From + Prefix_Length .. Merged'Last) :=
+                                Rel_Path;
+                           end Fill;
                         begin
-                           Merged (1 .. Prefix'Length) := Prefix;
-                           Merged (Prefix'Length + 1 .. Merged'Last) :=
-                             Rel_Path;
-                           Append_Dot_Segments
-                             (Merged, Output, Last, Overflow);
+                           --  Section 5.2.4 reduces the merged path as one
+                           --  string: a leading "../" is discarded where an
+                           --  interior "/../" removes a segment, so the two
+                           --  pieces cannot be reduced separately. They are
+                           --  joined first, on the stack while that is small
+                           --  and on the heap when it is not, for the reason
+                           --  Assemble takes the same fork.
+                           if Span <= Stack_Assembly_Limit then
+                              declare
+                                 Merged : String (1 .. Span);
+                              begin
+                                 Fill (Merged);
+                                 Append_Dot_Segments
+                                   (Merged, Output, Last, Overflow);
+                              end;
+                           else
+                              declare
+                                 Merged : String_Access :=
+                                   new String (1 .. Span);
+                              begin
+                                 Fill (Merged.all);
+                                 Append_Dot_Segments
+                                   (Merged.all, Output, Last, Overflow);
+                                 Free (Merged);
+                              exception
+                                 when others =>
+                                    Free (Merged);
+                                    raise;
+                              end;
+                           end if;
                         end;
                      end;
                   end if;
@@ -1493,25 +1558,33 @@ package body Flyology_IRI is
       end if;
    end Assemble_Into;
 
-   --  Merging and dot-segment removal never produce more than the base, the
-   --  relative reference, and the separators between them, so the serialized
-   --  lengths of the two parsed references bound the result. Both are real
-   --  lengths rather than Max_Length, which may be Positive'Last; sizing from
-   --  the inputs instead would understate a web result, because normalization
-   --  can expand a relative past the bytes it was written with.
-   Stack_Assembly_Limit : constant := 64 * 1_024;
-
+   --  Merging and dot-segment removal never produce more than the base,
+   --  the relative reference, and the separators between them, so the
+   --  serialized lengths of the two parsed references bound the result.
+   --  Both are real lengths rather than Max_Length, which may be
+   --  Positive'Last; sizing from the input bytes instead would
+   --  understate a web result, because normalization can expand a
+   --  relative past what it was written with.
    function Assemble
      (Base       : Reference;
       Relative   : String;
       Max_Length : Positive) return String
    is
-      procedure Free is new Ada.Unchecked_Deallocation (String, String_Access);
-
       Rel    : constant Reference :=
         Parse (Relative, Base.Syntax_Value, Max_Length);
+      --  Widened because both operands are Natural and release builds
+      --  suppress the overflow check in this body. The bound is also kept
+      --  clear of Natural'Last by more than the largest lookahead any loop
+      --  below applies to an index, so no later Position + n can wrap either.
+      Bound  : constant Long_Long_Integer :=
+        Long_Long_Integer (Image_Length (Base))
+        + Long_Long_Integer (Image_Length (Rel))
+        + Separator_Headroom;
       Needed : constant Positive :=
-        Image_Length (Base) + Image_Length (Rel) + Separator_Headroom;
+        (if Bound <= Long_Long_Integer (Natural'Last) - Separator_Headroom
+         then Positive (Bound)
+         else raise Malformed_Reference
+                with "resolved reference exceeds the representable bound");
    begin
       --  Checked before either buffer is taken, so the large path has no
       --  route out that would leak it.
@@ -1544,15 +1617,19 @@ package body Flyology_IRI is
       begin
          Assemble_Into (Base, Rel, Buffer.all, Last, Overflow);
          if Overflow then
-            Free (Buffer);
             raise Program_Error with "resolved reference outgrew its bound";
          end if;
-         declare
-            Result : constant String := Buffer (1 .. Last);
-         begin
+         --  An extended return builds the result where the caller wants it,
+         --  so the bytes are not staged through a local of the same size on
+         --  the way out.
+         return Result : String (1 .. Last) do
+            Result := Buffer (1 .. Last);
             Free (Buffer);
-            return Result;
-         end;
+         end return;
+      exception
+         when others =>
+            Free (Buffer);
+            raise;
       end;
    end Assemble;
 
