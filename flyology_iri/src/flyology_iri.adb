@@ -1162,13 +1162,29 @@ package body Flyology_IRI is
       Error := (Kind => No_Error, Offset => 0);
    end Try_Parse;
 
+   --  Every public component getter reaches the stored serialization through
+   --  here, so copying the whole reference to return one span made each of
+   --  them cost the length of the reference rather than the length of the
+   --  component. Unbounded.Slice copies only the requested range. The zero
+   --  guard has to stay ahead of it because an absent component has First = 0
+   --  and Unbounded.Slice takes a Positive Low.
+   --
+   --  The old shape cost more than the extra bytes suggest: the release
+   --  objects show To_String called unconditionally and ahead of the zero
+   --  test, so an absent component also paid a whole-reference copy, and a
+   --  present one paid two allocations and two copies rather than one.
+   --
+   --  The result's bounds are unchanged: GNAT's Unbounded.Slice returns the
+   --  underlying Low .. High range, which is what the discarded whole-text
+   --  copy was sliced by. The language does not pin those bounds the way it
+   --  pins To_String's lower bound of one, so every consumer in this crate
+   --  reads the result through 'First, 'Last, or 'Range instead.
    function Slice (Value : Reference; Part : Span) return String is
-      Text : constant String := Unbounded.To_String (Value.Text);
    begin
       if Part.First = 0 or else Part.First > Part.Last then
          return "";
       end if;
-      return Text (Part.First .. Part.Last);
+      return Unbounded.Slice (Value.Text, Part.First, Part.Last);
    end Slice;
 
    function Is_Valid (Value : Reference) return Boolean is
@@ -1288,8 +1304,11 @@ package body Flyology_IRI is
    end Remove_Last_Segment;
 
    function Remove_Dot_Segments (Input : String) return String is
-      Source   : constant String :=
-        Unbounded.To_String (Unbounded.To_Unbounded_String (Input));
+      --  The loop below indexes from one, so Input has to be renormalized.
+      --  A constrained subtype does that at the cost of one copy; the
+      --  Unbounded round-trip it replaces did the same renormalization
+      --  through the heap.
+      Source   : constant String (1 .. Input'Length) := Input;
       Position : Natural := 1;
       Output   : Unbounded.Unbounded_String;
       Next     : Natural;
@@ -1345,10 +1364,13 @@ package body Flyology_IRI is
       Relative   : String;
       Max_Length : Positive := Default_Max_Length) return Reference
    is
-      Rel    : constant Reference :=
+      Rel      : constant Reference :=
         Parse (Relative, Base.Syntax_Value, Max_Length);
-      Target : Unbounded.Unbounded_String;
-      Prefix : Unbounded.Unbounded_String;
+      --  Every branch below reads the relative path, and the merge path reads
+      --  it three times. One local keeps the getter to a single call.
+      Rel_Path : constant String := Path (Rel);
+      Target   : Unbounded.Unbounded_String;
+      Prefix   : Unbounded.Unbounded_String;
    begin
       if not Has_Scheme (Base) then
          raise Malformed_Reference with "base reference is not absolute";
@@ -1359,7 +1381,7 @@ package body Flyology_IRI is
          if Has_Authority (Rel) then
             Unbounded.Append (Target, "//" & Authority (Rel));
          end if;
-         Unbounded.Append (Target, Remove_Dot_Segments (Path (Rel)));
+         Unbounded.Append (Target, Remove_Dot_Segments (Rel_Path));
          if Has_Query (Rel) then
             Unbounded.Append (Target, "?" & Query (Rel));
          end if;
@@ -1367,36 +1389,41 @@ package body Flyology_IRI is
          Unbounded.Append (Target, Scheme (Base) & ":");
          if Has_Authority (Rel) then
             Unbounded.Append (Target, "//" & Authority (Rel));
-            Unbounded.Append (Target, Remove_Dot_Segments (Path (Rel)));
+            Unbounded.Append (Target, Remove_Dot_Segments (Rel_Path));
             if Has_Query (Rel) then
                Unbounded.Append (Target, "?" & Query (Rel));
             end if;
          else
-            if Has_Authority (Base) then
-               Unbounded.Append (Target, "//" & Authority (Base));
-            end if;
-            if Path (Rel)'Length = 0 then
-               Unbounded.Append (Target, Path (Base));
-               if Has_Query (Rel) then
-                  Unbounded.Append (Target, "?" & Query (Rel));
-               elsif Has_Query (Base) then
-                  Unbounded.Append (Target, "?" & Query (Base));
+            declare
+               --  Read once for the empty-path test, the merge test, and the
+               --  merge itself.
+               Base_Path : constant String := Path (Base);
+            begin
+               if Has_Authority (Base) then
+                  Unbounded.Append (Target, "//" & Authority (Base));
                end if;
-            else
-               if Path (Rel) (Path (Rel)'First) = '/' then
-                  Unbounded.Append
-                    (Target, Remove_Dot_Segments (Path (Rel)));
+               if Rel_Path'Length = 0 then
+                  Unbounded.Append (Target, Base_Path);
+                  if Has_Query (Rel) then
+                     Unbounded.Append (Target, "?" & Query (Rel));
+                  elsif Has_Query (Base) then
+                     Unbounded.Append (Target, "?" & Query (Base));
+                  end if;
                else
-                  if Has_Authority (Base) and then Path (Base)'Length = 0 then
-                     Unbounded.Append (Prefix, '/');
+                  if Rel_Path (Rel_Path'First) = '/' then
+                     Unbounded.Append
+                       (Target, Remove_Dot_Segments (Rel_Path));
                   else
-                     --  RFC 3986 section 5.2.3 merge excludes the characters
-                     --  after the base path's right-most '/' but retains
-                     --  that '/'.  A base path without any '/' merges to the
-                     --  relative path alone, so Prefix stays empty.
-                     declare
-                        Base_Path : constant String := Path (Base);
-                     begin
+                     if Has_Authority (Base)
+                       and then Base_Path'Length = 0
+                     then
+                        Unbounded.Append (Prefix, '/');
+                     else
+                        --  RFC 3986 section 5.2.3 merge excludes the
+                        --  characters after the base path's right-most '/'
+                        --  but retains that '/'.  A base path without any
+                        --  '/' merges to the relative path alone, so Prefix
+                        --  stays empty.
                         for Index in reverse Base_Path'Range loop
                            if Base_Path (Index) = '/' then
                               Unbounded.Set_Unbounded_String
@@ -1405,17 +1432,17 @@ package body Flyology_IRI is
                               exit;
                            end if;
                         end loop;
-                     end;
+                     end if;
+                     Unbounded.Append
+                       (Target,
+                        Remove_Dot_Segments
+                          (Unbounded.To_String (Prefix) & Rel_Path));
                   end if;
-                  Unbounded.Append
-                    (Target,
-                     Remove_Dot_Segments
-                       (Unbounded.To_String (Prefix) & Path (Rel)));
+                  if Has_Query (Rel) then
+                     Unbounded.Append (Target, "?" & Query (Rel));
+                  end if;
                end if;
-               if Has_Query (Rel) then
-                  Unbounded.Append (Target, "?" & Query (Rel));
-               end if;
-            end if;
+            end;
          end if;
       end if;
       if Has_Fragment (Rel) then

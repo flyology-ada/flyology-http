@@ -299,6 +299,17 @@ procedure Flyology_IRI_Tests is
             & ": " & Ada.Exceptions.Exception_Message (Escaped));
    end Stress;
 
+   --  An absent component has a zero span, which the component getter has to
+   --  answer before it reaches Ada.Strings.Unbounded.Slice: that subprogram
+   --  takes a Positive Low and raises on zero. The guard is invisible in a
+   --  reference that carries every component, so name the absent ones here.
+   procedure Check_Absent (Label : String; Value : String) is
+   begin
+      Assert
+        (Value'Length = 0,
+         Label & " is absent but returned """ & Value & """");
+   end Check_Absent;
+
    URL : constant Reference := Parse
      ("HTTPS://user:pass@Example.COM:8443/a/b?x=1#frag", Web_URL_Syntax);
    IRI : constant Reference := Parse
@@ -321,6 +332,15 @@ begin
    Assert (Has_Fragment (URL) and then Fragment (URL) = "frag", "fragment");
    Assert (Origin (URL) = "https://example.com:8443", "HTTP origin adapter");
    Assert (Target (URL) = "/a/b?x=1", "HTTP target adapter");
+
+   Check_Absent ("userinfo", Userinfo (IPv6));
+   Check_Absent ("query", Query (IPv6));
+   Check_Absent ("fragment", Fragment (IPv6));
+   Check_Absent ("scheme", Scheme (Parse ("../images/logo.svg", URI_Syntax)));
+   Check_Absent ("authority", Authority (Parse ("urn:isbn:0", URI_Syntax)));
+   Check_Absent ("host", Host (Parse ("urn:isbn:0", URI_Syntax)));
+   Check_Absent ("port", Port (Parse ("http://example.com/", URI_Syntax)));
+   Check_Absent ("path", Path (Parse ("http://example.com", URI_Syntax)));
 
    Assert (Image (Parse ("https://example.com", Web_URL_Syntax)) =
      "https://example.com/", "empty web path normalization");
