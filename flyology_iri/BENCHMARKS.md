@@ -148,7 +148,7 @@ round:
 | `resolve_long_base` | 980.8 | 823.2 | −15.5% | 1.154 .. 1.210 |
 
 Replacing the assembly's `Unbounded_String` with a plain buffer, below, takes
-the two resolution rows further, to 331.0 and 550.4 ns.
+the two resolution rows further, to 307.2 and 540.1 ns.
 
 The drift control repeated the pre-change build after the post-change one and
 landed within 3% of its own first round on every workload, against effects of
@@ -190,17 +190,17 @@ these are paired `Compare`s rather than baseline joins, and their answers do
 not depend on host load the way an independent run does.
 
 The validation step alone, over the assembled resolution results: `Diagnose`
-213.9 ns/op against `Parse`'s 276.9 ns/op, 22.8% less, 95% CI [1.288, 1.303],
+211.4 ns/op against `Parse`'s 273.1 ns/op, 22.7% less, 95% CI [1.290, 1.297],
 winning 100 of 100 sample pairs.
 
 End to end against a 233-byte base:
 
 | Form | Median | Change | 95% CI | Pairs won |
 | --- | ---: | ---: | --- | ---: |
-| `Resolve` returning `Reference` | 536.2 | reference | -- | -- |
-| `Resolve` returning `String` | 461.2 | −13.87% | 1.156 .. 1.166 | 100/100 |
+| `Resolve` returning `Reference` | 535.0 | reference | -- | -- |
+| `Resolve` returning `String` | 459.0 | −14.25% | 1.157 .. 1.177 | 100/100 |
 
-Order effect −0.48%. Process and thread CPU time both fall 14.0%, and
+Order effect −0.34%. Process and thread CPU time both fall 14.4%, and
 `Process_RSS_Change` and the page-fault axes read zero on both sides.
 
 The saving is larger than the validation difference implies, because the
@@ -210,7 +210,7 @@ parse that fills it.
 
 The two forms assemble through one private helper rather than one calling the
 other. Composing them the obvious way, with the `Reference` form parsing the
-`String` form's result, would make it validate twice and cost it about 214 ns
+`String` form's result, would make it validate twice and cost it about 211 ns
 it does not pay today. Its median tracks the standalone `resolve_long_base`
 row above, which is what confirms that.
 
@@ -220,10 +220,14 @@ The assembly writes into a plain `String` sized from the two parsed references,
 not into a growing `Unbounded_String`. That is worth more than the returned
 copy it also avoids, and it reaches both public forms:
 
-| Form | `Unbounded` assembly | Buffer assembly | Change |
+Measured by swapping the two assemblies in one interleaved sitting, with the
+repeated first arm as a drift control; it landed within 0.4% of itself.
+
+| Workload | `Unbounded` assembly | Buffer assembly | Change |
 | --- | ---: | ---: | ---: |
-| `Resolve` returning `Reference` | 823.2 | 550.4 | −33% |
-| `Resolve` returning `String` | 743.4 | 466.5 | −37% |
+| `resolve_short_base` | 468.4 | 307.2 | −34.4% |
+| `resolve_long_base` | 824.3 | 540.1 | −34.5% |
+| `resolve_long_base_string` | 747.7 | 464.0 | −37.9% |
 
 Most of that is not the result copy. The old shape reallocated on nearly every
 append, and its segment removal ran a whole `To_String` and
