@@ -1,3 +1,4 @@
+with "flyology_bench";
 with "flyology_iri";
 
 project Flyology_IRI_Benchmarks is
@@ -5,7 +6,8 @@ project Flyology_IRI_Benchmarks is
    for Source_Dirs use ("src");
    for Object_Dir use "obj";
    for Exec_Dir use "bin";
-   for Main use ("flyology_iri_benchmark.adb");
+   for Main use
+     ("flyology_iri_benchmark.adb", "flyology_iri_resolve_benchmark.adb");
    for Create_Missing_Dirs use "True";
 
    package Compiler is
