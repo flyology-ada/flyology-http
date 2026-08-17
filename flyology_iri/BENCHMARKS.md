@@ -80,14 +80,15 @@ the pinned corpus:
 ./scripts/resolve-benchmark.sh
 ```
 
-Five workloads. `components_short`, `components_long`, and `components_huge`
+Six workloads. `components_short`, `components_long`, and `components_huge`
 each read all eight components of a parsed reference, cycling four references
 whose serialized lengths average 44, 235, and 2,009 bytes; the three sizes are
 what make a getter whose cost follows the reference distinguishable from one
 whose cost follows the component. `resolve_short_base` and `resolve_long_base`
 resolve the RFC 3986 section 5.4 relative references, plus the shapes a
 document with a base-URI directive carries, against an 18-byte and a 233-byte
-base.
+base. `resolve_long_base_string` repeats the last of those through the
+serialization-returning form.
 
 Batches fold a value derived from each result into an accumulator that
 `Measure_Result_Batched` hands to a barrier after the ending timestamp, and
@@ -178,16 +179,34 @@ which is why `components_short` improves as much as `components_long` despite
 copying a fifth as many bytes. At 2,009 bytes the discarded copy dominates and
 the improvement grows to 63.8%.
 
-## Validation cost
+## The two Resolve forms
 
-The same binary compares `Diagnose` against `Parse` over the assembled
-resolution results. Both subprograms exist in one process, so this one is a
-paired `Compare` and its result does not depend on which build is linked.
-`Diagnose` measures 212.9 ns/op against `Parse`'s 273.4 ns/op, 22.1% less, 95%
-CI [1.272, 1.293], winning 99 of 100 sample pairs.
+`Resolve` has a serialization-returning form that validates with `Diagnose`
+instead of building a second `Reference`. Both forms are in one process, so
+these are paired `Compare`s rather than baseline joins, and their answers do
+not depend on host load the way an independent run does.
 
-That difference is the cost of the second `Reference` that `Resolve` builds to
-validate its own assembled result: about 61 ns of the post-change
-`resolve_long_base` median of 823 ns. A `String`-returning `Resolve` that
-validated through `Diagnose` would recover roughly that much for a caller that
-needs the result validated but not its spans.
+The validation step alone, over the assembled resolution results: `Diagnose`
+211.2 ns/op against `Parse`'s 270.1 ns/op, 22.5% less, 95% CI [1.280, 1.303],
+winning 100 of 100 sample pairs.
+
+End to end against a 233-byte base:
+
+| Form | Median | Change | 95% CI | Pairs won |
+| --- | ---: | ---: | --- | ---: |
+| `Resolve` returning `Reference` | 821.3 | reference | -- | -- |
+| `Resolve` returning `String` | 743.4 | −9.45% | 1.102 .. 1.107 | 100/100 |
+
+Order effect −0.46%. Process and thread CPU time both fall 9.51%, and
+`Process_RSS_Change` and the page-fault axes read zero on both sides.
+
+The saving is larger than the 22.5% validation difference implies, because the
+serialization form also skips constructing and finalizing the result
+`Reference` — a controlled `Unbounded_String` plus eight spans — not only the
+parse that fills it.
+
+The two forms assemble through one private helper rather than one calling the
+other. Composing them the obvious way, with the `Reference` form parsing the
+`String` form's result, would make it validate twice and cost it about 210 ns
+it does not pay today. Its median is unchanged from the standalone
+`resolve_long_base` row above, which is what confirms that.

@@ -269,6 +269,32 @@ procedure Flyology_IRI_Resolve_Benchmark is
       Value := Total;
    end Resolve_Corpus;
 
+   --  The serialization-returning Resolve over the same corpus. Folding the
+   --  last byte as well as the length matches Sweep_Components, so the two
+   --  Resolve forms are consumed identically and the difference between them
+   --  is the validation each performs.
+   procedure Resolve_String_Corpus
+     (Base       : IRI.Reference;
+      Iterations : Bench.Iteration_Count;
+      Value      : out Long_Long_Integer)
+   is
+      Total : Long_Long_Integer := 0;
+      Slot  : Positive := 1;
+   begin
+      for Iteration in Bench.Iteration_Count range 1 .. Iterations loop
+         declare
+            Span : Item_Span renames Relatives.Spans (Slot);
+            Done : constant String :=
+              IRI.Resolve (Base, Relatives.Text (Span.First .. Span.Last));
+         begin
+            Total := Total + Fold (Done);
+         end;
+         Slot := (if Slot = Relatives.Count then 1 else Slot + 1);
+      end loop;
+      Bench.Clobber_Memory;
+      Value := Total;
+   end Resolve_String_Corpus;
+
    procedure Components_Short_Batch
      (Iterations : Bench.Iteration_Count;
       Value      : out Long_Long_Integer) is
@@ -304,11 +330,20 @@ procedure Flyology_IRI_Resolve_Benchmark is
       Resolve_Corpus (Long_Base, Iterations, Value);
    end Resolve_Long_Batch;
 
-   --  The validation pair. Resolve ends by parsing its assembled result into a
-   --  second Reference; a String-returning Resolve would validate the same
-   --  bytes with Diagnose instead. Both subprograms exist in this process, so
-   --  this one is a genuine paired comparison rather than a baseline join, and
-   --  its answer does not depend on which build of the library is linked.
+   procedure Resolve_String_Long_Batch
+     (Iterations : Bench.Iteration_Count;
+      Value      : out Long_Long_Integer) is
+   begin
+      Resolve_String_Corpus (Long_Base, Iterations, Value);
+   end Resolve_String_Long_Batch;
+
+   --  Two paired comparisons. Both sides of each live in this process, so
+   --  these are genuine paired Compares rather than baseline joins, and their
+   --  answers do not depend on host load the way an independent run does.
+   --
+   --  The first isolates the validation step: what the serialization form
+   --  saves is exactly the second Reference the Reference form builds. The
+   --  second measures the two public Resolve forms end to end.
    Validation_Sink : Long_Long_Integer := 0;
 
    procedure Parse_Assembled (Iterations : Bench.Iteration_Count) is
@@ -353,6 +388,20 @@ procedure Flyology_IRI_Resolve_Benchmark is
       Bench.Clobber_Memory;
    end Diagnose_Assembled;
 
+   procedure Resolve_Reference_Form (Iterations : Bench.Iteration_Count) is
+      Total : Long_Long_Integer;
+   begin
+      Resolve_Corpus (Long_Base, Iterations, Total);
+      Validation_Sink := Validation_Sink + Total;
+   end Resolve_Reference_Form;
+
+   procedure Resolve_String_Form (Iterations : Bench.Iteration_Count) is
+      Total : Long_Long_Integer;
+   begin
+      Resolve_String_Corpus (Long_Base, Iterations, Total);
+      Validation_Sink := Validation_Sink + Total;
+   end Resolve_String_Form;
+
    procedure Keep is new Bench.Do_Not_Optimize (Long_Long_Integer);
 
    procedure Measure_Components_Short is new Bench.Measure_Result_Batched
@@ -365,9 +414,14 @@ procedure Flyology_IRI_Resolve_Benchmark is
      (Element => Long_Long_Integer, Batch => Resolve_Short_Batch);
    procedure Measure_Resolve_Long is new Bench.Measure_Result_Batched
      (Element => Long_Long_Integer, Batch => Resolve_Long_Batch);
+   procedure Measure_Resolve_String is new Bench.Measure_Result_Batched
+     (Element => Long_Long_Integer, Batch => Resolve_String_Long_Batch);
    procedure Compare_Validation is new Bench.Compare_Batched
      (Reference_Batch => Parse_Assembled,
       Contender_Batch => Diagnose_Assembled);
+   procedure Compare_Resolve_Forms is new Bench.Compare_Batched
+     (Reference_Batch => Resolve_Reference_Form,
+      Contender_Batch => Resolve_String_Form);
 
    ----------------------------------------------------------------------
    --  Command line
@@ -536,6 +590,7 @@ procedure Flyology_IRI_Resolve_Benchmark is
    Configuration : Bench.Configuration;
    Result        : Bench.Measurement;
    Validation    : Bench.Comparison;
+   Resolve_Forms : Bench.Comparison;
 begin
    Read_Arguments;
    if Metrics_Path /= Unbounded.Null_Unbounded_String then
@@ -588,16 +643,24 @@ begin
    Measure_Resolve_Long (Configuration, Result);
    Report ("resolve_long_base", Result);
 
+   Measure_Resolve_String (Configuration, Result);
+   Report ("resolve_long_base_string", Result);
+
    Compare_Validation (Configuration, Validation);
+   Compare_Resolve_Forms (Configuration, Resolve_Forms);
    Keep (Validation_Sink);
    case Format is
       when Console =>
          Reporters.Put_Comparison_Console
            ("validate_by_parse", "validate_by_diagnose", Validation);
+         Reporters.Put_Comparison_Console
+           ("resolve_to_reference", "resolve_to_string", Resolve_Forms);
       when CSV =>
          Reporters.Put_Comparison_CSV_Header;
          Reporters.Put_Comparison_CSV
            ("validate_by_parse", "validate_by_diagnose", Validation);
+         Reporters.Put_Comparison_CSV
+           ("resolve_to_reference", "resolve_to_string", Resolve_Forms);
    end case;
 
    if Ada.Text_IO.Is_Open (Metrics_File) then
