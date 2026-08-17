@@ -148,6 +148,23 @@ package Flyology_IRI is
       Relative   : String;
       Max_Length : Positive := Default_Max_Length) return Reference;
 
+   --  Resolve to a serialization without constructing a Reference for the
+   --  result. This suits a caller that stores resolved references as opaque
+   --  bytes: it needs the result validated but never reads its components.
+   --  URI and IRI results are validated by Diagnose, which builds nothing.
+   --  A web URL result is still parsed, because web mode normalizes and the
+   --  normalized serialization is the result. The value equals Image of the
+   --  Reference this returns for the same arguments.
+   --  @param Base Absolute base reference
+   --  @param Relative Reference to resolve
+   --  @param Max_Length Maximum accepted input and serialized byte length
+   --  @return Resolved absolute reference serialization
+   --  @exception Malformed_Reference Base is not absolute or result is invalid
+   function Resolve
+     (Base       : Reference;
+      Relative   : String;
+      Max_Length : Positive := Default_Max_Length) return String;
+
    --  Report whether the reference came from a successful parse. A default
    --  reference and the value Try_Parse returns on failure are both
    --  invalid, which distinguishes a rejected input from a parsed empty

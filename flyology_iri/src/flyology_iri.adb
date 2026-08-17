@@ -1359,10 +1359,15 @@ package body Flyology_IRI is
       return Unbounded.To_String (Output);
    end Remove_Dot_Segments;
 
-   function Resolve
+   --  RFC 3986 section 5.2 merge and dot-segment removal, stopping short of
+   --  validating what it produced. Both public Resolve forms need the same
+   --  assembled bytes and then validate them differently, so the assembly is
+   --  factored out rather than one form calling the other: composing them
+   --  would make whichever came second validate twice.
+   function Assemble
      (Base       : Reference;
       Relative   : String;
-      Max_Length : Positive := Default_Max_Length) return Reference
+      Max_Length : Positive) return String
    is
       Rel      : constant Reference :=
         Parse (Relative, Base.Syntax_Value, Max_Length);
@@ -1448,8 +1453,44 @@ package body Flyology_IRI is
       if Has_Fragment (Rel) then
          Unbounded.Append (Target, "#" & Fragment (Rel));
       end if;
-      return Parse
-        (Unbounded.To_String (Target), Base.Syntax_Value, Max_Length);
+      return Unbounded.To_String (Target);
+   end Assemble;
+
+   function Resolve
+     (Base       : Reference;
+      Relative   : String;
+      Max_Length : Positive := Default_Max_Length) return Reference
+   is
+     (Parse (Assemble (Base, Relative, Max_Length),
+             Base.Syntax_Value,
+             Max_Length));
+
+   function Resolve
+     (Base       : Reference;
+      Relative   : String;
+      Max_Length : Positive := Default_Max_Length) return String
+   is
+      Result : constant String := Assemble (Base, Relative, Max_Length);
+   begin
+      --  Web mode normalizes, so there the serialization the Reference form
+      --  carries is the one Parse produces, not the assembled bytes. Only URI
+      --  and IRI can take the cheap route, and those are exactly the syntaxes
+      --  where Diagnose and Parse agree: both reduce to Analyze's error, and
+      --  a successful non-web parse stores its input verbatim.
+      if Base.Syntax_Value = Web_URL_Syntax then
+         return Image (Parse (Result, Web_URL_Syntax, Max_Length));
+      end if;
+      declare
+         Error : constant Parse_Error :=
+           Diagnose (Result, Base.Syntax_Value, Max_Length);
+      begin
+         if Error.Kind /= No_Error then
+            raise Malformed_Reference with
+              Error_Kind'Image (Error.Kind) & " at byte"
+              & Natural'Image (Error.Offset);
+         end if;
+      end;
+      return Result;
    end Resolve;
 
    function Web_Validate

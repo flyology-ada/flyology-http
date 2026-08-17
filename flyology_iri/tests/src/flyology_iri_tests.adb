@@ -44,10 +44,17 @@ procedure Flyology_IRI_Tests is
    begin
       declare
          Actual : constant Reference := Resolve (Base, Relative);
+         --  The serialization form validates with Diagnose instead of building
+         --  this Reference, so every resolution the suite covers also asserts
+         --  that the two forms cannot drift apart.
+         Text   : constant String := Resolve (Base, Relative);
       begin
          Assert
            (Image (Actual) = Expected,
             "resolve " & Relative & " produced " & Image (Actual));
+         Assert
+           (Text = Expected,
+            "resolve " & Relative & " to String produced " & Text);
       end;
    end Check_Resolution;
 
@@ -105,6 +112,7 @@ procedure Flyology_IRI_Tests is
    begin
       declare
          Actual : constant Reference := Resolve (Base, Relative);
+         Text   : constant String := Resolve (Base, Relative);
       begin
          Assert
            (Image (Actual) = Expected,
@@ -114,6 +122,10 @@ procedure Flyology_IRI_Tests is
            (Host (Actual) = Expected_Host,
             "resolve " & Relative & " against " & Base_Text
             & " produced host " & Host (Actual));
+         Assert
+           (Text = Image (Actual),
+            "resolve " & Relative & " against " & Base_Text
+            & " to String produced " & Text);
       end;
    end Check_Resolution_Base;
 
@@ -584,6 +596,44 @@ begin
    --  A base path with no '/' at all merges to the relative path alone.
    Check_Resolution_Base
      ("mailto:fred@example.com", "joe", "mailto:joe", "");
+
+   --  The serialization-returning Resolve validates URI and IRI results with
+   --  Diagnose rather than by building a second Reference. That shortcut is
+   --  sound only where Diagnose and Parse agree and a parse stores its input
+   --  verbatim, which web mode does not: it normalizes. Resolving with a web
+   --  base is reachable whenever the relative reference is itself an absolute
+   --  URL, so pin that the two forms still agree there.
+   declare
+      Web_Base : constant Reference :=
+        Parse ("https://example.com/a/b", Web_URL_Syntax);
+      Built    : constant Reference := Resolve (Web_Base, "HTTPS://Other.COM");
+      Text     : constant String := Resolve (Web_Base, "HTTPS://Other.COM");
+   begin
+      Assert
+        (Text = Image (Built),
+         "web resolve to String produced " & Text & " against "
+         & Image (Built));
+      Assert
+        (Text = "https://other.com/",
+         "web resolve to String skipped normalization: " & Text);
+   end;
+
+   --  Both forms reject a relative base, and neither returns a result the
+   --  other would have refused.
+   declare
+      Relative_Base : constant Reference := Parse ("/only/a/path", URI_Syntax);
+      Raised        : Boolean := False;
+   begin
+      declare
+         Ignored : constant String := Resolve (Relative_Base, "g");
+      begin
+         Assert (Ignored'Length > Natural'Last, "unreachable");
+      end;
+   exception
+      when Malformed_Reference =>
+         Raised := True;
+         Assert (Raised, "relative base rejected by the String form");
+   end;
 
    --  Web URL mode used to reach the grammar through an analyzer of its
    --  own, which skipped WHATWG preprocessing and never ran the host
