@@ -147,6 +147,9 @@ round:
 | `resolve_short_base` | 608.8 | 475.8 | −22.2% | 1.276 .. 1.297 |
 | `resolve_long_base` | 980.8 | 823.2 | −15.5% | 1.154 .. 1.210 |
 
+Replacing the assembly's `Unbounded_String` with a plain buffer, below, takes
+the two resolution rows further, to 331.0 and 550.4 ns.
+
 The drift control repeated the pre-change build after the post-change one and
 landed within 3% of its own first round on every workload, against effects of
 15% to 64%. `Thread_CPU_Time` stayed within 1.2% of wall time in every run, so
@@ -187,26 +190,46 @@ these are paired `Compare`s rather than baseline joins, and their answers do
 not depend on host load the way an independent run does.
 
 The validation step alone, over the assembled resolution results: `Diagnose`
-211.2 ns/op against `Parse`'s 270.1 ns/op, 22.5% less, 95% CI [1.280, 1.303],
+213.9 ns/op against `Parse`'s 276.9 ns/op, 22.8% less, 95% CI [1.288, 1.303],
 winning 100 of 100 sample pairs.
 
 End to end against a 233-byte base:
 
 | Form | Median | Change | 95% CI | Pairs won |
 | --- | ---: | ---: | --- | ---: |
-| `Resolve` returning `Reference` | 821.3 | reference | -- | -- |
-| `Resolve` returning `String` | 743.4 | −9.45% | 1.102 .. 1.107 | 100/100 |
+| `Resolve` returning `Reference` | 536.2 | reference | -- | -- |
+| `Resolve` returning `String` | 461.2 | −13.87% | 1.156 .. 1.166 | 100/100 |
 
-Order effect −0.46%. Process and thread CPU time both fall 9.51%, and
+Order effect −0.48%. Process and thread CPU time both fall 14.0%, and
 `Process_RSS_Change` and the page-fault axes read zero on both sides.
 
-The saving is larger than the 22.5% validation difference implies, because the
+The saving is larger than the validation difference implies, because the
 serialization form also skips constructing and finalizing the result
 `Reference` — a controlled `Unbounded_String` plus eight spans — not only the
 parse that fills it.
 
 The two forms assemble through one private helper rather than one calling the
 other. Composing them the obvious way, with the `Reference` form parsing the
-`String` form's result, would make it validate twice and cost it about 210 ns
-it does not pay today. Its median is unchanged from the standalone
-`resolve_long_base` row above, which is what confirms that.
+`String` form's result, would make it validate twice and cost it about 214 ns
+it does not pay today. Its median tracks the standalone `resolve_long_base`
+row above, which is what confirms that.
+
+## Where the assembly's cost was
+
+The assembly writes into a plain `String` sized from the two parsed references,
+not into a growing `Unbounded_String`. That is worth more than the returned
+copy it also avoids, and it reaches both public forms:
+
+| Form | `Unbounded` assembly | Buffer assembly | Change |
+| --- | ---: | ---: | ---: |
+| `Resolve` returning `Reference` | 823.2 | 550.4 | −33% |
+| `Resolve` returning `String` | 743.4 | 466.5 | −37% |
+
+Most of that is not the result copy. The old shape reallocated on nearly every
+append, and its segment removal ran a whole `To_String` and
+`Set_Unbounded_String` for each `/../` it collapsed.
+
+A `procedure` form writing into a caller-supplied buffer was prototyped against
+this and measured 4.7% below the serialization form, winning 69 of 100 pairs.
+That difference is the returned copy alone, which is all the wider API buys
+once the assembly no longer allocates. It was not adopted.
