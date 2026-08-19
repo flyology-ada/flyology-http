@@ -184,6 +184,13 @@ package body Flyology.QUIC.Handshake_Space is
                Result.Status := Crypto_Data_Too_Large;
                return;
             end if;
+         elsif Frame.Kind = Initial_Frame_Policy.Transport_Close then
+            --  RFC 9000 10.2.2 puts the receiver into the draining state, so
+            --  the remaining frames of this packet cannot change the outcome.
+            Result.Peer_Closed := True;
+            Result.Close_Error := Frame.Close_Error_Code;
+            Result.Status := Processed;
+            return;
          end if;
          Cursor := Cursor + Frame.Consumed;
       end loop;

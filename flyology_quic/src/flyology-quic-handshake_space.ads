@@ -84,6 +84,8 @@ private package Flyology.QUIC.Handshake_Space is
    type Process_Result is record
       Status      : Process_Status := Envelope_Rejected;
       Frame_Count : Natural := 0;
+      Peer_Closed : Boolean := False;
+      Close_Error : Varint_Policy.Value_Type := 0;
    end record;
 
    procedure Process_Packet

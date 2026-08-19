@@ -243,6 +243,19 @@ private package Flyology.QUIC.Connection_Driver is
       Status : out Application_Space.Send_Status)
    with Pre => Is_Connected (Item);
 
+   --  Build a transport CONNECTION_CLOSE in the highest encryption level the
+   --  connection holds before application keys exist: Handshake once the
+   --  handshake space is initialized, Initial otherwise. The connection
+   --  becomes Failed whether or not a packet could be produced.
+   procedure Build_Handshake_Close_Datagram
+     (Item       : in out Connection;
+      Error_Code : Varint_Policy.Value_Type;
+      Packet     : out Datagram;
+      Status     : out Application_Space.Send_Status)
+   with Pre => State (Item) in
+     Client_Initial | Client_Handshake | Server_Initial | Server_Handshake,
+     Post => State (Item) = Failed;
+
    function Has_Stream
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean;
 

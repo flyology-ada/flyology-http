@@ -704,6 +704,25 @@ package body Flyology.QUIC.Connections is
       Status := Public_Status (Internal_Status);
    end Build_Application_Close_Datagram;
 
+   --  RFC 9000 20.1 APPLICATION_ERROR: the application closed a connection
+   --  whose encryption level cannot carry an application CONNECTION_CLOSE.
+   Application_Error_Code : constant Varint_Policy.Value_Type := 16#0C#;
+
+   procedure Build_Handshake_Close_Datagram
+     (Item   : in out Connection;
+      Packet : out Datagram;
+      Status : out Send_Status)
+   is
+      Internal_Packet : Connection_Driver.Datagram;
+      Internal_Status : Application_Space.Send_Status;
+   begin
+      Connection_Driver.Build_Handshake_Close_Datagram
+        (Impl (Item).Driver, Application_Error_Code, Internal_Packet,
+         Internal_Status);
+      Copy (Internal_Packet, Packet);
+      Status := Public_Status (Internal_Status);
+   end Build_Handshake_Close_Datagram;
+
    function Stream_Count (Item : Connection) return Natural is
      (Connection_Driver.Stream_Count (Impl (Item).Driver));
 
