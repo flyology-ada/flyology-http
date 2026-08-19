@@ -506,11 +506,12 @@ package body Flyology.HTTP.Server.Routing is
       end loop;
    end Validate_Pattern;
 
-   function Specificity (Pattern : String) return Natural is
-      Segments : Segment_List;
-      Result   : Natural := 0;
+   --  Registration compiles each pattern once into a Segment_List, so the
+   --  scoring and overlap tests take those segments rather than splitting
+   --  the same pattern again on every comparison.
+   function Specificity (Segments : Segment_List) return Natural is
+      Result : Natural := 0;
    begin
-      Split_Path (Pattern, Segments);
       for Index in 1 .. Segments.Count loop
          declare
             Segment : constant String := To_String (Segments.Values (Index));
@@ -528,13 +529,11 @@ package body Flyology.HTTP.Server.Routing is
       or else Parameter_Name (Right) /= "" or else Is_Remainder (Right)
       or else Left = Right);
 
-   function Patterns_Overlap (Left, Right : String) return Boolean is
-      L, R : Segment_List;
-      Common : Natural;
+   function Patterns_Overlap (Left, Right : Segment_List) return Boolean is
+      L : Segment_List renames Left;
+      R : Segment_List renames Right;
+      Common : constant Natural := Natural'Min (L.Count, R.Count);
    begin
-      Split_Path (Left, L);
-      Split_Path (Right, R);
-      Common := Natural'Min (L.Count, R.Count);
       for Index in 1 .. Common loop
          exit when Is_Remainder (To_String (L.Values (Index)))
            or else Is_Remainder (To_String (R.Values (Index)));
@@ -564,27 +563,25 @@ package body Flyology.HTTP.Server.Routing is
       end if;
    end Check_Not_Mounted;
 
-   procedure Check_Add
-     (Item : Router_Configuration; Method, Pattern : String)
+   --  Compare against the segments and score each route already carries.
+   --  The score is a cheap integer test, so it gates the segment walk.
+   procedure Check_Unambiguous
+     (Item     : Router_Configuration;
+      Method   : String;
+      Segments : Segment_List;
+      Score    : Natural)
    is
    begin
-      Check_Not_Mounted (Item);
-      Validate_Method (Method);
-      Validate_Pattern (Pattern);
-      if Item.Count = Item.Capacity then
-         raise Route_Error with "HTTP router capacity exhausted";
-      end if;
       for Index in 1 .. Item.Count loop
-         if To_String (Item.Routes (Index).Method) = Method
+         if Item.Routes (Index).Method = Method
+           and then Item.Routes (Index).Pattern_Specificity = Score
            and then Patterns_Overlap
-             (To_String (Item.Routes (Index).Pattern), Pattern)
-           and then Specificity (To_String (Item.Routes (Index).Pattern)) =
-             Specificity (Pattern)
+             (Item.Routes (Index).Pattern_Segments, Segments)
          then
             raise Route_Error with "ambiguous HTTP route registration";
          end if;
       end loop;
-   end Check_Add;
+   end Check_Unambiguous;
 
    --  One generation answers every introspection question. The Router forms
    --  read the published generation per call; the Snapshot forms read the one
@@ -785,24 +782,25 @@ package body Flyology.HTTP.Server.Routing is
       Effective_Name : constant String :=
         (if Name = "" then Method & " " & Pattern else Name);
       Pattern_Segments : Segment_List;
+      Score            : Natural;
    begin
-      if Validate_Ambiguity then
-         Check_Add (Item, Method, Pattern);
-      else
-         Check_Not_Mounted (Item);
-         Validate_Method (Method);
-         Validate_Pattern (Pattern);
-         if Item.Count = Item.Capacity then
-            raise Route_Error with "HTTP router capacity exhausted";
-         end if;
+      Check_Not_Mounted (Item);
+      Validate_Method (Method);
+      Validate_Pattern (Pattern);
+      if Item.Count = Item.Capacity then
+         raise Route_Error with "HTTP router capacity exhausted";
       end if;
       Split_Path (Pattern, Pattern_Segments);
+      Score := Specificity (Pattern_Segments);
+      if Validate_Ambiguity then
+         Check_Unambiguous (Item, Method, Pattern_Segments, Score);
+      end if;
       if Policy.Max_Body > Max_Request_Body then
          raise Route_Error with "route body limit exceeds server maximum";
       end if;
       if Validate_Ambiguity then
          for Index in 1 .. Item.Count loop
-            if To_String (Item.Routes (Index).Name) = Effective_Name then
+            if Item.Routes (Index).Name = Effective_Name then
                raise Route_Error with "duplicate HTTP route name";
             end if;
          end loop;
@@ -815,7 +813,7 @@ package body Flyology.HTTP.Server.Routing is
          Method              => To_Unbounded_String (Method),
          Pattern             => To_Unbounded_String (Pattern),
          Pattern_Segments    => Pattern_Segments,
-         Pattern_Specificity => Specificity (Pattern),
+         Pattern_Specificity => Score,
          Name                => To_Unbounded_String (Effective_Name),
          Handler             => Handler,
          Policy              => Policy,
@@ -908,6 +906,29 @@ package body Flyology.HTTP.Server.Routing is
         (Configuration.all, Component, Middleware, Stage, Name);
    end Add_Middleware;
 
+   procedure Attach_Route_Middleware
+     (Item            : in out Router_Configuration;
+      Index           : Positive;
+      Component       : not null Middleware_Access;
+      Middleware      : out Middleware_ID;
+      Stage           : Middleware_Stage;
+      Middleware_Name : String)
+   is
+   begin
+      if Item.Routes (Index).Middleware_Count = Max_Route_Middleware then
+         raise Route_Error with "route HTTP middleware capacity exhausted";
+      end if;
+      Identity_Source.Next_Middleware (Middleware);
+      Item.Routes (Index).Middleware
+        (Item.Routes (Index).Middleware_Count + 1) :=
+          (ID        => Middleware,
+           Component => Component,
+           Stage     => Stage,
+           Name      => To_Unbounded_String (Middleware_Name));
+      Item.Routes (Index).Middleware_Count :=
+        Item.Routes (Index).Middleware_Count + 1;
+   end Attach_Route_Middleware;
+
    procedure Add_Route_Middleware
      (Item      : in out Router;
       Name      : String;
@@ -931,20 +952,25 @@ package body Flyology.HTTP.Server.Routing is
    is
       Configuration : constant Configuration_Access :=
         Current_Configuration (Item);
-      Route          : Route_ID := No_Route;
+      Index : Natural := 0;
    begin
       Check_Not_Sealed (Item);
-      for Index in 1 .. Configuration.Count loop
-         if To_String (Configuration.Routes (Index).Name) = Name then
-            Route := Configuration.Routes (Index).ID;
+      Check_Not_Mounted (Configuration.all);
+      --  One pass over one generation: resolving the name to an identity and
+      --  then searching for that identity would read the router twice and
+      --  could report an identity failure for a name that does resolve.
+      for Cursor in 1 .. Configuration.Count loop
+         if Configuration.Routes (Cursor).Name = Name then
+            Index := Cursor;
             exit;
          end if;
       end loop;
-      if Route = No_Route then
+      if Index = 0 then
          raise Route_Error with "unknown HTTP route name";
       end if;
-      Add_Route_Middleware
-        (Item, Route, Component, Middleware, Stage, Middleware_Name);
+      Attach_Route_Middleware
+        (Configuration.all, Index, Component, Middleware, Stage,
+         Middleware_Name);
    end Add_Route_Middleware;
 
    procedure Add_Route_Middleware_To_Configuration
@@ -960,18 +986,9 @@ package body Flyology.HTTP.Server.Routing is
       Check_Not_Mounted (Item);
       if Index = 0 then
          raise Route_Error with "unknown HTTP route identity";
-      elsif Item.Routes (Index).Middleware_Count = Max_Route_Middleware then
-         raise Route_Error with "route HTTP middleware capacity exhausted";
       end if;
-      Identity_Source.Next_Middleware (Middleware);
-      Item.Routes (Index).Middleware
-        (Item.Routes (Index).Middleware_Count + 1) :=
-          (ID        => Middleware,
-           Component => Component,
-           Stage     => Stage,
-           Name      => To_Unbounded_String (Middleware_Name));
-      Item.Routes (Index).Middleware_Count :=
-        Item.Routes (Index).Middleware_Count + 1;
+      Attach_Route_Middleware
+        (Item, Index, Component, Middleware, Stage, Middleware_Name);
    end Add_Route_Middleware_To_Configuration;
 
    procedure Add_Route_Middleware
@@ -1138,11 +1155,11 @@ package body Flyology.HTTP.Server.Routing is
             elsif Item.Routes (Prior).Name = Item.Routes (Index).Name then
                raise Route_Error with "duplicate HTTP route name";
             elsif Item.Routes (Prior).Method = Item.Routes (Index).Method
-              and then Patterns_Overlap
-                (To_String (Item.Routes (Prior).Pattern),
-                 To_String (Item.Routes (Index).Pattern))
               and then Item.Routes (Prior).Pattern_Specificity =
                 Item.Routes (Index).Pattern_Specificity
+              and then Patterns_Overlap
+                (Item.Routes (Prior).Pattern_Segments,
+                 Item.Routes (Index).Pattern_Segments)
             then
                raise Route_Error with "ambiguous HTTP route registration";
             end if;
@@ -1272,7 +1289,7 @@ package body Flyology.HTTP.Server.Routing is
         To_Unbounded_String (Pattern);
       Change.State.Candidate.Routes (Index).Pattern_Segments := Segments;
       Change.State.Candidate.Routes (Index).Pattern_Specificity :=
-        Specificity (Pattern);
+        Specificity (Segments);
    end Set_Match;
 
    procedure Rename

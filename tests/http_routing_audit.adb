@@ -2595,6 +2595,98 @@ procedure HTTP_Routing_Audit is
          Response, CRLF & CRLF & "two");
    end Check_Generation_Retention;
 
+   --  Direct registration decides ambiguity as each route is added, while a
+   --  candidate defers the same decision to Commit. Both now read the
+   --  segments and score compiled at registration instead of splitting the
+   --  patterns again, so they must still agree on every pair.
+   procedure Check_Ambiguity_Agreement is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      procedure Endpoint
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "thing");
+      end Endpoint;
+
+      function Direct_Rejects
+        (Left_Method, Left, Right_Method, Right : String) return Boolean
+      is
+         Probe : Routing.Router
+           (Capacity => 4, Slashes => Routing.Strict_Slashes);
+         First, Second : Routing.Route_ID;
+      begin
+         Probe.Add
+           (Left_Method, Left, Endpoint'Access, First, Name => "left");
+         Probe.Add
+           (Right_Method, Right, Endpoint'Access, Second, Name => "right");
+         return False;
+      exception
+         when Routing.Route_Error =>
+            return True;
+      end Direct_Rejects;
+
+      function Candidate_Rejects
+        (Left_Method, Left, Right_Method, Right : String) return Boolean
+      is
+         Probe : Routing.Router
+           (Capacity => 4, Slashes => Routing.Strict_Slashes);
+         Change        : Routing.Update;
+         First, Second : Routing.Route_ID;
+      begin
+         Probe.Begin_Update (Change);
+         Routing.Add
+           (Change, Left_Method, Left, Endpoint'Access, First,
+            Name => "left");
+         Routing.Add
+           (Change, Right_Method, Right, Endpoint'Access, Second,
+            Name => "right");
+         Probe.Commit (Change);
+         return False;
+      exception
+         when Routing.Route_Error =>
+            return True;
+      end Candidate_Rejects;
+
+      procedure Agree
+        (Left         : String;
+         Right        : String;
+         Ambiguous    : Boolean;
+         Left_Method  : String := "GET";
+         Right_Method : String := "GET")
+      is
+         Label : constant String :=
+           Left_Method & " " & Left & " vs " & Right_Method & " " & Right;
+      begin
+         Expect
+           ("direct ambiguity " & Label,
+            Boolean'Image
+              (Direct_Rejects (Left_Method, Left, Right_Method, Right)),
+            Boolean'Image (Ambiguous));
+         Expect
+           ("candidate ambiguity " & Label,
+            Boolean'Image
+              (Candidate_Rejects (Left_Method, Left, Right_Method, Right)),
+            Boolean'Image (Ambiguous));
+      end Agree;
+   begin
+      Agree ("/users/{id}", "/users/{other}", True);
+      Agree ("/a/b", "/a/b", True);
+      Agree ("/x/{*rest}", "/x/{*other}", True);
+      Agree ("/users/{id}", "/users/me", False);
+      Agree ("/a/b", "/a/c", False);
+      Agree ("/files/{*rest}", "/files/{name}", False);
+      Agree ("/a", "/a/b", False);
+      Agree
+        ("/users/{id}", "/users/{other}", False, Right_Method => "POST");
+   end Check_Ambiguity_Agreement;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -2614,6 +2706,7 @@ begin
    Check_Update_Validation;
    Check_Introspection_Snapshot;
    Check_Generation_Retention;
+   Check_Ambiguity_Agreement;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
