@@ -1065,6 +1065,36 @@ package body Flyology_IRI is
       then Web_Validate (Input, Max_Length)
       else Analyze (Input, Syntax, Max_Length).Error);
 
+   procedure Inspect
+     (Input      : String;
+      Kind       : out Reference_Kind;
+      Error      : out Parse_Error;
+      Syntax     : Syntax_Kind := IRI_Syntax;
+      Max_Length : Positive := Default_Max_Length)
+   is
+      Parsed     : Analysis;
+      Need_Slash : Boolean;
+   begin
+      if Syntax = Web_URL_Syntax then
+         if not Web_Fast_Path (Input, Max_Length, Parsed, Need_Slash, Error)
+         then
+            Error := Web_Validate (Input, Max_Length);
+         end if;
+         --  Analyze rejects a web URL that carries no scheme, so every web
+         --  URL that validates classifies the same way and neither route
+         --  has to report Kind_Value separately.
+         Kind :=
+           (if Error.Kind = No_Error then Absolute_Reference
+            else Empty_Reference);
+         return;
+      end if;
+      Parsed := Analyze (Input, Syntax, Max_Length);
+      Error := Parsed.Error;
+      Kind :=
+        (if Error.Kind = No_Error then Parsed.Kind_Value
+         else Empty_Reference);
+   end Inspect;
+
    function Parse
      (Input      : String;
       Syntax     : Syntax_Kind := IRI_Syntax;
