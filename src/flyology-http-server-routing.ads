@@ -694,11 +694,22 @@ package Flyology.HTTP.Server.Routing is
      (Change    : in out Update;
       Challenge : String);
 
-   --  Validate and atomically publish a complete candidate. Commit raises
-   --  Stale_Update if another candidate replaced its base generation first.
+   --  Validate and atomically publish a complete candidate. A candidate
+   --  whose base generation was already replaced can never be published, so
+   --  Stale_Update also releases it and the same update object can be rebuilt
+   --  from the newer generation. A candidate rejected by validation stays
+   --  active so it can be corrected and committed again.
    --  @param Item Router receiving the candidate
    --  @param Change Active candidate consumed on success
+   --  @exception Stale_Update Base generation was replaced first
+   --  @exception Route_Error Candidate is not a valid configuration
    procedure Commit (Item : in out Router; Change : in out Update);
+
+   --  Discard an active candidate and return the update to its empty state.
+   --  An update with no candidate is unchanged. Use this to give up on a
+   --  candidate Commit rejected for a validation error.
+   --  @param Change Update to reset
+   procedure Abandon (Change : in out Update);
 
    --  Set the per-client admission policy applied to the router's own
    --  automatic responses: 404, 405, CORS preflight, OPTIONS, the trailing
