@@ -1271,6 +1271,12 @@ private
    end record;
    type Route_Array is array (Positive range <>) of Route_Entry;
 
+   type Router_Configuration;
+
+   --  General access so an address recovered from the published atomic word
+   --  converts without an unchecked conversion.
+   type Configuration_Access is access all Router_Configuration;
+
    type Router_Configuration
      (Capacity : Positive;
       Slashes  : Trailing_Slash_Policy)
@@ -1285,21 +1291,22 @@ private
       --  Empty selects the Default_Challenge, so an unconfigured router
       --  needs no per-object allocation.
       Challenge             : Unbounded_String;
-      Previous              : System.Address := System.Null_Address;
+      --  Retired generations stay reachable through this chain, so a
+      --  dispatch holding an older generation never reads freed storage.
+      Previous              : Configuration_Access;
    end record;
-   type Configuration_Access is access Router_Configuration;
 
    type Atomic_Word is new Interfaces.Unsigned_64
      with Size => 64, Alignment => 8;
 
    protected type Publication_Gate is
-      procedure Initialize (Configuration : System.Address);
+      procedure Initialize (Configuration : Configuration_Access);
       procedure Try_Publish
-        (Expected : System.Address;
-         Desired  : System.Address;
+        (Expected : Configuration_Access;
+         Desired  : Configuration_Access;
          Accepted : out Boolean);
    private
-      Latest : System.Address := System.Null_Address;
+      Latest : Configuration_Access;
    end Publication_Gate;
 
    type Router
@@ -1307,7 +1314,7 @@ private
       Slashes  : Trailing_Slash_Policy := Strict_Slashes)
    is new Ada.Finalization.Limited_Controlled with record
       Current_Configuration : aliased Atomic_Word := 0;
-      First_Configuration   : System.Address := System.Null_Address;
+      First_Configuration   : Configuration_Access;
       Publisher             : Publication_Gate;
    end record;
 
@@ -1316,8 +1323,8 @@ private
 
    type Update_State is new Ada.Finalization.Limited_Controlled with record
       Owner     : System.Address := System.Null_Address;
-      Base      : System.Address := System.Null_Address;
-      Candidate : Configuration_Access := null;
+      Base      : Configuration_Access;
+      Candidate : Configuration_Access;
    end record;
 
    overriding procedure Finalize (Item : in out Update_State);
