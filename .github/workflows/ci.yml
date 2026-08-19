@@ -15,6 +15,24 @@ concurrency:
   group: flyology-http-ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every step that reaches the network carries a timeout-minutes bound, so a
+# stalled mirror or registry fails the step instead of hanging it. Without one
+# the step runs until the job timeout -- 150 minutes for the HTTP/2 job -- and
+# the run looks busy the whole time rather than failing and inviting a retry.
+# The apt-get update below stalled three times on 2026-08-19: run 32226557711
+# on main burned the entire 150-minute job budget before the job timeout ended
+# it, and runs 32278682887 and 32294697524 sat there 83 and 64 minutes before
+# someone cancelled them by hand. The same job finishes in 8 to 14 minutes when
+# the mirror answers.
+#
+# The bounds are sized against the slowest healthy observation over the
+# preceding 60 runs, with room to spare, so tripping one means a stall rather
+# than a slow day. Checking out sources and configuring the index take seconds
+# and are given 5 minutes. Installing the HTTP/2 peer takes 11 seconds at the
+# median and 5 minutes at its slowest, so it is given 15. Installing Alire is
+# given 15 for a different reason: every observation of it is a cache hit, and
+# a cold run downloads a whole toolchain, so the observations do not bound it.
+
 jobs:
   test:
     name: HTTP tests (${{ matrix.os }})
@@ -26,8 +44,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - name: Check out sources
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Alire
+        timeout-minutes: 15
         uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
         with:
           version: 2.1.1
@@ -36,6 +56,7 @@ jobs:
             gprbuild=26.0.1
           cache: true
       - name: Configure Flyology index
+        timeout-minutes: 5
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
@@ -46,6 +67,7 @@ jobs:
       # medians come from one reviewed revision. It lands under build/, which
       # is ignored, so the checkout leaves no untracked files behind.
       - name: Check out the pinned WPT URL corpus
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ada-url/ada
@@ -66,8 +88,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out sources
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Alire
+        timeout-minutes: 15
         uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
         with:
           version: 2.1.1
@@ -76,6 +100,7 @@ jobs:
             gprbuild=26.0.1
           cache: true
       - name: Configure Flyology index
+        timeout-minutes: 5
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
@@ -90,8 +115,10 @@ jobs:
     timeout-minutes: 150
     steps:
       - name: Check out sources
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Alire
+        timeout-minutes: 15
         uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
         with:
           version: 2.1.1
@@ -100,12 +127,31 @@ jobs:
             gprbuild=26.0.1
           cache: true
       - name: Configure Flyology index
+        timeout-minutes: 5
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
       - name: Install independent HTTP/2 peer
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
+          # apt-get update is the command that stalls, and it is the one here
+          # that is safe to interrupt and repeat: a killed run leaves partial
+          # package lists behind, which the next run refetches. Bounding each
+          # attempt on its own turns a wedged mirror connection into a retry
+          # against a fresh one, so a single transient failure does not fail
+          # the job, and the step bound above stays a backstop rather than the
+          # mechanism that catches the common case.
+          for attempt in 1 2 3; do
+            if sudo timeout --kill-after=10s 120s apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update stalled or failed on all 3 attempts"
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt $attempt failed; retrying"
+            sleep $((attempt * 15))
+          done
           sudo apt-get install --yes nghttp2-server
           go version
           node --version
@@ -128,8 +174,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out sources
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Alire
+        timeout-minutes: 15
         uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
         with:
           version: 2.1.1
@@ -138,6 +186,7 @@ jobs:
             gprbuild=26.0.1
           cache: true
       - name: Configure Flyology index
+        timeout-minutes: 5
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
@@ -158,8 +207,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out sources
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Alire
+        timeout-minutes: 15
         uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
         with:
           version: 2.1.1
@@ -168,6 +219,7 @@ jobs:
             gprbuild=26.0.1
           cache: true
       - name: Configure Flyology index
+        timeout-minutes: 5
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
@@ -215,8 +267,10 @@ jobs:
             lane: native
     steps:
       - name: Check out sources
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install Alire
+        timeout-minutes: 15
         uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
         with:
           version: 2.1.1
@@ -225,6 +279,7 @@ jobs:
             gprbuild=26.0.1
           cache: true
       - name: Configure Flyology index
+        timeout-minutes: 5
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community

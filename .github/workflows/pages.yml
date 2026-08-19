@@ -14,17 +14,31 @@ concurrency:
   group: flyology-http-pages
   cancel-in-progress: false
 
+# The bounds here follow the convention ci.yml states: every step that installs
+# or fetches something carries a timeout-minutes bound, so a stalled mirror or
+# registry fails the step rather than hanging it. The whole build job runs in
+# about 90 seconds when the network answers, and the bounds below are sized far
+# above the slowest healthy observation over the preceding 12 runs, so tripping
+# one means a stall rather than a slow day.
+#
+# Both jobs also carry a job-level bound, which neither had before. Without one,
+# a stall in a step that has no bound of its own -- the site build, or the
+# deploy -- runs to the six-hour GitHub default.
+
 jobs:
   build:
     name: Build site and API reference
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out sources
+        timeout-minutes: 5
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           path: flyology-http
           submodules: true
       - name: Install Alire
+        timeout-minutes: 15
         uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
         with:
           version: 2.1.1
@@ -33,12 +47,14 @@ jobs:
             gprbuild=26.0.1
           cache: true
       - name: Select toolchain
+        timeout-minutes: 10
         run: |
           alr --non-interactive toolchain --select \
             gnat_native=16.1.0 \
             gprbuild=26.0.1
           printf 'ALR=%s\n' "$(command -v alr)" >> "$GITHUB_ENV"
       - name: Configure Flyology index
+        timeout-minutes: 5
         run: |
           alr index --reset-community
           alr index \
@@ -46,13 +62,16 @@ jobs:
             --name=flyology \
             --before=community
       - name: Install GNATdoc
+        timeout-minutes: 10
         run: alr install gnatdoc_bin
       - name: Configure Pages
+        timeout-minutes: 5
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - name: Build site
         run: ./scripts/build-site.sh
         working-directory: flyology-http
       - name: Upload artifact
+        timeout-minutes: 10
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: flyology-http/build/site
@@ -62,6 +81,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 30
     steps:
       - name: Deploy
         id: deployment
