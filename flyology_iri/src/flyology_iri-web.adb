@@ -85,17 +85,35 @@ package body Flyology_IRI.Web is
    end Trim_Bounds;
 
    function Preprocess (Input : String) return String is
-      First  : Natural;
-      Last   : Natural;
-      Result : U.Unbounded_String;
+      First : Natural;
+      Last  : Natural;
    begin
       Trim_Bounds (Input, First, Last);
+      --  Almost no input carries the bytes this removes, and for those the
+      --  trimmed slice already is the answer. Appending the kept bytes one
+      --  at a time allocated an accumulator, and grew it, only to reproduce
+      --  the input verbatim.
       for Index in First .. Last loop
-         if Input (Index) not in ASCII.HT | ASCII.LF | ASCII.CR then
-            U.Append (Result, Input (Index));
+         if Input (Index) in ASCII.HT | ASCII.LF | ASCII.CR then
+            declare
+               Result : U.Unbounded_String;
+            begin
+               for Kept in First .. Last loop
+                  if Input (Kept) not in ASCII.HT | ASCII.LF | ASCII.CR then
+                     U.Append (Result, Input (Kept));
+                  end if;
+               end loop;
+               return U.To_String (Result);
+            end;
          end if;
       end loop;
-      return U.To_String (Result);
+      --  Slid to one, because Input_Offset and the parser below read the
+      --  result at one-based offsets.
+      declare
+         subtype Kept_Bytes is String (1 .. Last - First + 1);
+      begin
+         return Kept_Bytes (Input (First .. Last));
+      end;
    end Preprocess;
 
    --  Map a one-based offset into the preprocessed text back onto the
