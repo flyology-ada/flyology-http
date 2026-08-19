@@ -49,7 +49,13 @@ if [ -z "$h3spec" ]; then
   h3spec="$http_root/build/oracle/h3spec-$version-$asset"
   if [ ! -x "$h3spec" ]; then
     mkdir -p "$http_root/build/oracle"
-    curl -fL \
+    # Bounded the way the workflow bounds its package installs: a stalled
+    # connection becomes a retry and then a failure, instead of hanging the
+    # step until the job timeout. --max-time is counted per attempt once
+    # --retry is in play, and the checksum below is what makes retrying safe,
+    # because a truncated or resumed body never survives it.
+    curl -fL --retry 3 --retry-delay 5 --retry-all-errors \
+      --connect-timeout 20 --max-time 300 \
       "https://github.com/kazu-yamamoto/h3spec/releases/download/v$version/$asset" \
       -o "$h3spec.download"
     actual=$(shasum -a 256 "$h3spec.download" | awk '{print $1}')
