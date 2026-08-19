@@ -784,6 +784,24 @@ package Flyology.HTTP.Server.Routing is
    --  @param Change Update to reset
    procedure Abandon (Change : in out Update);
 
+   --  Return the number of configuration generations the router holds: the
+   --  published generation plus every superseded generation it still keeps.
+   --  Each Commit adds one, and the router releases them only at
+   --  finalization or at Reclaim, so this count grows with the number of
+   --  commits. Use it to observe that growth.
+   --  @param Item Router registry
+   --  @return Retained generation count, at least one
+   function Retained_Generations (Item : Router) return Natural;
+
+   --  Release every superseded generation and keep the published one.
+   --  Retention is what keeps an in-flight dispatch and a live Snapshot
+   --  reading valid storage, so the caller must know that no dispatch is in
+   --  progress and that no snapshot of a superseded generation is still in
+   --  use. This precondition is not checked. Call it on a drained server,
+   --  between serving cycles.
+   --  @param Item Router registry
+   procedure Reclaim (Item : in out Router);
+
    --  Set the per-client admission policy applied to the router's own
    --  automatic responses: 404, 405, CORS preflight, OPTIONS, the trailing
    --  slash redirect, and the malformed-path 400. Those responses match no
