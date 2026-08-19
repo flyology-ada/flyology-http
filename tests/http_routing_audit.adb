@@ -1699,6 +1699,168 @@ procedure HTTP_Routing_Audit is
       end;
    end Check_Runtime_Reconfiguration;
 
+   --  Direct registration writes the published generation in place, so the
+   --  first dispatch seals the router. Every direct registration and setter
+   --  must then refuse rather than tear the generation a request is reading,
+   --  while updates keep working.
+   procedure Check_Sealed_Registration is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      procedure Handler_One
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "one");
+      end Handler_One;
+
+      procedure Handler_Two
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "two");
+      end Handler_Two;
+
+      procedure Layer
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Layer", "on");
+         Next.Call (State, X);
+      end Layer;
+
+      Routes : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      Fresh  : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+
+      function Response return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /users/42 HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Response;
+
+      Served        : Routing.Route_ID;
+      Ignored_Route : Routing.Route_ID;
+      Ignored_Layer : Routing.Middleware_ID;
+      Raised        : Boolean;
+   begin
+      Routes.Get
+        ("/users/{id}", Handler_One'Access, Served, Name => "users.show");
+      Expect_In ("sealed initial handler", Response, CRLF & CRLF & "one");
+
+      Raised := False;
+      begin
+         Routes.Get
+           ("/late", Handler_One'Access, Ignored_Route, Name => "late");
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("sealed route registration refused", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         Routes.Add_Middleware (Layer'Access, Ignored_Layer, Name => "late");
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("sealed global middleware refused", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         Routes.Add_Route_Middleware (Served, Layer'Access, Ignored_Layer);
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("sealed route middleware refused", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         Routes.Add_Route_Middleware
+           ("users.show", Layer'Access, Ignored_Layer);
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("sealed named route middleware refused", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         Routes.Set_Authentication_Challenge ("Basic realm=late");
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("sealed challenge refused", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         Routes.Set_Automatic_Admission (Concurrency => 4);
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("sealed admission refused", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         Fresh.Mount ("/api", Routes);
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("sealed mount source refused", Raised'Image, "TRUE");
+
+      --  Nothing was admitted, and the served generation is intact.
+      Expect ("sealed route set unchanged", Routes.Route_Count'Image, " 1");
+      Expect
+        ("sealed global middleware unchanged",
+         Routes.Global_Middleware_Count'Image, " 0");
+      Expect_In ("sealed handler unchanged", Response, CRLF & CRLF & "one");
+
+      --  An unsealed router still accepts direct registration.
+      Fresh.Get
+        ("/fresh", Handler_One'Access, Ignored_Route, Name => "fresh");
+      Expect ("unsealed router still registers", Fresh.Route_Count'Image, " 1");
+
+      --  Updates remain the supported path on a serving router.
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Replace_Handler (Change, Served, Handler_Two'Access);
+         Routing.Add_Middleware (Change, Layer'Access, Ignored_Layer);
+         Routes.Commit (Change);
+      end;
+      declare
+         Output : constant String := Response;
+      begin
+         Expect_In ("sealed update handler", Output, CRLF & CRLF & "two");
+         Expect_In ("sealed update middleware", Output, "X-Layer: on");
+      end;
+   end Check_Sealed_Registration;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -1712,6 +1874,7 @@ begin
    Check_Response_Header_Replacement;
    Check_Request_ID_Unpredictability;
    Check_Runtime_Reconfiguration;
+   Check_Sealed_Registration;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

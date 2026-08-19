@@ -98,6 +98,31 @@ package body Flyology.HTTP.Server.Routing is
       return Configuration;
    end Current_Configuration;
 
+   --  Direct registration writes the published generation in place, so it
+   --  cannot overlap dispatch. The first dispatch seals the router; every
+   --  later configuration change goes through Begin_Update and Commit. The
+   --  load keeps the steady-state cost to one read of a shared clean line
+   --  instead of a store from every worker on every request.
+   procedure Seal (Item : in out Router) is
+   begin
+      if Flyology.Atomic_Primitives.Load_Acquire_U64
+           (Item.Sealed'Address) = 0
+      then
+         Flyology.Atomic_Primitives.Store_Release_U64
+           (Item.Sealed'Address, 1);
+      end if;
+   end Seal;
+
+   procedure Check_Not_Sealed (Item : Router) is
+   begin
+      if Flyology.Atomic_Primitives.Load_Acquire_U64
+           (Item.Sealed'Address) /= 0
+      then
+         raise Route_Error with
+           "HTTP router is dispatching; use Begin_Update and Commit";
+      end if;
+   end Check_Not_Sealed;
+
    protected body Publication_Gate is
       procedure Initialize (Configuration : Configuration_Access) is
       begin
@@ -705,8 +730,9 @@ package body Flyology.HTTP.Server.Routing is
          end loop;
       end if;
       Identity_Source.Next_Route (Route);
-      Item.Count := Item.Count + 1;
-      Item.Routes (Item.Count) :=
+      --  Fill the slot before the count admits it: a reader that races a
+      --  registration then sees the old route set, never a partial entry.
+      Item.Routes (Item.Count + 1) :=
         (ID                  => Route,
          Method              => To_Unbounded_String (Method),
          Pattern             => To_Unbounded_String (Pattern),
@@ -722,6 +748,7 @@ package body Flyology.HTTP.Server.Routing is
                Stage     => Request_Head,
                Name      => Null_Unbounded_String)),
          Middleware_Count => 0);
+      Item.Count := Item.Count + 1;
    end Add_To_Configuration;
 
    procedure Add
@@ -750,6 +777,7 @@ package body Flyology.HTTP.Server.Routing is
       Configuration : constant Configuration_Access :=
         Current_Configuration (Item);
    begin
+      Check_Not_Sealed (Item);
       Add_To_Configuration
         (Configuration.all, Method, Pattern, Handler, Route, Name, Policy,
          Validate_Ambiguity => True);
@@ -779,12 +807,12 @@ package body Flyology.HTTP.Server.Routing is
          raise Route_Error with "global HTTP middleware capacity exhausted";
       end if;
       Identity_Source.Next_Middleware (Middleware);
-      Item.Middleware_Count := Item.Middleware_Count + 1;
-      Item.Middleware (Item.Middleware_Count) :=
+      Item.Middleware (Item.Middleware_Count + 1) :=
         (ID        => Middleware,
          Component => Component,
          Stage     => Stage,
          Name      => To_Unbounded_String (Name));
+      Item.Middleware_Count := Item.Middleware_Count + 1;
    end Add_Middleware_To_Configuration;
 
    procedure Add_Middleware
@@ -797,6 +825,7 @@ package body Flyology.HTTP.Server.Routing is
       Configuration : constant Configuration_Access :=
         Current_Configuration (Item);
    begin
+      Check_Not_Sealed (Item);
       Add_Middleware_To_Configuration
         (Configuration.all, Component, Middleware, Stage, Name);
    end Add_Middleware;
@@ -826,6 +855,7 @@ package body Flyology.HTTP.Server.Routing is
         Current_Configuration (Item);
       Route          : Route_ID := No_Route;
    begin
+      Check_Not_Sealed (Item);
       for Index in 1 .. Configuration.Count loop
          if To_String (Configuration.Routes (Index).Name) = Name then
             Route := Configuration.Routes (Index).ID;
@@ -856,14 +886,14 @@ package body Flyology.HTTP.Server.Routing is
          raise Route_Error with "route HTTP middleware capacity exhausted";
       end if;
       Identity_Source.Next_Middleware (Middleware);
-      Item.Routes (Index).Middleware_Count :=
-        Item.Routes (Index).Middleware_Count + 1;
       Item.Routes (Index).Middleware
-        (Item.Routes (Index).Middleware_Count) :=
+        (Item.Routes (Index).Middleware_Count + 1) :=
           (ID        => Middleware,
            Component => Component,
            Stage     => Stage,
            Name      => To_Unbounded_String (Middleware_Name));
+      Item.Routes (Index).Middleware_Count :=
+        Item.Routes (Index).Middleware_Count + 1;
    end Add_Route_Middleware_To_Configuration;
 
    procedure Add_Route_Middleware
@@ -877,6 +907,7 @@ package body Flyology.HTTP.Server.Routing is
       Configuration : constant Configuration_Access :=
         Current_Configuration (Item);
    begin
+      Check_Not_Sealed (Item);
       Add_Route_Middleware_To_Configuration
         (Configuration.all, Route, Component, Middleware, Stage,
          Middleware_Name);
@@ -1383,6 +1414,7 @@ package body Flyology.HTTP.Server.Routing is
       Configuration : constant Configuration_Access :=
         Current_Configuration (Item);
    begin
+      Check_Not_Sealed (Item);
       Configuration.Automatic_Concurrency := Concurrency;
       Configuration.Automatic_Rate := Rate_Per_Second;
    end Set_Automatic_Admission;
@@ -1400,6 +1432,7 @@ package body Flyology.HTTP.Server.Routing is
       Configuration : constant Configuration_Access :=
         Current_Configuration (Item);
    begin
+      Check_Not_Sealed (Item);
       if Challenge'Length = 0 then
          raise Route_Error with "empty HTTP authentication challenge";
       end if;
@@ -1447,6 +1480,8 @@ package body Flyology.HTTP.Server.Routing is
       Source_Configuration : constant Configuration_Access :=
         Current_Configuration (Source);
    begin
+      Check_Not_Sealed (Item);
+      Check_Not_Sealed (Source);
       Check_Not_Mounted (Destination.all);
       Validate_Pattern (Prefix, Static_Only => True);
       if Source_Configuration.Count >
@@ -1483,27 +1518,27 @@ package body Flyology.HTTP.Server.Routing is
             for Middleware_Index in
               1 .. Source_Configuration.Middleware_Count
             loop
-               Destination.Routes (New_Index).Middleware_Count :=
-                 Destination.Routes (New_Index).Middleware_Count + 1;
                Destination.Routes (New_Index).Middleware
-                 (Destination.Routes (New_Index).Middleware_Count) :=
+                 (Destination.Routes (New_Index).Middleware_Count + 1) :=
                    Source_Configuration.Middleware (Middleware_Index);
                Identity_Source.Next_Middleware
                  (Destination.Routes (New_Index).Middleware
-                    (Destination.Routes (New_Index).Middleware_Count).ID);
+                    (Destination.Routes (New_Index).Middleware_Count + 1).ID);
+               Destination.Routes (New_Index).Middleware_Count :=
+                 Destination.Routes (New_Index).Middleware_Count + 1;
             end loop;
             for Middleware_Index in
               1 .. Source_Configuration.Routes (Index).Middleware_Count
             loop
-               Destination.Routes (New_Index).Middleware_Count :=
-                 Destination.Routes (New_Index).Middleware_Count + 1;
                Destination.Routes (New_Index).Middleware
-                 (Destination.Routes (New_Index).Middleware_Count) :=
+                 (Destination.Routes (New_Index).Middleware_Count + 1) :=
                    Source_Configuration.Routes (Index).Middleware
                      (Middleware_Index);
                Identity_Source.Next_Middleware
                  (Destination.Routes (New_Index).Middleware
-                    (Destination.Routes (New_Index).Middleware_Count).ID);
+                    (Destination.Routes (New_Index).Middleware_Count + 1).ID);
+               Destination.Routes (New_Index).Middleware_Count :=
+                 Destination.Routes (New_Index).Middleware_Count + 1;
             end loop;
          end;
       end loop;
@@ -1942,6 +1977,7 @@ package body Flyology.HTTP.Server.Routing is
       Configuration : constant Configuration_Access :=
         Current_Configuration (Item);
    begin
+      Seal (Item);
       Dispatch_Configuration (Configuration.all, Context, X);
    end Dispatch;
 
