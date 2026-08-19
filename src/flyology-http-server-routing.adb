@@ -555,7 +555,7 @@ package body Flyology.HTTP.Server.Routing is
    --  Mounting copies the router's routes and middleware, so a registration
    --  afterwards cannot reach the copies. Refusing it at setup keeps the
    --  ordering hazard from becoming a silently unprotected mounted route.
-   procedure Check_Not_Mounted (Item : Router_Configuration) is
+   procedure Check_Not_Mounted (Item : aliased Router_Configuration) is
    begin
       if Item.Mounted then
          raise Route_Error with
@@ -566,7 +566,7 @@ package body Flyology.HTTP.Server.Routing is
    --  Compare against the segments and score each route already carries.
    --  The score is a cheap integer test, so it gates the segment walk.
    procedure Check_Unambiguous
-     (Item     : Router_Configuration;
+     (Item     : aliased Router_Configuration;
       Method   : String;
       Segments : Segment_List;
       Score    : Natural)
@@ -586,8 +586,14 @@ package body Flyology.HTTP.Server.Routing is
    --  One generation answers every introspection question. The Router forms
    --  read the published generation per call; the Snapshot forms read the one
    --  generation the snapshot captured.
+   --
+   --  Router_Configuration is a large non-limited record, so RM 6.2 leaves
+   --  by-copy or by-reference to the implementation for an in parameter.
+   --  Every operation below takes it explicitly aliased, which is
+   --  by-reference by definition, so no caller can silently copy a whole
+   --  generation. Dispatch depends on that.
    function Described_Route
-     (Item  : Router_Configuration;
+     (Item  : aliased Router_Configuration;
       Index : Positive) return Route_Description is
    begin
       if Index > Item.Count then
@@ -603,7 +609,7 @@ package body Flyology.HTTP.Server.Routing is
    end Described_Route;
 
    function Described_Global_Middleware
-     (Item  : Router_Configuration;
+     (Item  : aliased Router_Configuration;
       Index : Positive) return Middleware_Description is
    begin
       if Index > Item.Middleware_Count then
@@ -617,7 +623,7 @@ package body Flyology.HTTP.Server.Routing is
    end Described_Global_Middleware;
 
    function Route_Middleware_Total
-     (Item        : Router_Configuration;
+     (Item        : aliased Router_Configuration;
       Route_Index : Positive) return Natural is
    begin
       if Route_Index > Item.Count then
@@ -627,7 +633,7 @@ package body Flyology.HTTP.Server.Routing is
    end Route_Middleware_Total;
 
    function Described_Route_Middleware
-     (Item             : Router_Configuration;
+     (Item             : aliased Router_Configuration;
       Route_Index      : Positive;
       Middleware_Index : Positive) return Middleware_Description is
    begin
@@ -645,7 +651,7 @@ package body Flyology.HTTP.Server.Routing is
    end Described_Route_Middleware;
 
    procedure Find_Named_Route
-     (Item  : Router_Configuration;
+     (Item  : aliased Router_Configuration;
       Name  : String;
       Route : out Route_ID;
       Found : out Boolean) is
@@ -757,7 +763,7 @@ package body Flyology.HTTP.Server.Routing is
    end Find_Route;
 
    function Route_Index
-     (Item : Router_Configuration;
+     (Item : aliased Router_Configuration;
       ID   : Route_ID) return Natural
    is
    begin
@@ -770,7 +776,7 @@ package body Flyology.HTTP.Server.Routing is
    end Route_Index;
 
    procedure Add_To_Configuration
-     (Item    : in out Router_Configuration;
+     (Item    : aliased in out Router_Configuration;
       Method  : String;
       Pattern : String;
       Handler : not null Handler_Access;
@@ -871,7 +877,7 @@ package body Flyology.HTTP.Server.Routing is
    end Add_Middleware;
 
    procedure Add_Middleware_To_Configuration
-     (Item       : in out Router_Configuration;
+     (Item       : aliased in out Router_Configuration;
       Component  : not null Middleware_Access;
       Middleware : out Middleware_ID;
       Stage      : Middleware_Stage;
@@ -907,7 +913,7 @@ package body Flyology.HTTP.Server.Routing is
    end Add_Middleware;
 
    procedure Attach_Route_Middleware
-     (Item            : in out Router_Configuration;
+     (Item            : aliased in out Router_Configuration;
       Index           : Positive;
       Component       : not null Middleware_Access;
       Middleware      : out Middleware_ID;
@@ -974,7 +980,7 @@ package body Flyology.HTTP.Server.Routing is
    end Add_Route_Middleware;
 
    procedure Add_Route_Middleware_To_Configuration
-     (Item            : in out Router_Configuration;
+     (Item            : aliased in out Router_Configuration;
       Route           : Route_ID;
       Component       : not null Middleware_Access;
       Middleware      : out Middleware_ID;
@@ -1134,7 +1140,7 @@ package body Flyology.HTTP.Server.Routing is
       end if;
    end Require_Candidate;
 
-   procedure Validate_Configuration (Item : Router_Configuration) is
+   procedure Validate_Configuration (Item : aliased Router_Configuration) is
    begin
       if Item.Count > Item.Capacity then
          raise Route_Error with "HTTP router capacity exhausted";
@@ -1811,7 +1817,7 @@ package body Flyology.HTTP.Server.Routing is
    end Automatic_Response;
 
    procedure Dispatch_Configuration
-     (Item    : Router_Configuration;
+     (Item    : aliased Router_Configuration;
       Context : in out App_Context;
       X       : in out App.Exchange)
    is
