@@ -175,66 +175,91 @@ package body Flyology_IRI.Web is
       end case;
    end Must_Encode;
 
+   --  Counted first, then written straight into the returned object. The
+   --  count is exact, so the result is the only storage this needs: the
+   --  accumulator it replaces took a heap block, grew it a byte at a time,
+   --  and was then copied out whole.
    function Encode (Input : String; Set : Encode_Set) return String is
-      Result : U.Unbounded_String;
-      Code   : Natural;
+      Length : Natural := 0;
    begin
       for C of Input loop
-         if Must_Encode (C, Set) then
-            Code := Character'Pos (C);
-            U.Append (Result, '%');
-            U.Append (Result, Hex_Digit (Code / 16));
-            U.Append (Result, Hex_Digit (Code mod 16));
-         else
-            U.Append (Result, C);
-         end if;
+         Length := Length + (if Must_Encode (C, Set) then 3 else 1);
       end loop;
-      return U.To_String (Result);
+      return Result : String (1 .. Length) do
+         declare
+            Last : Natural := 0;
+            Code : Natural;
+         begin
+            for C of Input loop
+               if Must_Encode (C, Set) then
+                  Code := Character'Pos (C);
+                  Result (Last + 1) := '%';
+                  Result (Last + 2) := Hex_Digit (Code / 16);
+                  Result (Last + 3) := Hex_Digit (Code mod 16);
+                  Last := Last + 3;
+               else
+                  Result (Last + 1) := C;
+                  Last := Last + 1;
+               end if;
+            end loop;
+         end;
+      end return;
    end Encode;
 
    function Encode_Opaque_Path
-     (Input : String; Has_Tail : Boolean) return String
-   is
-      Result        : U.Unbounded_String;
+     (Input : String; Has_Tail : Boolean) return String is
    begin
       if not Has_Tail then
          return Encode (Input, Opaque_Set);
       end if;
+      --  A single trailing space is the one byte the opaque set leaves alone
+      --  that a tail would run into, so it is escaped here instead. Encoding
+      --  the empty slice yields the empty string, which covers an input that
+      --  is nothing but that space.
       if Input'Length > 0 and then Input (Input'Last) = ' ' then
-         if Input'Length > 1 then
-            U.Append
-              (Result, Encode (Input (Input'First .. Input'Last - 1), Opaque_Set));
-         end if;
-         U.Append (Result, "%20");
-      else
-         U.Append
-           (Result, Encode (Input, Opaque_Set));
+         return Encode (Input (Input'First .. Input'Last - 1), Opaque_Set)
+                & "%20";
       end if;
-      return U.To_String (Result);
+      return Encode (Input, Opaque_Set);
    end Encode_Opaque_Path;
 
+   --  An escape is recognised by the same test in both passes, so the
+   --  counted length is the written length.
+   function Is_Escape_At (Input : String; Position : Natural) return Boolean is
+     (Input (Position) = '%'
+      and then Position + 2 <= Input'Last
+      and then Is_Hex (Input (Position + 1))
+      and then Is_Hex (Input (Position + 2)));
+
    function Percent_Decode (Input : String) return String is
-      Result   : U.Unbounded_String;
+      Length   : Natural := 0;
       Position : Natural := Input'First;
    begin
       while Position <= Input'Last loop
-         if Input (Position) = '%'
-           and then Position + 2 <= Input'Last
-           and then Is_Hex (Input (Position + 1))
-           and then Is_Hex (Input (Position + 2))
-         then
-            U.Append
-              (Result,
-               Character'Val
-                 (Hex_Value (Input (Position + 1)) * 16
-                  + Hex_Value (Input (Position + 2))));
-            Position := Position + 3;
-         else
-            U.Append (Result, Input (Position));
-            Position := Position + 1;
-         end if;
+         Length := Length + 1;
+         Position :=
+           Position + (if Is_Escape_At (Input, Position) then 3 else 1);
       end loop;
-      return U.To_String (Result);
+      return Result : String (1 .. Length) do
+         declare
+            Last : Natural := 0;
+         begin
+            Position := Input'First;
+            while Position <= Input'Last loop
+               Last := Last + 1;
+               if Is_Escape_At (Input, Position) then
+                  Result (Last) :=
+                    Character'Val
+                      (Hex_Value (Input (Position + 1)) * 16
+                       + Hex_Value (Input (Position + 2)));
+                  Position := Position + 3;
+               else
+                  Result (Last) := Input (Position);
+                  Position := Position + 1;
+               end if;
+            end loop;
+         end;
+      end return;
    end Percent_Decode;
 
    function Number_Image (Value : Long_Long_Integer) return String is
