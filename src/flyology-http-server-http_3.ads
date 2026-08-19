@@ -24,6 +24,13 @@ package Flyology.HTTP.Server.HTTP_3 is
    --  Largest accepted listener capacity for the task-per-connection profile.
    Maximum_Connection_Capacity : constant Positive := 256;
 
+   --  Default no-progress deadline for a connection that has not completed
+   --  its QUIC handshake. A peer that abandons a handshake without sending
+   --  CONNECTION_CLOSE would otherwise hold its listener slot for the whole
+   --  handshake timeout. Handshake retransmission arrives well inside this
+   --  window on a lossy path, so only a silent peer reaches it.
+   Default_Handshake_Idle_Timeout : constant Duration := 3.0;
+
    --  Default lifetime request policy. Completed request reassembly is
    --  recycled; 32 retained QUIC streams bound concurrency, while compact
    --  flow-control accounting supports long-lived connections without
@@ -45,6 +52,8 @@ package Flyology.HTTP.Server.HTTP_3 is
    --  @param Transport_Settings QUIC flow-control and stream limits
    --  @param Timeout Per-request application deadline
    --  @param Handshake_Timeout Maximum time to establish each QUIC connection
+   --  @param Handshake_Idle_Timeout Maximum time an unconnected peer may go
+   --    silent before its connection slot is reclaimed
    --  @param Max_Connection_Age Absolute lifetime of each connection
    --  @param Max_Requests Requests served by each connection
    --  @param Token Required listener shutdown and connection cancellation
@@ -60,11 +69,13 @@ package Flyology.HTTP.Server.HTTP_3 is
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
       Max_Requests       : Positive := Default_Requests_Per_Connection;
-      Token              : not null access Flyology.Cancellation.Token)
+      Token              : not null access Flyology.Cancellation.Token;
+      Handshake_Idle_Timeout : Duration := Default_Handshake_Idle_Timeout)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
      and then Capacity <= Maximum_Connection_Capacity
      and then Handshake_Timeout > 0.0
+     and then Handshake_Idle_Timeout > 0.0
      and then Max_Requests <= Maximum_Requests_Per_Connection;
 
    --  Serve routed requests from one QUIC peer using a securely generated
@@ -82,6 +93,8 @@ package Flyology.HTTP.Server.HTTP_3 is
    --    unlimited
    --  @param Max_Requests Requests served before Serve returns
    --  @param Token Optional connection cancellation source
+   --  @param Handshake_Idle_Timeout Maximum time an unconnected peer may go
+   --    silent before Serve returns
    procedure Serve
      (Context            : in out App_Context;
       Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
@@ -93,10 +106,12 @@ package Flyology.HTTP.Server.HTTP_3 is
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
       Max_Requests       : Positive := Default_Requests_Per_Connection;
-      Token              : access Flyology.Cancellation.Token := null)
+      Token              : access Flyology.Cancellation.Token := null;
+      Handshake_Idle_Timeout : Duration := Default_Handshake_Idle_Timeout)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
      and then Handshake_Timeout > 0.0
+     and then Handshake_Idle_Timeout > 0.0
      and then Max_Requests <= Maximum_Requests_Per_Connection;
 
    --  Serve routed requests from one QUIC peer. Certificate_DER and
@@ -116,6 +131,8 @@ package Flyology.HTTP.Server.HTTP_3 is
    --    unlimited
    --  @param Max_Requests Requests served before Serve returns
    --  @param Token Optional connection cancellation source
+   --  @param Handshake_Idle_Timeout Maximum time an unconnected peer may go
+   --    silent before Serve returns
    procedure Serve
      (Context            : in out App_Context;
       Socket             : aliased in out Flyology.IO.Sockets.Socket_Type;
@@ -128,10 +145,12 @@ package Flyology.HTTP.Server.HTTP_3 is
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
       Max_Requests       : Positive := Default_Requests_Per_Connection;
-      Token              : access Flyology.Cancellation.Token := null)
+      Token              : access Flyology.Cancellation.Token := null;
+      Handshake_Idle_Timeout : Duration := Default_Handshake_Idle_Timeout)
    with Pre => Flyology.IO.Sockets.Is_Open (Socket)
      and then Certificate_DER'Length in 1 .. 4_096
      and then Handshake_Timeout > 0.0
+     and then Handshake_Idle_Timeout > 0.0
      and then Max_Requests <= Maximum_Requests_Per_Connection
      and then Source.Length in 1 ..
        Flyology.QUIC.Connections.Max_Connection_ID_Length;
