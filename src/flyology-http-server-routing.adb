@@ -586,104 +586,177 @@ package body Flyology.HTTP.Server.Routing is
       end loop;
    end Check_Add;
 
-   function Route_Count (Item : Router) return Natural is
-     (Current_Configuration (Item).Count);
-
-   function Describe_Route
-     (Item  : Router;
-      Index : Positive) return Route_Description
-   is
-      Configuration : constant Configuration_Access :=
-        Current_Configuration (Item);
+   --  One generation answers every introspection question. The Router forms
+   --  read the published generation per call; the Snapshot forms read the one
+   --  generation the snapshot captured.
+   function Described_Route
+     (Item  : Router_Configuration;
+      Index : Positive) return Route_Description is
    begin
-      if Index > Configuration.Count then
+      if Index > Item.Count then
          raise Constraint_Error with "HTTP route introspection index invalid";
       end if;
       return
-        (ID               => Configuration.Routes (Index).ID,
-         Method           => Configuration.Routes (Index).Method,
-         Pattern          => Configuration.Routes (Index).Pattern,
-         Name             => Configuration.Routes (Index).Name,
-         Policy           => Configuration.Routes (Index).Policy,
-         Middleware_Count => Configuration.Routes (Index).Middleware_Count);
-   end Describe_Route;
+        (ID               => Item.Routes (Index).ID,
+         Method           => Item.Routes (Index).Method,
+         Pattern          => Item.Routes (Index).Pattern,
+         Name             => Item.Routes (Index).Name,
+         Policy           => Item.Routes (Index).Policy,
+         Middleware_Count => Item.Routes (Index).Middleware_Count);
+   end Described_Route;
 
-   function Global_Middleware_Count (Item : Router) return Natural is
-     (Current_Configuration (Item).Middleware_Count);
-
-   function Describe_Global_Middleware
-     (Item  : Router;
-      Index : Positive) return Middleware_Description
-   is
-      Configuration : constant Configuration_Access :=
-        Current_Configuration (Item);
+   function Described_Global_Middleware
+     (Item  : Router_Configuration;
+      Index : Positive) return Middleware_Description is
    begin
-      if Index > Configuration.Middleware_Count then
+      if Index > Item.Middleware_Count then
          raise Constraint_Error with
            "HTTP global middleware introspection index invalid";
       end if;
       return
-        (ID    => Configuration.Middleware (Index).ID,
-         Name  => Configuration.Middleware (Index).Name,
-         Stage => Configuration.Middleware (Index).Stage);
-   end Describe_Global_Middleware;
+        (ID    => Item.Middleware (Index).ID,
+         Name  => Item.Middleware (Index).Name,
+         Stage => Item.Middleware (Index).Stage);
+   end Described_Global_Middleware;
 
-   function Route_Middleware_Count
-     (Item        : Router;
-      Route_Index : Positive) return Natural
-   is
-      Configuration : constant Configuration_Access :=
-        Current_Configuration (Item);
+   function Route_Middleware_Total
+     (Item        : Router_Configuration;
+      Route_Index : Positive) return Natural is
    begin
-      if Route_Index > Configuration.Count then
+      if Route_Index > Item.Count then
          raise Constraint_Error with "HTTP route introspection index invalid";
       end if;
-      return Configuration.Routes (Route_Index).Middleware_Count;
-   end Route_Middleware_Count;
+      return Item.Routes (Route_Index).Middleware_Count;
+   end Route_Middleware_Total;
 
-   function Describe_Route_Middleware
-     (Item             : Router;
+   function Described_Route_Middleware
+     (Item             : Router_Configuration;
       Route_Index      : Positive;
-      Middleware_Index : Positive) return Middleware_Description
-   is
-      Configuration : constant Configuration_Access :=
-        Current_Configuration (Item);
+      Middleware_Index : Positive) return Middleware_Description is
    begin
-      if Route_Index > Configuration.Count then
+      if Route_Index > Item.Count then
          raise Constraint_Error with "HTTP route introspection index invalid";
-      elsif Middleware_Index >
-        Configuration.Routes (Route_Index).Middleware_Count
-      then
+      elsif Middleware_Index > Item.Routes (Route_Index).Middleware_Count then
          raise Constraint_Error with
            "HTTP route middleware introspection index invalid";
       end if;
       return
-        (ID    => Configuration.Routes (Route_Index).Middleware
-                    (Middleware_Index).ID,
-         Name  => Configuration.Routes (Route_Index).Middleware
-                    (Middleware_Index).Name,
-         Stage => Configuration.Routes (Route_Index).Middleware
-                    (Middleware_Index).Stage);
-   end Describe_Route_Middleware;
+        (ID    => Item.Routes (Route_Index).Middleware (Middleware_Index).ID,
+         Name  => Item.Routes (Route_Index).Middleware (Middleware_Index).Name,
+         Stage =>
+           Item.Routes (Route_Index).Middleware (Middleware_Index).Stage);
+   end Described_Route_Middleware;
 
-   procedure Find_Route
-     (Item  : Router;
+   procedure Find_Named_Route
+     (Item  : Router_Configuration;
       Name  : String;
       Route : out Route_ID;
-      Found : out Boolean)
-   is
-      Configuration : constant Configuration_Access :=
-        Current_Configuration (Item);
+      Found : out Boolean) is
    begin
-      for Index in 1 .. Configuration.Count loop
-         if To_String (Configuration.Routes (Index).Name) = Name then
-            Route := Configuration.Routes (Index).ID;
+      for Index in 1 .. Item.Count loop
+         if Item.Routes (Index).Name = Name then
+            Route := Item.Routes (Index).ID;
             Found := True;
             return;
          end if;
       end loop;
       Route := No_Route;
       Found := False;
+   end Find_Named_Route;
+
+   function Captured
+     (Item : Snapshot) return Configuration_Access is
+   begin
+      if Item.State.Configuration = null then
+         raise Program_Error with "HTTP router snapshot is empty";
+      end if;
+      return Item.State.Configuration;
+   end Captured;
+
+   overriding procedure Finalize (Item : in out Snapshot_State) is
+   begin
+      --  Generations stay reachable until the router is finalized, so
+      --  dropping the reference is all a snapshot owes.
+      Item.Configuration := null;
+   end Finalize;
+
+   procedure Take_Snapshot (Item : Router; Into : out Snapshot) is
+   begin
+      Into.State.Configuration := Current_Configuration (Item);
+   end Take_Snapshot;
+
+   function Route_Count (Item : Router) return Natural is
+     (Current_Configuration (Item).Count);
+
+   function Route_Count (Item : Snapshot) return Natural is
+     (Captured (Item).Count);
+
+   function Describe_Route
+     (Item  : Router;
+      Index : Positive) return Route_Description
+   is (Described_Route (Current_Configuration (Item).all, Index));
+
+   function Describe_Route
+     (Item  : Snapshot;
+      Index : Positive) return Route_Description
+   is (Described_Route (Captured (Item).all, Index));
+
+   function Global_Middleware_Count (Item : Router) return Natural is
+     (Current_Configuration (Item).Middleware_Count);
+
+   function Global_Middleware_Count (Item : Snapshot) return Natural is
+     (Captured (Item).Middleware_Count);
+
+   function Describe_Global_Middleware
+     (Item  : Router;
+      Index : Positive) return Middleware_Description
+   is (Described_Global_Middleware (Current_Configuration (Item).all, Index));
+
+   function Describe_Global_Middleware
+     (Item  : Snapshot;
+      Index : Positive) return Middleware_Description
+   is (Described_Global_Middleware (Captured (Item).all, Index));
+
+   function Route_Middleware_Count
+     (Item        : Router;
+      Route_Index : Positive) return Natural
+   is (Route_Middleware_Total (Current_Configuration (Item).all, Route_Index));
+
+   function Route_Middleware_Count
+     (Item        : Snapshot;
+      Route_Index : Positive) return Natural
+   is (Route_Middleware_Total (Captured (Item).all, Route_Index));
+
+   function Describe_Route_Middleware
+     (Item             : Router;
+      Route_Index      : Positive;
+      Middleware_Index : Positive) return Middleware_Description
+   is (Described_Route_Middleware
+         (Current_Configuration (Item).all, Route_Index, Middleware_Index));
+
+   function Describe_Route_Middleware
+     (Item             : Snapshot;
+      Route_Index      : Positive;
+      Middleware_Index : Positive) return Middleware_Description
+   is (Described_Route_Middleware
+         (Captured (Item).all, Route_Index, Middleware_Index));
+
+   procedure Find_Route
+     (Item  : Router;
+      Name  : String;
+      Route : out Route_ID;
+      Found : out Boolean) is
+   begin
+      Find_Named_Route (Current_Configuration (Item).all, Name, Route, Found);
+   end Find_Route;
+
+   procedure Find_Route
+     (Item  : Snapshot;
+      Name  : String;
+      Route : out Route_ID;
+      Found : out Boolean) is
+   begin
+      Find_Named_Route (Captured (Item).all, Name, Route, Found);
    end Find_Route;
 
    function Route_Index
