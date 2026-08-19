@@ -116,7 +116,8 @@ private package Flyology.QUIC.Connection_Driver is
    procedure Start_Client
      (Item   : in out Connection;
       Output : out Datagram_Batch;
-      Result : out Operation_Result);
+      Result : out Operation_Result;
+      Now    : Application_Space.Timestamp := 0);
 
    procedure Process_Datagram
      (Item   : in out Connection;
@@ -323,6 +324,15 @@ private
       Is_Client             : Boolean := True;
       Peer_ACK_Exponent     : Application_Space.ACK_Delay_Exponent := 3;
       Peer_Max_ACK_Delay    : Recovery_Policy.Duration := 25_000;
+      --  RFC 9002 loss recovery shared by the Initial and Handshake spaces.
+      --  Their probe timeout excludes max_ack_delay and their probe count
+      --  backs off together, so one path-wide state covers both.
+      Handshake_Recovery    : Recovery_Policy.State;
+      Has_Handshake_Sent    : Boolean := False;
+      Last_Handshake_Sent   : Application_Space.Timestamp := 0;
+      --  RFC 9002 PeerCompletedAddressValidation: a client that has processed
+      --  a Handshake packet no longer needs the anti-deadlock probe.
+      Peer_Validated        : Boolean := False;
       Local_ID              : Long_Header_Policy.Connection_ID;
       Peer_ID               : Long_Header_Policy.Connection_ID;
       Local_Parameters      : Transport_Parameter_Policy.Transport_Parameters;

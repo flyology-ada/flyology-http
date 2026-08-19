@@ -390,13 +390,15 @@ package body Flyology.QUIC.Connections is
    procedure Start_Client
      (Item   : in out Connection;
       Output : out Datagram_Batch;
-      Status : out Operation_Status)
+      Status : out Operation_Status;
+      Now    : Timestamp := 0)
    is
       Internal_Output : Connection_Driver.Datagram_Batch;
       Result          : Connection_Driver.Operation_Result;
    begin
       Connection_Driver.Start_Client
-        (Impl (Item).Driver, Internal_Output, Result);
+        (Impl (Item).Driver, Internal_Output, Result,
+         Application_Space.Timestamp (Now));
       Copy (Internal_Output, Output);
       Status := Public_Status (Result.Status);
    end Start_Client;

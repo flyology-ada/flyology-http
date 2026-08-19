@@ -87,12 +87,22 @@ is independently configurable through
 `FLYOLOGY_HTTP3_STRESS_LOOP_POOL_SIZE`. This is reproducible mutation/load
 testing, not coverage-guided fuzzing or a portable performance benchmark.
 
+## Handshake loss recovery
+
+`tests/http3_handshake_recovery.adb` runs the routed Ada HTTP/3 server and the
+standard Ada client on either side of a UDP relay that discards one handshake
+flight. Dropping the client Initial and dropping the server Handshake flight
+are each covered; the request completes only because the losing endpoint rearms
+its RFC 9002 section 6.2 probe timeout and retransmits. The deterministic
+transport-level cases live in `flyology_quic/tests/qualification.md`.
+
 ## Evidence boundary
 
 The current external matrix does not qualify QUIC Retry, version negotiation,
 stateless reset, resumption, 0-RTT, key update, connection migration, ECN,
 PMTU discovery, ChaCha20, dynamic QPACK, HTTP/3 push, coverage-guided fuzzing,
-or adverse packet loss/reordering. IPv6 is covered by internal application integration but not
+or adverse packet loss and reordering beyond the single-flight handshake losses
+above. IPv6 is covered by internal application integration but not
 yet by the two external peers. These are unsupported or unqualified until a
 corresponding published-vector or independent-peer gate lands.
 

@@ -3,6 +3,7 @@ with Flyology.QUIC.Debug;
 with Flyology.QUIC.Handshake_Packet_Policy;
 with Flyology.QUIC.Initial_Connection;
 with Flyology.QUIC.Initial_Packet_Policy;
+with Flyology.QUIC.Sent_Packet_Policy;
 with Flyology.QUIC.Stream_ID_Policy;
 with Flyology.QUIC.TLS_Key_Schedule;
 with Flyology.QUIC.Transport_Parameter_Policy;
@@ -20,6 +21,7 @@ package body Flyology.QUIC.Connection_Driver is
    use type Initial_Space.Process_Status;
    use type Initial_Packet_Policy.Parse_Status;
    use type Recovery_Policy.Duration;
+   use type Sent_Packet_Policy.Timestamp;
    use type TLS_Session.Operation_Status;
 
    function State (Item : Connection) return Connection_State is
@@ -41,14 +43,103 @@ package body Flyology.QUIC.Connection_Driver is
      (Item : Connection) return Varint_Policy.Value_Type is
      (Item.Close_Error);
 
-   function Has_Recovery_Timeout (Item : Connection) return Boolean is
+   --  RFC 9002 section 6.2 arms a probe timeout for the Initial and Handshake
+   --  spaces until the handshake is confirmed. A client keeps the timer armed
+   --  even with nothing in flight so it can send the anti-deadlock probe of
+   --  section 6.2.2.1; a server with nothing outstanding has nothing to probe
+   --  with and lets its peer drive.
+   function Handshake_Unacknowledged (Item : Connection) return Boolean is
+     (Initial_Space.Has_Unacknowledged (Item.Initial)
+      or else (Item.Handshake_Initialized
+               and then Handshake_Space.Has_Unacknowledged (Item.Handshake)));
+
+   function Has_Handshake_Timeout (Item : Connection) return Boolean is
+     (Item.Has_Handshake_Sent
+      and then not Item.Is_Handshake_Confirmed
+      and then Item.Current in Client_Initial | Client_Handshake
+        | Server_Initial | Server_Handshake | Connected
+      and then (Handshake_Unacknowledged (Item)
+                or else (Item.Is_Client and then not Item.Peer_Validated)));
+
+   function Handshake_Deadline
+     (Item : Connection) return Application_Space.Timestamp
+   is
+      --  Handshake packets are acknowledged immediately, so their probe
+      --  timeout excludes the peer's max_ack_delay.
+      Length : constant Recovery_Policy.Duration :=
+        Recovery_Policy.Probe_Timeout
+          (Item.Handshake_Recovery,
+           Maximum_ACK_Delay => 0,
+           Include_ACK_Delay => False);
+   begin
+      if Length >
+        Application_Space.Timestamp'Last - Item.Last_Handshake_Sent
+      then
+         return Application_Space.Timestamp'Last;
+      else
+         return Item.Last_Handshake_Sent + Length;
+      end if;
+   end Handshake_Deadline;
+
+   function Has_Application_Timeout (Item : Connection) return Boolean is
      (Item.Current = Connected
       and then Application_Space.Has_Recovery_Timeout (Item.Application));
 
+   function Has_Recovery_Timeout (Item : Connection) return Boolean is
+     (Has_Handshake_Timeout (Item) or else Has_Application_Timeout (Item));
+
    function Recovery_Deadline
      (Item : Connection) return Application_Space.Timestamp
-   is (Application_Space.Recovery_Deadline
-         (Item.Application, Item.Peer_Max_ACK_Delay));
+   is
+      Result : Application_Space.Timestamp := Application_Space.Timestamp'Last;
+   begin
+      if Has_Handshake_Timeout (Item) then
+         Result := Handshake_Deadline (Item);
+      end if;
+      if Has_Application_Timeout (Item) then
+         Result := Application_Space.Timestamp'Min
+           (Result,
+            Application_Space.Recovery_Deadline
+              (Item.Application, Item.Peer_Max_ACK_Delay));
+      end if;
+      return Result;
+   end Recovery_Deadline;
+
+   --  Record that an ack-eliciting handshake-space packet has just been sent,
+   --  which is what the probe timeout is measured from.
+   procedure Note_Handshake_Sent
+     (Item : in out Connection; Now : Application_Space.Timestamp) is
+   begin
+      Item.Has_Handshake_Sent := True;
+      Item.Last_Handshake_Sent := Now;
+   end Note_Handshake_Sent;
+
+   --  Fold one space's ACK outcome into the shared handshake recovery state.
+   procedure Apply_Handshake_Recovery
+     (Item            : in out Connection;
+      Resolved        : Sent_Packet_Policy.Apply_Result;
+      ACKed_Eliciting : Boolean;
+      Has_Sample      : Boolean;
+      Sample          : Application_Space.Timestamp;
+      Now             : Application_Space.Timestamp) is
+   begin
+      if Has_Sample then
+         Recovery_Policy.Update_RTT
+           (Item.Handshake_Recovery, Sample,
+            ACK_Delay => 0, Maximum_ACK_Delay => 0,
+            Handshake_Confirmed => False);
+      end if;
+      if ACKed_Eliciting then
+         Recovery_Policy.On_ACK_Received (Item.Handshake_Recovery);
+      end if;
+      Recovery_Policy.On_Packets_Resolved
+        (Item.Handshake_Recovery, Resolved.Events, Resolved.Count, Now,
+         Application_Limited => False);
+   end Apply_Handshake_Recovery;
+
+   function Handshake_Loss_Delay
+     (Item : Connection) return Application_Space.Timestamp is
+     (Recovery_Policy.Loss_Delay (Item.Handshake_Recovery));
 
    function Has_Stream
      (Item : Connection; Stream_ID : Varint_Policy.Value_Type) return Boolean
@@ -286,8 +377,12 @@ package body Flyology.QUIC.Connection_Driver is
    is
      (case Value is
          when Initial_Space.Built => Application_Space.Sent,
+         when Initial_Space.Nothing_To_ACK => Application_Space.Nothing_To_ACK,
          when Initial_Space.Crypto_Range_Too_Large =>
            Application_Space.Internal_State_Error,
+         when Initial_Space.Crypto_Retention_Exceeded
+            | Initial_Space.Recovery_Capacity_Exceeded =>
+           Application_Space.Recovery_Capacity_Exceeded,
          when Initial_Space.Packet_Number_Exhausted =>
            Application_Space.Packet_Number_Exhausted,
          when Initial_Space.Packet_Number_Unrepresentable =>
@@ -303,8 +398,12 @@ package body Flyology.QUIC.Connection_Driver is
    is
      (case Value is
          when Handshake_Space.Built => Application_Space.Sent,
+         when Handshake_Space.Nothing_To_ACK => Application_Space.Nothing_To_ACK,
          when Handshake_Space.Crypto_Range_Too_Large =>
            Application_Space.Internal_State_Error,
+         when Handshake_Space.Crypto_Retention_Exceeded
+            | Handshake_Space.Recovery_Capacity_Exceeded =>
+           Application_Space.Recovery_Capacity_Exceeded,
          when Handshake_Space.Packet_Number_Exhausted =>
            Application_Space.Packet_Number_Exhausted,
          when Handshake_Space.Packet_Number_Unrepresentable =>
@@ -402,6 +501,8 @@ package body Flyology.QUIC.Connection_Driver is
          when Initial_Space.Frame_Truncated
             | Initial_Space.Frame_Value_Too_Large
             | Initial_Space.Invalid_ACK_Range => 16#07#,
+         when Initial_Space.ACK_Range_Capacity_Exceeded
+            | Initial_Space.Acknowledges_Unsent_Packet => 16#0A#,
          when Initial_Space.Crypto_Data_Too_Large => 16#0D#,
          when Initial_Space.Processed
             | Initial_Space.Duplicate_Packet
@@ -420,6 +521,8 @@ package body Flyology.QUIC.Connection_Driver is
          when Handshake_Space.Frame_Truncated
             | Handshake_Space.Frame_Value_Too_Large
             | Handshake_Space.Invalid_ACK_Range => 16#07#,
+         when Handshake_Space.ACK_Range_Capacity_Exceeded
+            | Handshake_Space.Acknowledges_Unsent_Packet => 16#0A#,
          when Handshake_Space.Crypto_Data_Too_Large => 16#0D#,
          when Handshake_Space.Processed
             | Handshake_Space.Duplicate_Packet
@@ -727,7 +830,8 @@ package body Flyology.QUIC.Connection_Driver is
    procedure Start_Client
      (Item   : in out Connection;
       Output : out Datagram_Batch;
-      Result : out Operation_Result)
+      Result : out Operation_Result;
+      Now    : Application_Space.Timestamp := 0)
    is
       Hello : Ada.Streams.Stream_Element_Array (1 .. 1_200);
       TLS_Result : TLS_Session.Operation_Result;
@@ -747,10 +851,10 @@ package body Flyology.QUIC.Connection_Driver is
          return;
       end if;
       Initial_Space.Build_Crypto_Packet
-        (Item.Initial, (1 .. 0 => 0), 0,
+        (Item.Initial, 0,
          Hello (1 .. Ada.Streams.Stream_Element_Offset
                        (TLS_Result.Output_Length)),
-         Packet, Built);
+         Now, Packet, Built);
       if Built.Status /= Initial_Space.Built
         or else not Append (Output, Packet, Built.Packet_Length)
       then
@@ -758,6 +862,7 @@ package body Flyology.QUIC.Connection_Driver is
          Result.Status := Packet_Error;
          return;
       end if;
+      Note_Handshake_Sent (Item, Now);
       Result.Status := Succeeded;
    end Start_Client;
 
@@ -765,12 +870,14 @@ package body Flyology.QUIC.Connection_Driver is
      (Item   : in out Connection;
       Packet : Ada.Streams.Stream_Element_Array;
       Output : in out Datagram_Batch;
-      Result : in out Operation_Result)
+      Result : in out Operation_Result;
+      Now    : Application_Space.Timestamp)
    is
       Processed : Initial_Space.Process_Result;
       Length : Natural;
    begin
-      Initial_Space.Process_Packet (Item.Initial, Packet, Processed);
+      Initial_Space.Process_Packet
+        (Item.Initial, Packet, Now, Handshake_Loss_Delay (Item), Processed);
       if Processed.Status in
         Initial_Space.Duplicate_Packet | Initial_Space.Packet_Too_Old
           | Initial_Space.Envelope_Rejected
@@ -803,6 +910,9 @@ package body Flyology.QUIC.Connection_Driver is
          Result.Status := Connection_Closed;
          return;
       end if;
+      Apply_Handshake_Recovery
+        (Item, Processed.Resolved, Processed.ACKed_Eliciting,
+         Processed.Has_Sample, Processed.Sample, Now);
       Length := Message_Length (Item.Initial);
       if Length = 0 then
          Result.Status := Waiting_For_More;
@@ -844,11 +954,11 @@ package body Flyology.QUIC.Connection_Driver is
                return;
             end if;
             Initial_Space.Build_Crypto_Packet
-              (Item.Initial, (1 .. 0 => 0), 0,
+              (Item.Initial, 0,
                Server_Hello
                  (1 .. Ada.Streams.Stream_Element_Offset
                          (TLS_Result.Server_Hello_Length)),
-               Packet_Out, Initial_Built);
+               Now, Packet_Out, Initial_Built);
             if Initial_Built.Status /= Initial_Space.Built
               or else not Append
                 (Output, Packet_Out, Initial_Built.Packet_Length)
@@ -872,7 +982,7 @@ package body Flyology.QUIC.Connection_Driver is
                   Authentication
                     (Ada.Streams.Stream_Element_Offset (Offset + 1)
                        .. Ada.Streams.Stream_Element_Offset (Offset + Chunk)),
-                  Packet_Out, Handshake_Built);
+                  Now, Packet_Out, Handshake_Built);
                if Handshake_Built.Status /= Handshake_Space.Built
                  or else not Append
                    (Output, Packet_Out, Handshake_Built.Packet_Length)
@@ -883,6 +993,7 @@ package body Flyology.QUIC.Connection_Driver is
                end if;
                Offset := Offset + Chunk;
             end loop;
+            Note_Handshake_Sent (Item, Now);
             Item.Current := Server_Handshake;
             Result.Status := Succeeded;
          end;
@@ -908,6 +1019,10 @@ package body Flyology.QUIC.Connection_Driver is
                Item.Local_ID);
             Item.Handshake_Initialized := True;
             Item.Handshake_Consumed := 0;
+            --  A ServerHello can only follow delivery of the ClientHello, so
+            --  the Initial flight needs no further retransmission.
+            Initial_Space.Acknowledge_Flight (Item.Initial);
+            Recovery_Policy.On_ACK_Received (Item.Handshake_Recovery);
             Item.Current := Client_Handshake;
             Result.Status := Succeeded;
          end;
@@ -932,7 +1047,8 @@ package body Flyology.QUIC.Connection_Driver is
          Result.Status := Invalid_State;
          return;
       end if;
-      Handshake_Space.Process_Packet (Item.Handshake, Packet, Processed);
+      Handshake_Space.Process_Packet
+        (Item.Handshake, Packet, Now, Handshake_Loss_Delay (Item), Processed);
       if Processed.Status in
         Handshake_Space.Duplicate_Packet | Handshake_Space.Packet_Too_Old
           | Handshake_Space.Envelope_Rejected
@@ -962,6 +1078,12 @@ package body Flyology.QUIC.Connection_Driver is
          Result.Status := Connection_Closed;
          return;
       end if;
+      Apply_Handshake_Recovery
+        (Item, Processed.Resolved, Processed.ACKed_Eliciting,
+         Processed.Has_Sample, Processed.Sample, Now);
+      --  Receiving a Handshake packet completes the peer's address
+      --  validation, so a client no longer owes anti-deadlock probes.
+      Item.Peer_Validated := True;
 
       if Item.Current = Client_Handshake then
          Length := Authentication_Length (Item.Handshake);
@@ -1000,7 +1122,7 @@ package body Flyology.QUIC.Connection_Driver is
                Finished
                  (1 .. Ada.Streams.Stream_Element_Offset
                          (TLS_Result.Output_Length)),
-               Packet_Out, Built);
+               Now, Packet_Out, Built);
             if Built.Status /= Handshake_Space.Built
               or else not Append (Output, Packet_Out, Built.Packet_Length)
             then
@@ -1008,6 +1130,7 @@ package body Flyology.QUIC.Connection_Driver is
                Result.Status := Packet_Error;
                return;
             end if;
+            Note_Handshake_Sent (Item, Now);
             Initialize_Application (Item);
             Item.Handshake_Consumed := Length;
             Item.Current := Connected;
@@ -1053,6 +1176,10 @@ package body Flyology.QUIC.Connection_Driver is
                Result.Status := Output_Capacity_Exceeded;
                return;
             end if;
+            --  The client Finished can only follow delivery of the server
+            --  flight, so neither handshake space needs a probe timer now.
+            Initial_Space.Acknowledge_Flight (Item.Initial);
+            Handshake_Space.Acknowledge_Flight (Item.Handshake);
             Item.Is_Handshake_Confirmed := True;
             Item.Handshake_Consumed := Length;
             Item.Current := Connected;
@@ -1086,10 +1213,13 @@ package body Flyology.QUIC.Connection_Driver is
          Defer_Application_ACK => False, ACK_Deferred => ACK_Deferred);
    end Process_Datagram;
 
-   procedure Process_Datagram
+   --  Walk the coalesced packets of one datagram. Acknowledgments owed by the
+   --  handshake spaces are flushed by the caller once the whole datagram has
+   --  been consumed, so a multi-packet flight is acknowledged once.
+   procedure Scan_Datagram
      (Item                  : in out Connection;
       Packet                : Ada.Streams.Stream_Element_Array;
-      Output                : out Datagram_Batch;
+      Output                : in out Datagram_Batch;
       Result                : out Operation_Result;
       Now                   : Application_Space.Timestamp;
       Defer_Application_ACK : Boolean;
@@ -1100,7 +1230,6 @@ package body Flyology.QUIC.Connection_Driver is
       Total               : constant Natural := Natural (Packet'Length);
       Accepted            : Boolean := False;
    begin
-      Clear (Output);
       Result := (others => <>);
       ACK_Deferred := False;
       if Packet'Length = 0 then
@@ -1199,6 +1328,12 @@ package body Flyology.QUIC.Connection_Driver is
                      Result.Status := Connection_Closed;
                      return;
                   elsif Application_Result.Handshake_Done then
+                     --  HANDSHAKE_DONE can only follow delivery of the client
+                     --  Finished, retiring both handshake spaces.
+                     Initial_Space.Acknowledge_Flight (Item.Initial);
+                     if Item.Handshake_Initialized then
+                        Handshake_Space.Acknowledge_Flight (Item.Handshake);
+                     end if;
                      Item.Is_Handshake_Confirmed := True;
                   end if;
                   if Application_Result.ACK_Eliciting
@@ -1253,7 +1388,7 @@ package body Flyology.QUIC.Connection_Driver is
                           .. Remaining'First
                                + Ada.Streams.Stream_Element_Offset
                                    (Envelope.Consumed - 1)),
-                     Output, Result);
+                     Output, Result, Now);
                   if Result.Status not in Succeeded | Waiting_For_More then
                      return;
                   end if;
@@ -1297,7 +1432,159 @@ package body Flyology.QUIC.Connection_Driver is
             end if;
          end;
       end loop;
+   end Scan_Datagram;
+
+   procedure Process_Datagram
+     (Item                  : in out Connection;
+      Packet                : Ada.Streams.Stream_Element_Array;
+      Output                : out Datagram_Batch;
+      Result                : out Operation_Result;
+      Now                   : Application_Space.Timestamp;
+      Defer_Application_ACK : Boolean;
+      ACK_Deferred          : out Boolean)
+   is
+      Packet_Out : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
+      Initial_Built : Initial_Space.Build_Result;
+      Handshake_Built : Handshake_Space.Build_Result;
+   begin
+      Clear (Output);
+      Scan_Datagram
+        (Item, Packet, Output, Result, Now, Defer_Application_ACK,
+         ACK_Deferred);
+      if Result.Status not in Succeeded | Waiting_For_More
+        or else Item.Current in Uninitialized | Peer_Closed | Failed
+      then
+         return;
+      end if;
+
+      --  RFC 9000 section 13.2.1 requires an immediate acknowledgment of an
+      --  ack-eliciting Initial or Handshake packet. A response this datagram
+      --  already produced in that space carries the acknowledgment with it;
+      --  anything still owed goes out as an ACK-only packet now, so the
+      --  acknowledgment never rides an unrelated later datagram and the
+      --  peer's probe timeout is cleared within one round trip.
+      if Initial_Space.Needs_ACK (Item.Initial)
+        and then Output.Count < Max_Output_Datagrams
+      then
+         Initial_Space.Build_ACK_Packet
+           (Item.Initial, Now, Packet_Out, Initial_Built);
+         if Initial_Built.Status = Initial_Space.Built
+           and then not Append (Output, Packet_Out,
+                                Initial_Built.Packet_Length)
+         then
+            Result.Status := Output_Capacity_Exceeded;
+            return;
+         end if;
+      end if;
+      if Item.Handshake_Initialized
+        and then Handshake_Space.Needs_ACK (Item.Handshake)
+        and then Output.Count < Max_Output_Datagrams
+      then
+         Handshake_Space.Build_ACK_Packet
+           (Item.Handshake, Now, Packet_Out, Handshake_Built);
+         if Handshake_Built.Status = Handshake_Space.Built
+           and then not Append (Output, Packet_Out,
+                                Handshake_Built.Packet_Length)
+         then
+            Result.Status := Output_Capacity_Exceeded;
+            return;
+         end if;
+      end if;
    end Process_Datagram;
+
+   --  RFC 9002 section 6.2.4 probes the handshake spaces by retransmitting
+   --  every CRYPTO range that is still unacknowledged. When nothing remains a
+   --  client sends the anti-deadlock PING of section 6.2.2.1.
+   procedure Process_Handshake_Timeout
+     (Item   : in out Connection;
+      Now    : Application_Space.Timestamp;
+      Output : in out Datagram_Batch;
+      Status : out Timeout_Status)
+   is
+      Packet          : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Datagram_Length);
+      Initial_Built   : Initial_Space.Build_Result;
+      Handshake_Built : Handshake_Space.Build_Result;
+      Emitted         : Natural := 0;
+   begin
+      Status := Probes_Ready;
+      for Index in 1 .. Max_Output_Datagrams loop
+         Initial_Space.Build_Probe_Packet
+           (Item.Initial, Index, Now, Packet, Initial_Built);
+         exit when Initial_Built.Status = Initial_Space.Nothing_To_ACK;
+         if Initial_Built.Status /= Initial_Space.Built then
+            Status := Timeout_Packet_Error;
+            return;
+         elsif not Append (Output, Packet, Initial_Built.Packet_Length) then
+            Status := Timeout_Output_Capacity_Exceeded;
+            return;
+         end if;
+         Emitted := Emitted + 1;
+      end loop;
+
+      if Item.Handshake_Initialized then
+         for Index in 1 .. Max_Output_Datagrams loop
+            Handshake_Space.Build_Probe_Packet
+              (Item.Handshake, Index, Now, Packet, Handshake_Built);
+            exit when Handshake_Built.Status = Handshake_Space.Nothing_To_ACK;
+            if Handshake_Built.Status /= Handshake_Space.Built then
+               Status := Timeout_Packet_Error;
+               return;
+            elsif not Append
+              (Output, Packet, Handshake_Built.Packet_Length)
+            then
+               Status := Timeout_Output_Capacity_Exceeded;
+               return;
+            end if;
+            Emitted := Emitted + 1;
+         end loop;
+      end if;
+
+      if Emitted = 0 then
+         if not Item.Is_Client then
+            --  A server never sends anti-deadlock probes, so with nothing
+            --  left to retransmit it has nothing to arm the timer with.
+            Item.Has_Handshake_Sent := False;
+            Status := No_Pending_Recovery;
+            return;
+         elsif Item.Handshake_Initialized then
+            Handshake_Space.Build_Ping_Packet
+              (Item.Handshake, Now, Packet, Handshake_Built);
+            if Handshake_Built.Status /= Handshake_Space.Built then
+               Status := Timeout_Packet_Error;
+               return;
+            elsif not Append
+              (Output, Packet, Handshake_Built.Packet_Length)
+            then
+               Status := Timeout_Output_Capacity_Exceeded;
+               return;
+            end if;
+         else
+            Initial_Space.Build_Ping_Packet
+              (Item.Initial, Now, Packet, Initial_Built);
+            if Initial_Built.Status /= Initial_Space.Built then
+               Status := Timeout_Packet_Error;
+               return;
+            elsif not Append (Output, Packet, Initial_Built.Packet_Length)
+            then
+               Status := Timeout_Output_Capacity_Exceeded;
+               return;
+            end if;
+         end if;
+      end if;
+
+      Recovery_Policy.On_Probe_Timeout (Item.Handshake_Recovery);
+      Note_Handshake_Sent (Item, Now);
+      if Debug.Enabled then
+         Debug.Log
+           ("quic", "handshake-probe",
+            "state=" & Connection_State'Image (Item.Current) &
+            " packets=" & Natural'Image (Output.Count) &
+            " count=" & Recovery_Policy.PTO_Count_Type'Image
+              (Recovery_Policy.PTO_Count (Item.Handshake_Recovery)));
+      end if;
+   end Process_Handshake_Timeout;
 
    procedure Process_Timeout
      (Item   : in out Connection;
@@ -1309,16 +1596,21 @@ package body Flyology.QUIC.Connection_Driver is
       Built  : Application_Space.Send_Result;
    begin
       Clear (Output);
-      if Item.Current /= Connected then
+      if Item.Current in Uninitialized | Peer_Closed | Failed then
          Status := Timeout_Invalid_State;
          return;
-      elsif not Application_Space.Has_Recovery_Timeout (Item.Application) then
+      elsif not Has_Recovery_Timeout (Item) then
          Status := No_Pending_Recovery;
          return;
-      elsif Now < Application_Space.Recovery_Deadline
-        (Item.Application, Item.Peer_Max_ACK_Delay)
-      then
+      elsif Now < Recovery_Deadline (Item) then
          Status := Not_Due;
+         return;
+      end if;
+
+      if Has_Handshake_Timeout (Item)
+        and then Handshake_Deadline (Item) <= Now
+      then
+         Process_Handshake_Timeout (Item, Now, Output, Status);
          return;
       end if;
 

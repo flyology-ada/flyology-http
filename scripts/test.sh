@@ -112,6 +112,7 @@ development_certificates_smoke
 http3_public_smoke
 http3_server_integration
 http3_handshake_abandon
+http3_handshake_recovery
 flyology-http-http_3_frame_policy-smoke
 flyology-http-http_3_header_policy-smoke
 flyology-http-http_3_message_policy-smoke

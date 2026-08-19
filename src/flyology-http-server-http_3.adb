@@ -1651,6 +1651,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Cleanup;
          return;
       end if;
+      --  Receive_One bounds each wait by the QUIC recovery deadline, so a lost
+      --  server Initial or Handshake flight is retransmitted by the RFC 9002
+      --  handshake probe timeout instead of stalling until Handshake_Timeout.
       while not QUIC.Is_Connected (State.Transport) loop
          if Handshake_Remaining = 0.0 then
             raise Flyology.IO.Timeout_Error;

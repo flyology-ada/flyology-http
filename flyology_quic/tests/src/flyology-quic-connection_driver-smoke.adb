@@ -215,20 +215,28 @@ begin
    Connection_IO.Send (Client_Socket, Reply, Timeout => 1.0);
    Connection_IO.Receive
      (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);
+   --  HANDSHAKE_DONE plus the Handshake-space acknowledgment of the client
+   --  Finished, which RFC 9000 13.2.1 requires immediately and which no
+   --  1-RTT packet can carry.
    pragma Assert
      (Server_Result.Status = Succeeded and then Is_Connected (Server)
       and then Handshake_Confirmed (Server)
-      and then Server_Output.Count = 1);
+      and then Server_Output.Count = 2);
 
+   Reply := (others => <>);
    Connection_IO.Send (Server_Socket, Server_Output, Timeout => 1.0);
-   Connection_IO.Receive
-     (Client_Socket, Client, Client_Output, Client_Result,
-      Timeout => 1.0);
-   pragma Assert
-     (Client_Result.Status = Succeeded and then Handshake_Confirmed (Client)
-      and then Client_Output.Count = 1);
+   for Index in 1 .. Server_Output.Count loop
+      Connection_IO.Receive
+        (Client_Socket, Client, Client_Output, Client_Result,
+         Timeout => 1.0);
+      pragma Assert (Client_Result.Status = Succeeded);
+      if Client_Output.Count > 0 then
+         Reply := Client_Output;
+      end if;
+   end loop;
+   pragma Assert (Handshake_Confirmed (Client) and then Reply.Count = 1);
 
-   Connection_IO.Send (Client_Socket, Client_Output, Timeout => 1.0);
+   Connection_IO.Send (Client_Socket, Reply, Timeout => 1.0);
    Connection_IO.Receive
      (Server_Socket, Server, Server_Output, Server_Result, Timeout => 1.0);
    pragma Assert
@@ -379,10 +387,12 @@ begin
          Coalesced.Data
            (1 .. Ada.Streams.Stream_Element_Offset (Coalesced.Length)),
          Finish, Client_Status);
+      --  Finished, plus the Initial-space acknowledgment of the ServerHello
+      --  that no Handshake packet can carry.
       pragma Assert
         (Connections.Is_Connected (Public_Client)
          and then not Connections.Handshake_Confirmed (Public_Client)
-         and then Finish.Count = 1);
+         and then Finish.Count = 2);
       Connections.Process_Datagram
         (Public_Server,
          Finish.Items (1).Data
@@ -392,7 +402,7 @@ begin
       pragma Assert
         (Connections.Is_Connected (Public_Server)
          and then Connections.Handshake_Confirmed (Public_Server)
-         and then Server_Flight.Count = 1);
+         and then Server_Flight.Count = 2);
       Connections.Process_Datagram
         (Public_Client,
          Server_Flight.Items (1).Data

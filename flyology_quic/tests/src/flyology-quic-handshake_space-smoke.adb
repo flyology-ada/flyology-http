@@ -39,11 +39,11 @@ begin
    Initialize (Server, Server_Keys, Client_Keys, Client_ID, Server_ID);
 
    Build_Crypto_Packet
-     (Client, 0, Flight (1 .. 1_000), Packet_1, Built_1);
+     (Client, 0, Flight (1 .. 1_000), 100, Packet_1, Built_1);
    Build_Crypto_Packet
-     (Client, 1_000, Flight (1_001 .. 2_000), Packet_2, Built_2);
+     (Client, 1_000, Flight (1_001 .. 2_000), 100, Packet_2, Built_2);
    Build_Crypto_Packet
-     (Client, 2_000, Flight (2_001 .. 2_500), Packet_3, Built_3);
+     (Client, 2_000, Flight (2_001 .. 2_500), 100, Packet_3, Built_3);
    pragma Assert
      (Built_1.Status = Built and then Built_2.Status = Built
       and then Built_3.Status = Built
@@ -55,20 +55,20 @@ begin
      (Server,
       Packet_2
         (1 .. Ada.Streams.Stream_Element_Offset (Built_2.Packet_Length)),
-      Received);
+      200, 1_000, Received);
    pragma Assert
      (Received.Status = Processed and then Contiguous_Length (Server) = 0);
    Process_Packet
      (Server,
       Packet_1
         (1 .. Ada.Streams.Stream_Element_Offset (Built_1.Packet_Length)),
-      Received);
+      200, 1_000, Received);
    pragma Assert (Contiguous_Length (Server) = 2_000);
    Process_Packet
      (Server,
       Packet_3
         (1 .. Ada.Streams.Stream_Element_Offset (Built_3.Packet_Length)),
-      Received);
+      200, 1_000, Received);
    pragma Assert
      (Received.Status = Processed
       and then Contiguous_Length (Server) = Flight'Length);

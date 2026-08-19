@@ -329,10 +329,12 @@ package Flyology.QUIC.Connections is
    --  @param Item Initialized client connection
    --  @param Output Datagrams to transmit
    --  @param Status Transition outcome
+   --  @param Now Monotonic microsecond timestamp for recovery accounting
    procedure Start_Client
      (Item   : in out Connection;
       Output : out Datagram_Batch;
-      Status : out Operation_Status)
+      Status : out Operation_Status;
+      Now    : Timestamp := 0)
    with Pre => State (Item) = Client_Initial;
 
    --  Process one UDP payload and return any immediate response flight,
@@ -370,10 +372,10 @@ package Flyology.QUIC.Connections is
    with Pre => Packet'Length <= Max_Datagram_Length;
 
    --  Outcome of processing a recovery timer expiration.
-   --  @enum Probes_Ready Output contains one or two ACK-eliciting PTO probes
+   --  @enum Probes_Ready Output contains ACK-eliciting PTO probes
    --  @enum Not_Due The current recovery deadline is still in the future
-   --  @enum No_Pending_Recovery No in-flight application packet needs a timer
-   --  @enum Invalid_Timeout_State Application traffic keys are not active
+   --  @enum No_Pending_Recovery No in-flight packet needs a timer
+   --  @enum Invalid_Timeout_State No packet-number space is active
    --  @enum Timeout_Packet_Error A protected probe could not be built
    --  @enum Timeout_Output_Capacity_Exceeded Probe output did not fit
    type Timeout_Status is
@@ -384,21 +386,26 @@ package Flyology.QUIC.Connections is
       Timeout_Packet_Error,
       Timeout_Output_Capacity_Exceeded);
 
-   --  Report whether an application-space recovery timer is armed.
+   --  Report whether a recovery timer is armed in any packet-number space.
+   --  Initial and Handshake spaces arm an RFC 9002 section 6.2 probe timeout
+   --  until the handshake is confirmed; the application space arms one while
+   --  an ACK-eliciting 1-RTT packet remains in flight.
    --  @param Item Connection to inspect
-   --  @return True while an ACK-eliciting packet remains in flight
+   --  @return True while a probe timeout is armed
    function Has_Recovery_Timeout (Item : Connection) return Boolean;
 
-   --  Return the absolute monotonic deadline for the armed recovery timer.
-   --  @param Item Connected connection with in-flight application data
+   --  Return the absolute monotonic deadline for the earliest armed recovery
+   --  timer.
+   --  @param Item Connection with an armed recovery timer
    --  @return Monotonic microsecond deadline
    function Recovery_Deadline (Item : Connection) return Timestamp
    with Pre => Has_Recovery_Timeout (Item);
 
-   --  Process an application-space PTO and produce bounded probes. A probe
-   --  retransmits retained STREAM or control data when available and otherwise
-   --  carries PING.
-   --  @param Item Connected endpoint
+   --  Process an expired PTO and produce bounded probes. A handshake-space
+   --  probe retransmits unacknowledged CRYPTO data, or carries the client's
+   --  anti-deadlock PING when none remains. An application-space probe
+   --  retransmits retained STREAM or control data and otherwise carries PING.
+   --  @param Item Initialized endpoint
    --  @param Now Current monotonic microsecond timestamp
    --  @param Output Probe datagrams when Status is Probes_Ready
    --  @param Status Timer transition outcome
