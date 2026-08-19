@@ -45,6 +45,7 @@ project HTTP_Tests is
       "http3_client_stress_probe.adb",
       "http3_public_smoke.adb",
       "http3_server_integration.adb",
+      "http3_handshake_abandon.adb",
       "flyology-http-http_3_frame_policy-smoke.adb",
       "flyology-http-http_3_header_policy-smoke.adb",
       "flyology-http-http_3_message_policy-smoke.adb",
