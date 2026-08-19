@@ -2357,6 +2357,125 @@ procedure HTTP_Routing_Audit is
       Expect ("renamed route resolves", Found'Image, "TRUE");
    end Check_Update_Validation;
 
+   --  Each Router introspection call reads the generation published when it
+   --  runs, so a count from one call and an index used in the next can
+   --  straddle a commit. A snapshot pins one generation for the traversal.
+   procedure Check_Introspection_Snapshot is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      procedure Endpoint
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "thing");
+      end Endpoint;
+
+      procedure Layer
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Layer", "on");
+         Next.Call (State, X);
+      end Layer;
+
+      Routes : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      First  : Routing.Route_ID;
+      Second : Routing.Route_ID;
+      Third  : Routing.Route_ID;
+      Layer_ID : Routing.Middleware_ID;
+      View   : Routing.Snapshot;
+      Total  : Natural;
+      Raised : Boolean;
+   begin
+      Routes.Get ("/a", Endpoint'Access, First, Name => "a");
+      Routes.Get ("/b", Endpoint'Access, Second, Name => "b");
+      Routes.Get ("/c", Endpoint'Access, Third, Name => "c");
+      Routes.Add_Middleware (Layer'Access, Layer_ID, Name => "layer");
+      Routes.Add_Route_Middleware (Second, Layer'Access, Layer_ID);
+
+      Routes.Take_Snapshot (View);
+      Total := Routing.Route_Count (View);
+      Expect ("snapshot captured count", Total'Image, " 3");
+
+      --  Shrink the published generation underneath the traversal.
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Remove (Change, Third);
+         Routing.Remove (Change, Second);
+         Routes.Commit (Change);
+      end;
+      Expect ("published generation shrank", Routes.Route_Count'Image, " 1");
+
+      declare
+         Names : Unbounded_String;
+      begin
+         for Index in 1 .. Total loop
+            Append (Names, Routing.Describe_Route (View, Index).Name);
+            Append (Names, ",");
+         end loop;
+         Expect ("snapshot traversal complete", To_String (Names), "a,b,c,");
+      end;
+
+      Expect
+        ("snapshot keeps global middleware",
+         Routing.Global_Middleware_Count (View)'Image, " 1");
+      Expect
+        ("snapshot keeps route middleware",
+         Routing.Route_Middleware_Count (View, 2)'Image, " 1");
+      Expect
+        ("snapshot describes route middleware",
+         To_String (Routing.Describe_Route_Middleware (View, 2, 1).Name), "");
+
+      declare
+         Resolved : Routing.Route_ID;
+         Found    : Boolean;
+      begin
+         Routing.Find_Route (View, "b", Resolved, Found);
+         Expect ("snapshot resolves captured name", Found'Image, "TRUE");
+         Routes.Find_Route ("b", Resolved, Found);
+         Expect ("published no longer resolves name", Found'Image, "FALSE");
+      end;
+
+      --  The per-call form is exactly what a snapshot exists to avoid.
+      Raised := False;
+      begin
+         declare
+            Ignored : constant Routing.Route_Description :=
+              Routes.Describe_Route (Total);
+         begin
+            Expect ("unreachable", To_String (Ignored.Name), "");
+         end;
+      exception
+         when Constraint_Error =>
+            Raised := True;
+      end;
+      Expect ("per-call traversal straddles a commit", Raised'Image, "TRUE");
+
+      Raised := False;
+      begin
+         declare
+            Empty   : Routing.Snapshot;
+            Ignored : constant Natural := Routing.Route_Count (Empty);
+         begin
+            Expect ("unreachable", Ignored'Image, "");
+         end;
+      exception
+         when Program_Error =>
+            Raised := True;
+      end;
+      Expect ("empty snapshot refused", Raised'Image, "TRUE");
+   end Check_Introspection_Snapshot;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -2374,6 +2493,7 @@ begin
    Check_Mounted_Middleware_Identity;
    Check_Update_Lifecycle;
    Check_Update_Validation;
+   Check_Introspection_Snapshot;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

@@ -143,6 +143,11 @@ package Flyology.HTTP.Server.Routing is
    --  it. A candidate based on a superseded generation is rejected.
    type Update is limited private;
 
+   --  Immutable view of one published generation. Every operation on one
+   --  snapshot reads the same generation, so a count and the indexes taken
+   --  from it stay consistent while another writer commits.
+   type Snapshot is limited private;
+
    --  Bounded route registry. Direct registration writes the published
    --  generation in place, so it belongs to application setup: the first
    --  dispatch seals the router and every direct registration or setter
@@ -242,6 +247,74 @@ package Flyology.HTTP.Server.Routing is
    --  @param Found Whether Name identifies a route
    procedure Find_Route
      (Item  : Router;
+      Name  : String;
+      Route : out Route_ID;
+      Found : out Boolean);
+
+   --  Capture the published generation for a consistent traversal. Each
+   --  Router introspection call reads the generation published when that
+   --  call runs, so a count from one call and an index used in the next can
+   --  straddle a commit. Take one snapshot and traverse that instead.
+   --  @param Item Router registry
+   --  @param Into Snapshot receiving the captured generation
+   procedure Take_Snapshot (Item : Router; Into : out Snapshot);
+
+   --  Return the number of routes in the captured generation.
+   --  @param Item Captured generation
+   --  @return Number of routes in registration order
+   function Route_Count (Item : Snapshot) return Natural;
+
+   --  Copy one route's public configuration from the captured generation.
+   --  @param Item Captured generation
+   --  @param Index Route position in registration order
+   --  @return Owned copy of the route's public configuration
+   --  @exception Constraint_Error Index exceeds the captured route count
+   function Describe_Route
+     (Item  : Snapshot;
+      Index : Positive) return Route_Description;
+
+   --  Return the number of global components in the captured generation.
+   --  @param Item Captured generation
+   --  @return Number of global middleware registrations
+   function Global_Middleware_Count (Item : Snapshot) return Natural;
+
+   --  Copy one global middleware registration from the captured generation.
+   --  @param Item Captured generation
+   --  @param Index Registration position in registration order
+   --  @return Owned copy of the registration
+   --  @exception Constraint_Error Index exceeds the captured count
+   function Describe_Global_Middleware
+     (Item  : Snapshot;
+      Index : Positive) return Middleware_Description;
+
+   --  Return one route's middleware count in the captured generation.
+   --  @param Item Captured generation
+   --  @param Route_Index Route position in registration order
+   --  @return Number of components attached to the route
+   --  @exception Constraint_Error Route_Index exceeds the captured count
+   function Route_Middleware_Count
+     (Item        : Snapshot;
+      Route_Index : Positive) return Natural;
+
+   --  Copy one route-local middleware registration from the captured
+   --  generation.
+   --  @param Item Captured generation
+   --  @param Route_Index Route position in registration order
+   --  @param Middleware_Index Component position within the route chain
+   --  @return Owned copy of the registration
+   --  @exception Constraint_Error Either index exceeds its captured count
+   function Describe_Route_Middleware
+     (Item             : Snapshot;
+      Route_Index      : Positive;
+      Middleware_Index : Positive) return Middleware_Description;
+
+   --  Resolve a route name within the captured generation.
+   --  @param Item Captured generation
+   --  @param Name Configured route name
+   --  @param Route Resolved identity, or No_Route when absent
+   --  @param Found Whether Name identifies a route
+   procedure Find_Route
+     (Item  : Snapshot;
       Name  : String;
       Route : out Route_ID;
       Found : out Boolean);
@@ -1353,6 +1426,16 @@ private
 
    type Update is limited record
       State : Update_State;
+   end record;
+
+   type Snapshot_State is new Ada.Finalization.Limited_Controlled with record
+      Configuration : Configuration_Access;
+   end record;
+
+   overriding procedure Finalize (Item : in out Snapshot_State);
+
+   type Snapshot is limited record
+      State : Snapshot_State;
    end record;
 
 end Flyology.HTTP.Server.Routing;
