@@ -178,13 +178,18 @@ package body Flyology.HTTP.Server.Routing is
       Item.First_Configuration := null;
    end Finalize;
 
-   overriding procedure Finalize (Item : in out Update_State) is
+   procedure Release (Item : in out Update_State) is
    begin
       if Item.Candidate /= null then
          Free_Configuration (Item.Candidate);
       end if;
       Item.Owner := System.Null_Address;
       Item.Base := null;
+   end Release;
+
+   overriding procedure Finalize (Item : in out Update_State) is
+   begin
+      Release (Item);
    end Finalize;
 
    function Exception_Summary
@@ -1397,6 +1402,10 @@ package body Flyology.HTTP.Server.Routing is
       Candidate := Change.State.Candidate;
       Item.Publisher.Try_Publish (Change.State.Base, Candidate, Accepted);
       if not Accepted then
+         --  The base generation is gone, so this candidate can never be
+         --  published. Release it so the same update object can be rebuilt
+         --  from the newer generation instead of being discarded.
+         Release (Change.State);
          raise Stale_Update with "HTTP router generation was replaced";
       end if;
       Candidate.Previous := Item.First_Configuration;
@@ -1408,6 +1417,11 @@ package body Flyology.HTTP.Server.Routing is
       Change.State.Owner := System.Null_Address;
       Change.State.Base := null;
    end Commit;
+
+   procedure Abandon (Change : in out Update) is
+   begin
+      Release (Change.State);
+   end Abandon;
 
    procedure Set_Automatic_Admission
      (Item            : in out Router;

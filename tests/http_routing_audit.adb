@@ -1583,32 +1583,56 @@ procedure HTTP_Routing_Audit is
            (Capacity => 1, Slashes => Routing.Strict_Slashes);
          Hot_Route  : Routing.Route_ID;
 
+         Publications : constant := 101;
+
+         --  Cancel opens the gate without arming the workers, so a failure
+         --  before Start can never strand them and deadlock the block exit.
          protected Start_Barrier is
             procedure Start;
-            entry Wait;
+            procedure Cancel;
+            entry Wait (Proceed : out Boolean);
          private
-            Started : Boolean := False;
+            Open    : Boolean := False;
+            Armed   : Boolean := False;
          end Start_Barrier;
 
          protected body Start_Barrier is
             procedure Start is
             begin
-               Started := True;
+               Armed := True;
+               Open := True;
             end Start;
 
-            entry Wait when Started is
+            procedure Cancel is
             begin
-               null;
+               Open := True;
+            end Cancel;
+
+            entry Wait (Proceed : out Boolean) when Open is
+            begin
+               Proceed := Armed;
             end Wait;
          end Start_Barrier;
 
          protected Results is
             procedure Fail;
+            procedure Note_Initial;
+            procedure Note_Final;
+            procedure Enter_Round_One;
+            entry Wait_Round_One;
+            procedure Publishing_Done;
+            function Publishing_Complete return Boolean;
             procedure Finish;
             entry Wait_Until_Done;
             function Failure_Count return Natural;
+            function Initial_Count return Natural;
+            function Final_Count return Natural;
          private
             Failures_Seen : Natural := 0;
+            Initial_Seen  : Natural := 0;
+            Final_Seen    : Natural := 0;
+            Round_One     : Natural := 0;
+            Published     : Boolean := False;
             Finished      : Natural := 0;
          end Results;
 
@@ -1617,6 +1641,33 @@ procedure HTTP_Routing_Audit is
             begin
                Failures_Seen := Failures_Seen + 1;
             end Fail;
+
+            procedure Note_Initial is
+            begin
+               Initial_Seen := Initial_Seen + 1;
+            end Note_Initial;
+
+            procedure Note_Final is
+            begin
+               Final_Seen := Final_Seen + 1;
+            end Note_Final;
+
+            procedure Enter_Round_One is
+            begin
+               Round_One := Round_One + 1;
+            end Enter_Round_One;
+
+            entry Wait_Round_One when Round_One = 4 is
+            begin
+               null;
+            end Wait_Round_One;
+
+            procedure Publishing_Done is
+            begin
+               Published := True;
+            end Publishing_Done;
+
+            function Publishing_Complete return Boolean is (Published);
 
             procedure Finish is
             begin
@@ -1629,57 +1680,123 @@ procedure HTTP_Routing_Audit is
             end Wait_Until_Done;
 
             function Failure_Count return Natural is (Failures_Seen);
+            function Initial_Count return Natural is (Initial_Seen);
+            function Final_Count return Natural is (Final_Seen);
          end Results;
 
          task type Worker;
 
          task body Worker is
             Local_State : Context;
-         begin
-            Start_Barrier.Wait;
-            for Iteration in 1 .. 250 loop
-               pragma Unreferenced (Iteration);
+            Proceed     : Boolean;
+            Counted     : Boolean := False;
+            Rounds      : Natural := 0;
+
+            --  Returns the response body marker, or NUL when the exchange was
+            --  not a well-formed 200 carrying one of the two known bodies.
+            function One_Request return Character is
+               Wire : aliased Memory_Transport;
+            begin
+               Wire.Input := To_Unbounded_String
+                 ("GET /hot HTTP/1.1" & CRLF
+                  & "Host: localhost" & CRLF
+                  & "Connection: close" & CRLF & CRLF);
                declare
-                  Wire : aliased Memory_Transport;
+                  Client : aliased HTTP_Server.Connection (Wire'Access);
                begin
-                  Wire.Input := To_Unbounded_String
-                    ("GET /hot HTTP/1.1" & CRLF
-                     & "Host: localhost" & CRLF
-                     & "Connection: close" & CRLF & CRLF);
-                  declare
-                     Client : aliased HTTP_Server.Connection (Wire'Access);
-                  begin
-                     Hot_Routes.Serve (Local_State, Client, Test_Peer);
-                  end;
-                  declare
-                     Output : constant String := To_String (Wire.Output);
-                  begin
-                     if Ada.Strings.Fixed.Index (Output, " 200 ") = 0
-                       or else
-                         (Ada.Strings.Fixed.Index
-                            (Output, CRLF & CRLF & "one") = 0
-                          and then Ada.Strings.Fixed.Index
-                            (Output, CRLF & CRLF & "two") = 0)
-                     then
-                        Results.Fail;
-                     end if;
-                  end;
+                  Hot_Routes.Serve (Local_State, Client, Test_Peer);
                end;
-            end loop;
+               declare
+                  Output : constant String := To_String (Wire.Output);
+               begin
+                  if Ada.Strings.Fixed.Index (Output, " 200 ") = 0 then
+                     return Character'Val (0);
+                  elsif Ada.Strings.Fixed.Index
+                          (Output, CRLF & CRLF & "one") /= 0
+                  then
+                     return '1';
+                  elsif Ada.Strings.Fixed.Index
+                          (Output, CRLF & CRLF & "two") /= 0
+                  then
+                     return '2';
+                  else
+                     return Character'Val (0);
+                  end if;
+               end;
+            end One_Request;
+
+            Seen : Character;
+         begin
+            Start_Barrier.Wait (Proceed);
+            if not Proceed then
+               Results.Fail;
+               Results.Enter_Round_One;
+            else
+               --  Round one runs before any publication, so it must observe
+               --  the handler the direct registration installed.
+               Seen := One_Request;
+               if Seen /= '1' then
+                  Results.Fail;
+               else
+                  Results.Note_Initial;
+               end if;
+               Counted := True;
+               Results.Enter_Round_One;
+
+               --  Serve across the whole publication sequence. Every
+               --  response must be one complete generation, never a mixture.
+               while not Results.Publishing_Complete
+                 and then Rounds < 100_000
+               loop
+                  Seen := One_Request;
+                  if Seen = Character'Val (0) then
+                     Results.Fail;
+                  end if;
+                  Rounds := Rounds + 1;
+               end loop;
+
+               --  Publication has stopped, so the generation is fixed and
+               --  this request must observe the last handler published.
+               Seen := One_Request;
+               if Seen /= '2' then
+                  Results.Fail;
+               else
+                  Results.Note_Final;
+               end if;
+            end if;
             Results.Finish;
          exception
             when others =>
                Results.Fail;
+               if not Counted then
+                  Results.Enter_Round_One;
+               end if;
                Results.Finish;
          end Worker;
 
          Workers : array (1 .. 4) of Worker;
          pragma Unreferenced (Workers);
       begin
-         Hot_Routes.Get
-           ("/hot", Handler_One'Access, Hot_Route, Name => "hot");
+         begin
+            Hot_Routes.Get
+              ("/hot", Handler_One'Access, Hot_Route, Name => "hot");
+         exception
+            when others =>
+               Start_Barrier.Cancel;
+               raise;
+         end;
          Start_Barrier.Start;
-         for Generation in 1 .. 100 loop
+
+         select
+            Results.Wait_Round_One;
+         or
+            delay 30.0;
+            Expect ("runtime concurrent round one reached", "FALSE", "TRUE");
+         end select;
+
+         --  An odd count leaves Handler_Two published, so the closing request
+         --  of every worker has a single correct answer.
+         for Generation in 1 .. Publications loop
             declare
                Change : Routing.Update;
             begin
@@ -1692,10 +1809,24 @@ procedure HTTP_Routing_Audit is
                Hot_Routes.Commit (Change);
             end;
          end loop;
-         Results.Wait_Until_Done;
+         Results.Publishing_Done;
+
+         select
+            Results.Wait_Until_Done;
+         or
+            delay 30.0;
+            Expect ("runtime concurrent workers completed", "FALSE", "TRUE");
+         end select;
+
          Expect
            ("runtime concurrent generation consistency",
             Results.Failure_Count'Image, " 0");
+         Expect
+           ("runtime concurrent pre-publication generation",
+            Results.Initial_Count'Image, " 4");
+         Expect
+           ("runtime concurrent post-publication generation",
+            Results.Final_Count'Image, " 4");
       end;
    end Check_Runtime_Reconfiguration;
 
@@ -1975,6 +2106,257 @@ procedure HTTP_Routing_Audit is
       Expect ("mounted source update refused", Raised'Image, "TRUE");
    end Check_Mounted_Middleware_Identity;
 
+   --  A candidate whose base was replaced can never be published, so Commit
+   --  releases it and the update object stays usable. A candidate rejected by
+   --  validation stays active so it can be corrected, and Abandon drops it.
+   procedure Check_Update_Lifecycle is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      procedure Endpoint
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "thing");
+      end Endpoint;
+
+      Routes : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      Served : Routing.Route_ID;
+      Raised : Boolean;
+   begin
+      Routes.Get ("/thing", Endpoint'Access, Served, Name => "thing");
+
+      declare
+         Retry : Routing.Update;
+         First : Routing.Update;
+      begin
+         Routes.Begin_Update (Retry);
+         Routes.Begin_Update (First);
+         Routing.Set_Authentication_Challenge (First, "Basic realm=first");
+         Routes.Commit (First);
+
+         Raised := False;
+         begin
+            Routing.Set_Authentication_Challenge (Retry, "Bearer");
+            Routes.Commit (Retry);
+         exception
+            when Routing.Stale_Update =>
+               Raised := True;
+         end;
+         Expect ("stale commit rejected", Raised'Image, "TRUE");
+
+         --  A stale commit released the candidate, so this reuse of the same
+         --  hoisted object must not raise Program_Error.
+         Routes.Begin_Update (Retry);
+         Routing.Set_Authentication_Challenge (Retry, "Bearer realm=second");
+         Routes.Commit (Retry);
+      end;
+      Expect
+        ("stale retry republished",
+         Routes.Authentication_Challenge, "Bearer realm=second");
+
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Set_Authentication_Challenge (Change, "Basic realm=dropped");
+         Routing.Abandon (Change);
+         Routes.Begin_Update (Change);
+         Routing.Set_Authentication_Challenge (Change, "Basic realm=kept");
+         Routes.Commit (Change);
+      end;
+      Expect
+        ("abandoned candidate discarded",
+         Routes.Authentication_Challenge, "Basic realm=kept");
+
+      declare
+         Change : Routing.Update;
+         Extra  : Routing.Route_ID;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Add
+           (Change, "GET", "/other", Endpoint'Access, Extra, Name => "thing");
+         Raised := False;
+         begin
+            Routes.Commit (Change);
+         exception
+            when Routing.Route_Error =>
+               Raised := True;
+         end;
+         Expect ("rejected candidate reported", Raised'Image, "TRUE");
+         Expect
+           ("rejected candidate left generation",
+            Routes.Route_Count'Image, " 1");
+
+         --  Validation failure keeps the candidate, so correcting it and
+         --  committing again must succeed without rebuilding.
+         Routing.Rename (Change, Extra, "other");
+         Routes.Commit (Change);
+      end;
+      Expect ("corrected candidate published", Routes.Route_Count'Image, " 2");
+   end Check_Update_Lifecycle;
+
+   --  Candidate Add skips the duplicate-name and ambiguity scans that direct
+   --  registration performs and defers them to Commit, so those rejections
+   --  are the only thing between a candidate and an unroutable generation.
+   procedure Check_Update_Validation is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      use type Routing.Middleware_Stage;
+
+      procedure Endpoint
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "thing");
+      end Endpoint;
+
+      procedure Layer
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Layer", "on");
+         Next.Call (State, X);
+      end Layer;
+
+      Routes : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      Served   : Routing.Route_ID;
+      Health   : Routing.Route_ID;
+      Layer_ID : Routing.Middleware_ID;
+      Found    : Boolean;
+      Raised   : Boolean;
+   begin
+      Routes.Get
+        ("/users/{id}", Endpoint'Access, Served, Name => "users.show");
+
+      --  Same method, overlapping pattern, equal specificity.
+      declare
+         Change : Routing.Update;
+         Extra  : Routing.Route_ID;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Add
+           (Change, "GET", "/users/{other}", Endpoint'Access, Extra,
+            Name => "users.other");
+         Raised := False;
+         begin
+            Routes.Commit (Change);
+         exception
+            when Routing.Route_Error =>
+               Raised := True;
+         end;
+         Expect ("ambiguous candidate rejected", Raised'Image, "TRUE");
+      end;
+      Expect
+        ("ambiguous rejection left generation",
+         Routes.Route_Count'Image, " 1");
+
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Add
+           (Change, "GET", "/health", Endpoint'Access, Health,
+            Name => "health");
+         Routes.Commit (Change);
+      end;
+      Expect ("second route published", Routes.Route_Count'Image, " 2");
+
+      --  Set_Match is the one operation that can newly create an ambiguity
+      --  against a route the candidate never touched.
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Set_Match (Change, Health, "GET", "/users/{other}");
+         Raised := False;
+         begin
+            Routes.Commit (Change);
+         exception
+            when Routing.Route_Error =>
+               Raised := True;
+         end;
+         Expect ("Set_Match ambiguity rejected", Raised'Image, "TRUE");
+      end;
+
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Rename (Change, Health, "users.show");
+         Raised := False;
+         begin
+            Routes.Commit (Change);
+         exception
+            when Routing.Route_Error =>
+               Raised := True;
+         end;
+         Expect ("rename collision rejected", Raised'Image, "TRUE");
+      end;
+      Expect
+        ("rejected renames left generation",
+         To_String (Routes.Describe_Route (2).Name), "health");
+
+      --  The same operations succeed when the result is a valid whole.
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Set_Match (Change, Health, "POST", "/healthz");
+         Routing.Rename (Change, Health, "health.check");
+         Routing.Add_Middleware
+           (Change, Layer'Access, Layer_ID, Name => "layer");
+         Routing.Set_Automatic_Admission
+           (Change, Concurrency => 3, Rate_Per_Second => 7);
+         Routes.Commit (Change);
+      end;
+      Expect
+        ("Set_Match method applied",
+         To_String (Routes.Describe_Route (2).Method), "POST");
+      Expect
+        ("Set_Match pattern applied",
+         To_String (Routes.Describe_Route (2).Pattern), "/healthz");
+      Expect
+        ("Rename applied",
+         To_String (Routes.Describe_Route (2).Name), "health.check");
+      Expect
+        ("candidate admission applied",
+         Routes.Automatic_Concurrency'Image, " 3");
+      Expect
+        ("candidate rate applied",
+         Routes.Automatic_Rate_Per_Second'Image, " 7");
+
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Set_Middleware_Stage
+           (Change, Layer_ID, Routing.Application);
+         Routes.Commit (Change);
+      end;
+      Expect
+        ("Set_Middleware_Stage applied",
+         Routing.Middleware_Stage'Image
+           (Routes.Describe_Global_Middleware (1).Stage), "APPLICATION");
+
+      Routes.Find_Route ("health.check", Health, Found);
+      Expect ("renamed route resolves", Found'Image, "TRUE");
+   end Check_Update_Validation;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -1990,6 +2372,8 @@ begin
    Check_Runtime_Reconfiguration;
    Check_Sealed_Registration;
    Check_Mounted_Middleware_Identity;
+   Check_Update_Lifecycle;
+   Check_Update_Validation;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
