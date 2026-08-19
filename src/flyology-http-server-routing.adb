@@ -1496,6 +1496,36 @@ package body Flyology.HTTP.Server.Routing is
       Release (Change.State);
    end Abandon;
 
+   function Retained_Generations (Item : Router) return Natural is
+      Count  : Natural := 0;
+      Cursor : Configuration_Access := Item.First_Configuration;
+   begin
+      while Cursor /= null loop
+         Count := Count + 1;
+         Cursor := Cursor.Previous;
+      end loop;
+      return Count;
+   end Retained_Generations;
+
+   procedure Reclaim (Item : in out Router) is
+      --  The published generation is always the head of the chain, so every
+      --  generation behind it has been superseded.
+      Published : constant Configuration_Access :=
+        Current_Configuration (Item);
+      Retired   : Configuration_Access := Published.Previous;
+   begin
+      Published.Previous := null;
+      Item.First_Configuration := Published;
+      while Retired /= null loop
+         declare
+            Configuration : Configuration_Access := Retired;
+         begin
+            Retired := Configuration.Previous;
+            Free_Configuration (Configuration);
+         end;
+      end loop;
+   end Reclaim;
+
    procedure Set_Automatic_Admission
      (Item            : in out Router;
       Concurrency     : Natural := 0;

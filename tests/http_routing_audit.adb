@@ -2476,6 +2476,125 @@ procedure HTTP_Routing_Audit is
       Expect ("empty snapshot refused", Raised'Image, "TRUE");
    end Check_Introspection_Snapshot;
 
+   --  Commit retains the superseded generation so an in-flight dispatch never
+   --  reads freed storage. That retention is unbounded over a process
+   --  lifetime, so it must be observable and releasable.
+   procedure Check_Generation_Retention is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      procedure Endpoint_One
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "one");
+      end Endpoint_One;
+
+      procedure Endpoint_Two
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "two");
+      end Endpoint_Two;
+
+      Routes : Routing.Router
+        (Capacity => 2, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+      Served : Routing.Route_ID;
+
+      function Response return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /thing HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Routes.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Response;
+   begin
+      Routes.Get ("/thing", Endpoint_One'Access, Served, Name => "thing");
+      Expect
+        ("fresh router retains one generation",
+         Routes.Retained_Generations'Image, " 1");
+
+      for Generation in 1 .. 5 loop
+         pragma Unreferenced (Generation);
+         declare
+            Change : Routing.Update;
+         begin
+            Routes.Begin_Update (Change);
+            Routing.Replace_Handler (Change, Served, Endpoint_One'Access);
+            Routes.Commit (Change);
+         end;
+      end loop;
+      Expect
+        ("each commit retains a generation",
+         Routes.Retained_Generations'Image, " 6");
+
+      --  A rejected commit must not retain anything.
+      declare
+         Change : Routing.Update;
+         Extra  : Routing.Route_ID;
+         Raised : Boolean := False;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Add
+           (Change, "GET", "/other", Endpoint_One'Access, Extra,
+            Name => "thing");
+         begin
+            Routes.Commit (Change);
+         exception
+            when Routing.Route_Error =>
+               Raised := True;
+         end;
+         Expect ("rejected commit reported", Raised'Image, "TRUE");
+      end;
+      Expect
+        ("rejected commit retains nothing",
+         Routes.Retained_Generations'Image, " 6");
+
+      Routes.Reclaim;
+      Expect
+        ("reclaim releases superseded generations",
+         Routes.Retained_Generations'Image, " 1");
+
+      Expect_In ("reclaimed router serves", Response, CRLF & CRLF & "one");
+
+      declare
+         Change : Routing.Update;
+      begin
+         Routes.Begin_Update (Change);
+         Routing.Replace_Handler (Change, Served, Endpoint_Two'Access);
+         Routes.Commit (Change);
+      end;
+      Expect_In
+        ("reclaimed router commits", Response, CRLF & CRLF & "two");
+      Expect
+        ("commit after reclaim retains one more",
+         Routes.Retained_Generations'Image, " 2");
+
+      Routes.Reclaim;
+      Routes.Reclaim;
+      Expect
+        ("repeated reclaim is idempotent",
+         Routes.Retained_Generations'Image, " 1");
+      Expect_In
+        ("router serves after repeated reclaim",
+         Response, CRLF & CRLF & "two");
+   end Check_Generation_Retention;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -2494,6 +2613,7 @@ begin
    Check_Update_Lifecycle;
    Check_Update_Validation;
    Check_Introspection_Snapshot;
+   Check_Generation_Retention;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
