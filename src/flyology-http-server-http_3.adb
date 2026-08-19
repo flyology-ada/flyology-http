@@ -158,6 +158,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Pending_Streams : Stream_ID_Array (1 .. H3.Max_Prepared_Responses) :=
         (others => 0);
       Pending_Count : Natural range 0 .. H3.Max_Prepared_Responses := 0;
+      Progress  : Ada.Real_Time.Time := Ada.Real_Time.Clock;
       H3_Started : Boolean := False;
       ACK_Pending : Boolean := False;
       Closed    : Boolean := False;
@@ -516,6 +517,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       if Last < Packet'First then
          return;
       end if;
+      Item.Progress := Ada.Real_Time.Clock;
       if Item.H3_Started and then QUIC.Is_Connected (Item.Transport) then
          QUIC.Process_Datagram
            (Item.Transport, Packet (Packet'First .. Last), Flight, Status,
@@ -1314,7 +1316,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
       Max_Requests       : Positive := Default_Requests_Per_Connection;
-      Token              : access Flyology.Cancellation.Token := null)
+      Token              : access Flyology.Cancellation.Token := null;
+      Handshake_Idle_Timeout : Duration := Default_Handshake_Idle_Timeout)
    is
       State : Connection_State_Access := new Connection_State'
         (Socket => Socket, Inbox => Inbox, Token => Token, others => <>);
@@ -1339,6 +1342,20 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Connection_Deadline : constant Ada.Real_Time.Time :=
         (if Max_Connection_Age < 0.0 then Ada.Real_Time.Time_Last
          else State.Epoch + Ada.Real_Time.To_Time_Span (Max_Connection_Age));
+      Handshake_Deadline : constant Ada.Real_Time.Time :=
+        State.Epoch + Ada.Real_Time.To_Time_Span (Handshake_Timeout);
+
+      --  Time left before an unconnected peer forfeits this connection slot.
+      --  The absolute handshake budget bounds a peer that keeps sending; the
+      --  no-progress budget reclaims the slot from one that stops.
+      function Handshake_Remaining return Duration is
+         Idle : constant Ada.Real_Time.Time :=
+           State.Progress + Ada.Real_Time.To_Time_Span
+             (Handshake_Idle_Timeout);
+      begin
+         return Remaining
+           (if Idle < Handshake_Deadline then Idle else Handshake_Deadline);
+      end Handshake_Remaining;
 
       procedure Start_HTTP_3 is
       begin
@@ -1599,9 +1616,10 @@ package body Flyology.HTTP.Server.HTTP_3 is
       if Max_Requests > Maximum_Requests_Per_Connection then
          raise Constraint_Error with
            "HTTP/3 request limit exceeds the bounded connection profile";
-      elsif Handshake_Timeout <= 0.0 then
+      elsif Handshake_Timeout <= 0.0 or else Handshake_Idle_Timeout <= 0.0
+      then
          raise Constraint_Error with
-           "HTTP/3 handshake timeout must be positive";
+           "HTTP/3 handshake timeouts must be positive";
       end if;
       if First.Length = 0 or else First.Metadata.Truncated then
          raise Protocol_Error with "invalid first QUIC datagram";
@@ -1634,14 +1652,10 @@ package body Flyology.HTTP.Server.HTTP_3 is
          return;
       end if;
       while not QUIC.Is_Connected (State.Transport) loop
-         if Remaining (State.Epoch + Ada.Real_Time.To_Time_Span
-           (Handshake_Timeout)) = 0.0
-         then
+         if Handshake_Remaining = 0.0 then
             raise Flyology.IO.Timeout_Error;
          end if;
-         Receive_One
-           (State.all, Remaining
-             (State.Epoch + Ada.Real_Time.To_Time_Span (Handshake_Timeout)));
+         Receive_One (State.all, Handshake_Remaining);
          if State.Closed then
             Cleanup;
             return;
@@ -1692,7 +1706,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
       Max_Requests       : Positive := Default_Requests_Per_Connection;
-      Token              : access Flyology.Cancellation.Token := null)
+      Token              : access Flyology.Cancellation.Token := null;
+      Handshake_Idle_Timeout : Duration := Default_Handshake_Idle_Timeout)
    is
       First : Received_Datagram;
       Last  : Stream_Element_Offset;
@@ -1724,7 +1739,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Serve_Connection
         (Context, Socket'Unchecked_Access, null, First, Certificate_DER,
          Private_Key, Source, Transport_Settings, Timeout,
-         Handshake_Timeout, Max_Connection_Age, Max_Requests, Token);
+         Handshake_Timeout, Max_Connection_Age, Max_Requests, Token,
+         Handshake_Idle_Timeout);
    end Serve;
 
    procedure Serve_Listener
@@ -1738,7 +1754,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
       Max_Requests       : Positive := Default_Requests_Per_Connection;
-      Token              : not null access Flyology.Cancellation.Token)
+      Token              : not null access Flyology.Cancellation.Token;
+      Handshake_Idle_Timeout : Duration := Default_Handshake_Idle_Timeout)
    is
       subtype Slot_Index is Positive range 1 .. Capacity;
       subtype Inbox is Datagram_Channels.Channel (Capacity => 32);
@@ -1773,7 +1790,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
                         Inboxes (Slot)'Unchecked_Access, Message,
                         Certificate_DER, Private_Key, Message.Source,
                         Transport_Settings, Timeout, Handshake_Timeout,
-                        Max_Connection_Age, Max_Requests, Token);
+                        Max_Connection_Age, Max_Requests, Token,
+                        Handshake_Idle_Timeout);
                   exception
                      when Error : others =>
                         if Debug.Enabled then
@@ -1808,9 +1826,10 @@ package body Flyology.HTTP.Server.HTTP_3 is
       elsif Max_Requests > Maximum_Requests_Per_Connection then
          raise Constraint_Error with
            "HTTP/3 request limit exceeds the bounded connection profile";
-      elsif Handshake_Timeout <= 0.0 then
+      elsif Handshake_Timeout <= 0.0 or else Handshake_Idle_Timeout <= 0.0
+      then
          raise Constraint_Error with
-           "HTTP/3 handshake timeout must be positive";
+           "HTTP/3 handshake timeouts must be positive";
       end if;
 
       Sockets.Enable_Datagram_Metadata (Socket);
@@ -1885,12 +1904,15 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Handshake_Timeout  : Duration := 10.0;
       Max_Connection_Age : Duration := 300.0;
       Max_Requests       : Positive := Default_Requests_Per_Connection;
-      Token              : access Flyology.Cancellation.Token := null) is
+      Token              : access Flyology.Cancellation.Token := null;
+      Handshake_Idle_Timeout : Duration := Default_Handshake_Idle_Timeout)
+   is
    begin
       Serve
         (Context, Socket, Certificate_DER, Private_Key,
          QUIC.Random_Connection_ID, Transport_Settings, Timeout,
-         Handshake_Timeout, Max_Connection_Age, Max_Requests, Token);
+         Handshake_Timeout, Max_Connection_Age, Max_Requests, Token,
+         Handshake_Idle_Timeout);
    end Serve;
 
 end Flyology.HTTP.Server.HTTP_3;
