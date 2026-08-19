@@ -410,16 +410,25 @@ package body Flyology.HTTP.Client is
       end;
       begin
          if Sockets.Is_Open (Connection.UDP) then
-            if Connection.Protocol = HTTP_3_Transport
-              and then QUIC.Is_Connected (Connection.QUIC_Transport)
-            then
+            if Connection.Protocol = HTTP_3_Transport then
                declare
                   Packet : QUIC.Datagram;
-                  Status : QUIC.Send_Status;
+                  Status : QUIC.Send_Status := QUIC.Internal_State_Error;
                   Last   : Ada.Streams.Stream_Element_Offset;
                begin
-                  QUIC.Build_Application_Close_Datagram
-                    (Connection.QUIC_Transport, Packet, Status);
+                  if QUIC.Is_Connected (Connection.QUIC_Transport) then
+                     QUIC.Build_Application_Close_Datagram
+                       (Connection.QUIC_Transport, Packet, Status);
+                  elsif QUIC.State (Connection.QUIC_Transport) in
+                    QUIC.Client_Initial | QUIC.Client_Handshake
+                  then
+                     --  A connection abandoned mid-handshake, such as the
+                     --  losing lane of the address-family race, still owes
+                     --  the peer a close. Without it the server holds its
+                     --  connection slot for the whole handshake timeout.
+                     QUIC.Build_Handshake_Close_Datagram
+                       (Connection.QUIC_Transport, Packet, Status);
+                  end if;
                   if Status = QUIC.Sent and then Packet.Length > 0 then
                      Sockets.Send_Socket
                        (Connection.UDP,
