@@ -141,8 +141,11 @@ package Flyology.HTTP.Server.Routing is
    --  it. A candidate based on a superseded generation is rejected.
    type Update is limited private;
 
-   --  Bounded route registry. Registration is intended during application
-   --  setup, before concurrent dispatch begins.
+   --  Bounded route registry. Direct registration writes the published
+   --  generation in place, so it belongs to application setup: the first
+   --  dispatch seals the router and every direct registration or setter
+   --  afterwards raises Route_Error. Use Begin_Update and Commit to change
+   --  a serving router.
    --  @field Capacity Maximum registered routes
    --  @field Slashes Explicit final-slash behavior
    type Router
@@ -317,7 +320,8 @@ package Flyology.HTTP.Server.Routing is
       Stage           : Middleware_Stage := Request_Head;
       Middleware_Name : String := "");
 
-   --  Register one exact method and path pattern.
+   --  Register one exact method and path pattern. Setup-only: this raises
+   --  Route_Error once the router has dispatched.
    --  @param Item Router registry
    --  @param Method Case-sensitive HTTP method token
    --  @param Pattern Static, {name}, or final {*name} path pattern
@@ -699,7 +703,8 @@ package Flyology.HTTP.Server.Routing is
    --  route, so they carry no route policy of their own, yet they run the
    --  whole global middleware chain and write a response. Zero is unlimited
    --  and is the default, which leaves that surface unmetered. This direct
-   --  setter is setup-only. Use the Update overload after dispatch begins.
+   --  setter is setup-only and raises Route_Error once the router has
+   --  dispatched; use the Update overload after that.
    --  @param Item Router registry
    --  @param Concurrency Maximum active automatic responses; zero is
    --  unlimited
@@ -725,8 +730,8 @@ package Flyology.HTTP.Server.Routing is
    --  with no principal installed. The router cannot see the authentication
    --  middleware's own challenge, so an application that does not use Bearer
    --  must state its scheme here. The default is "Bearer".
-   --  This direct setter is setup-only. Use the Update overload after dispatch
-   --  begins.
+   --  This direct setter is setup-only and raises Route_Error once the
+   --  router has dispatched; use the Update overload after that.
    --  @param Item Router registry
    --  @param Challenge Complete WWW-Authenticate field value
    --  @exception Route_Error Challenge is empty or carries control bytes
@@ -1314,6 +1319,9 @@ private
       Slashes  : Trailing_Slash_Policy := Strict_Slashes)
    is new Ada.Finalization.Limited_Controlled with record
       Current_Configuration : aliased Atomic_Word := 0;
+      --  Set by the first dispatch. Direct registration writes the published
+      --  generation in place, so it is refused once this is set.
+      Sealed                : aliased Atomic_Word := 0;
       First_Configuration   : Configuration_Access;
       Publisher             : Publication_Gate;
    end record;
