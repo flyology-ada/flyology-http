@@ -9,6 +9,7 @@ with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Middleware;
 with Flyology.QUIC.Connections;
 private with Ada.Finalization;
+private with Flyology_Cachelines.Padded_Groups;
 private with Interfaces;
 private with System;
 
@@ -1409,6 +1410,16 @@ private
    type Atomic_Word is new Interfaces.Unsigned_64
      with Size => 64, Alignment => 8;
 
+   --  Both words are read by every dispatch and written only by a commit,
+   --  so they have compatible ownership and share one interference region:
+   --  a dispatch fetches one line rather than two, and a commit dirties the
+   --  readers' region once instead of once per word.
+   package Router_Words is new
+     Flyology_Cachelines.Padded_Groups (Atomic_Word, 2);
+
+   Published_Word : constant Router_Words.Index := 1;
+   Sealed_Word    : constant Router_Words.Index := 2;
+
    protected type Publication_Gate is
       procedure Initialize (Configuration : Configuration_Access);
       procedure Try_Publish
@@ -1423,10 +1434,11 @@ private
      (Capacity : Positive := 64;
       Slashes  : Trailing_Slash_Policy := Strict_Slashes)
    is new Ada.Finalization.Limited_Controlled with record
-      Current_Configuration : aliased Atomic_Word := 0;
-      --  Set by the first dispatch. Direct registration writes the published
-      --  generation in place, so it is refused once this is set.
-      Sealed                : aliased Atomic_Word := 0;
+      --  Published_Word carries the current generation. Sealed_Word is set
+      --  by the first dispatch; direct registration writes the published
+      --  generation in place, so it is refused once that is set.
+      Words                 : Router_Words.Group :=
+        Router_Words.Create ((others => 0));
       First_Configuration   : Configuration_Access;
       Publisher             : Publication_Gate;
    end record;

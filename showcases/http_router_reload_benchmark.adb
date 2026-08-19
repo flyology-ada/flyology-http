@@ -10,6 +10,14 @@
 --  The transport is in-memory and allocation-free, and each worker counts
 --  into its own stack, so neither the harness nor the loader contributes
 --  contention of its own.
+--
+--  What this can resolve: a commit dirties the readers' region once, not
+--  once per dispatch, so the interference cost scales with the reload rate
+--  and not with traffic. Around 10 to 100 reloads per second it is 0.0004%
+--  to 0.004% of throughput, which no wall-clock method reaches. Only near
+--  5000 reloads per second does it approach 0.2%, where a few hundred
+--  interleaved runs on an unloaded machine could separate it. Treat any
+--  difference smaller than the reported spread as no result.
 with Ada.Command_Line;
 with Ada.Real_Time;
 with Ada.Streams;

@@ -88,7 +88,7 @@ package body Flyology.HTTP.Server.Routing is
    is
       Bits : constant Interfaces.Unsigned_64 :=
         Flyology.Atomic_Primitives.Load_Acquire_U64
-          (Item.Current_Configuration'Address);
+          (Item.Words (Published_Word)'Address);
       Configuration : constant Configuration_Access :=
         To_Configuration (Word_Address (Bits));
    begin
@@ -106,17 +106,17 @@ package body Flyology.HTTP.Server.Routing is
    procedure Seal (Item : in out Router) is
    begin
       if Flyology.Atomic_Primitives.Load_Acquire_U64
-           (Item.Sealed'Address) = 0
+           (Item.Words (Sealed_Word)'Address) = 0
       then
          Flyology.Atomic_Primitives.Store_Release_U64
-           (Item.Sealed'Address, 1);
+           (Item.Words (Sealed_Word)'Address, 1);
       end if;
    end Seal;
 
    procedure Check_Not_Sealed (Item : Router) is
    begin
       if Flyology.Atomic_Primitives.Load_Acquire_U64
-           (Item.Sealed'Address) /= 0
+           (Item.Words (Sealed_Word)'Address) /= 0
       then
          raise Route_Error with
            "HTTP router is dispatching; use Begin_Update and Commit";
@@ -151,7 +151,7 @@ package body Flyology.HTTP.Server.Routing is
       Item.First_Configuration := Configuration;
       Item.Publisher.Initialize (Configuration);
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Configuration'Address,
+        (Item.Words (Published_Word)'Address,
          Address_Word (Configuration.all'Address));
    exception
       when others =>
@@ -166,7 +166,7 @@ package body Flyology.HTTP.Server.Routing is
       Retained : Configuration_Access := Item.First_Configuration;
    begin
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Configuration'Address, 0);
+        (Item.Words (Published_Word)'Address, 0);
       while Retained /= null loop
          declare
             Configuration : Configuration_Access := Retained;
@@ -1507,7 +1507,7 @@ package body Flyology.HTTP.Server.Routing is
       Candidate.Previous := Item.First_Configuration;
       Item.First_Configuration := Candidate;
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Configuration'Address,
+        (Item.Words (Published_Word)'Address,
          Address_Word (Candidate.all'Address));
       Change.State.Candidate := null;
       Change.State.Owner := System.Null_Address;
