@@ -181,10 +181,17 @@ begin
                Private_Key => Fixtures.Server_Private_Key,
                Cleartext_Capacity => 4,
                TCP_Capacity => 4,
-               --  Three H3 profiles run per address family. Client shutdown
-               --  does not acknowledge server-side registry release, so keep
-               --  one reclamation slot per family for an overtaking Initial.
-               HTTP_3_Capacity => 8,
+               --  HTTP_3_Capacity is a dual-stack total: Routing.Serve
+               --  gives IPv6 HTTP_3_Capacity / 2 slots and IPv4 the rest.
+               --  Both client profiles below target "localhost", which
+               --  resolves to every loopback family, and the connection race
+               --  completes a full QUIC handshake on each family before it
+               --  discards the losing lane. Each address family therefore
+               --  admits up to five concurrent connections here: two live
+               --  client profiles, two losing race lanes awaiting release,
+               --  and one raw Initial. Size for eight per family so a raw
+               --  Initial is never discarded by a momentarily full registry.
+               HTTP_3_Capacity => 16,
                Timeout => 10.0,
                Handshake_Timeout => 10.0,
                Max_Connection_Age => 20.0,
@@ -222,6 +229,10 @@ begin
          Transport : QUIC.Connection;
          Session : H3.Session;
          Flight : QUIC.Datagram_Batch;
+         --  Last handshake flight handed to the server. Handshake-space loss
+         --  recovery has no probe timeout below this test, so a discarded
+         --  datagram is retransmitted from here.
+         Handshake_Flight : QUIC.Datagram_Batch;
          QUIC_Status : QUIC.Operation_Status;
          H3_Status : H3.Operation_Status;
          Phase : Client_Phase := Initialize_Mixed_Client;
@@ -426,16 +437,30 @@ begin
       Sockets.Connect_Socket (Socket, Raw_Address);
       QUIC.Start_Client (Transport, Flight, QUIC_Status);
       pragma Assert (QUIC_Status = QUIC.Succeeded);
+      Handshake_Flight := Flight;
       QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
 
+      --  A listener whose connection registry is momentarily full discards a
+      --  QUIC Initial without answering it, and no handshake-space probe
+      --  timeout retransmits it. Spend the attempt budget on retransmission
+      --  rather than on one long wait, so a discarded datagram costs a probe
+      --  interval instead of the whole exchange.
       for Attempt in 1 .. 8 loop
          exit when QUIC.Is_Connected (Transport);
          Attempt_Number := Attempt;
-         QUIC_IO.Receive
-           (Socket, Transport, Flight, QUIC_Status, Timeout => 10.0);
-         pragma Assert
-           (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
-         QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+         begin
+            QUIC_IO.Receive
+              (Socket, Transport, Flight, QUIC_Status, Timeout => 2.0);
+            pragma Assert
+              (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
+            if Flight.Count > 0 then
+               Handshake_Flight := Flight;
+            end if;
+            QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+         exception
+            when Flyology.IO.Timeout_Error =>
+               QUIC_IO.Send (Socket, Handshake_Flight, Timeout => 10.0);
+         end;
       end loop;
       Attempt_Number := 0;
       pragma Assert (QUIC.Is_Connected (Transport));
@@ -496,11 +521,21 @@ begin
          Phase := Raw_Response;
          for Attempt in 1 .. 16 loop
             Attempt_Number := Attempt;
-            QUIC_IO.Receive
-              (Socket, Transport, Flight, QUIC_Status, Timeout => 10.0);
-            pragma Assert
-              (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
-            QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+            --  The server drives application-space probe timeouts, so a
+            --  discarded response datagram is retransmitted by the peer.
+            --  Spend the attempt budget waiting for that rather than
+            --  abandoning the exchange on the first quiet interval. Sixteen
+            --  one-second probes stay inside the server's connection age.
+            begin
+               QUIC_IO.Receive
+                 (Socket, Transport, Flight, QUIC_Status, Timeout => 1.0);
+               pragma Assert
+                 (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
+               QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+            exception
+               when Flyology.IO.Timeout_Error =>
+                  null;
+            end;
             loop
                H3.Poll (Session, Transport, Event, H3_Status);
                exit when H3_Status = H3.No_Event;
