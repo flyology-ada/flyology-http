@@ -1861,6 +1861,120 @@ procedure HTTP_Routing_Audit is
       end;
    end Check_Sealed_Registration;
 
+   --  Mounting copies a middleware registration into the mounted routes. The
+   --  copy keeps the source registration identity, so one candidate operation
+   --  on that identity reaches every chain carrying it. A mounted router is
+   --  also closed to updates, not only to direct registration.
+   procedure Check_Mounted_Middleware_Identity is
+      package Applications renames Flyology.HTTP.Server.Applications;
+
+      type Context is null record;
+
+      package Routing is new Flyology.HTTP.Server.Routing (Context);
+
+      use type Routing.Middleware_ID;
+
+      procedure Endpoint
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Text (200, "thing");
+      end Endpoint;
+
+      procedure Layer_One
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Mounted", "one");
+         Next.Call (State, X);
+      end Layer_One;
+
+      procedure Layer_Two
+        (State : in out Context;
+         X     : in out Applications.Exchange;
+         Next  : in out Routing.Components.Next_Handler) is
+      begin
+         X.Add_Header ("X-Mounted", "two");
+         Next.Call (State, X);
+      end Layer_Two;
+
+      Parent : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      Sub    : Routing.Router
+        (Capacity => 4, Slashes => Routing.Strict_Slashes);
+      State  : Context;
+
+      function Response return String is
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /api/thing HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client : aliased HTTP_Server.Connection (Wire'Access);
+         begin
+            Parent.Serve (State, Client, Test_Peer);
+         end;
+         return To_String (Wire.Output);
+      end Response;
+
+      Sub_Route : Routing.Route_ID;
+      Sub_Layer : Routing.Middleware_ID;
+      Raised    : Boolean := False;
+   begin
+      Sub.Get ("/thing", Endpoint'Access, Sub_Route, Name => "thing");
+      Sub.Add_Middleware (Layer_One'Access, Sub_Layer, Name => "mounted");
+      Parent.Mount ("/api", Sub, Name_Prefix => "api.");
+
+      Expect
+        ("mounted middleware keeps its identity",
+         Boolean'Image
+           (Parent.Describe_Route_Middleware (1, 1).ID = Sub_Layer), "TRUE");
+      Expect_In ("mounted middleware runs", Response, "X-Mounted: one");
+
+      declare
+         Change : Routing.Update;
+      begin
+         Parent.Begin_Update (Change);
+         Routing.Replace_Middleware (Change, Sub_Layer, Layer_Two'Access);
+         Parent.Commit (Change);
+      end;
+      Expect_In ("mounted middleware replaced", Response, "X-Mounted: two");
+
+      declare
+         Change : Routing.Update;
+      begin
+         Parent.Begin_Update (Change);
+         Routing.Remove_Middleware (Change, Sub_Layer);
+         Parent.Commit (Change);
+      end;
+      declare
+         Output : constant String := Response;
+      begin
+         Expect
+           ("mounted middleware removed",
+            Boolean'Image
+              (Ada.Strings.Fixed.Index (Output, "X-Mounted") = 0), "TRUE");
+         Expect_In ("mounted route still served", Output, " 200 ");
+      end;
+
+      begin
+         declare
+            Change : Routing.Update;
+         begin
+            Sub.Begin_Update (Change);
+         end;
+      exception
+         when Routing.Route_Error =>
+            Raised := True;
+      end;
+      Expect ("mounted source update refused", Raised'Image, "TRUE");
+   end Check_Mounted_Middleware_Identity;
+
 begin
    Check_Target_Form_Anchoring;
    Check_Long_Route_Name_Admission;
@@ -1875,6 +1989,7 @@ begin
    Check_Request_ID_Unpredictability;
    Check_Runtime_Reconfiguration;
    Check_Sealed_Registration;
+   Check_Mounted_Middleware_Identity;
    if Failures /= 0 then
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,

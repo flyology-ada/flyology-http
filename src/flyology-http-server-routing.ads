@@ -130,7 +130,9 @@ package Flyology.HTTP.Server.Routing is
 
    --  Opaque runtime identity of one middleware registration. The same
    --  component may be registered more than once and receives a distinct
-   --  identity each time.
+   --  identity each time. Mounting copies a registration into the mounted
+   --  routes without changing its identity, so one identity can name every
+   --  copy of that registration.
    type Middleware_ID is private;
 
    --  Identity that does not designate middleware.
@@ -555,6 +557,7 @@ package Flyology.HTTP.Server.Routing is
    --  not already contain an uncommitted candidate.
    --  @param Item Router whose current generation is the update base
    --  @param Change Empty update object receiving the candidate
+   --  @exception Route_Error Item has been mounted into another router
    procedure Begin_Update (Item : Router; Change : in out Update);
 
    --  Add one route to an unpublished candidate.
@@ -648,8 +651,8 @@ package Flyology.HTTP.Server.Routing is
       Stage           : Middleware_Stage := Request_Head;
       Middleware_Name : String := "");
 
-   --  Remove a middleware registration wherever its mounted registration is
-   --  referenced in the candidate.
+   --  Remove a middleware registration from the global chain and from every
+   --  route chain that carries it, including chains a mount copied it into.
    --  @param Change Active candidate
    --  @param Middleware Registration to remove
    procedure Remove_Middleware

@@ -1093,6 +1093,7 @@ package body Flyology.HTTP.Server.Routing is
       if Change.State.Candidate /= null then
          raise Program_Error with "HTTP router update is already active";
       end if;
+      Check_Not_Mounted (Configuration.all);
       Change.State.Owner := Item'Address;
       Change.State.Base := Configuration;
       Change.State.Candidate :=
@@ -1359,6 +1360,7 @@ package body Flyology.HTTP.Server.Routing is
    is
    begin
       Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
       Change.State.Candidate.Automatic_Concurrency := Concurrency;
       Change.State.Candidate.Automatic_Rate := Rate_Per_Second;
    end Set_Automatic_Admission;
@@ -1369,6 +1371,7 @@ package body Flyology.HTTP.Server.Routing is
    is
    begin
       Require_Candidate (Change);
+      Check_Not_Mounted (Change.State.Candidate.all);
       if Challenge'Length = 0 then
          raise Route_Error with "empty HTTP authentication challenge";
       end if;
@@ -1515,15 +1518,15 @@ package body Flyology.HTTP.Server.Routing is
                   To_String (Source_Configuration.Routes (Index).Name)),
                Source_Configuration.Routes (Index).Policy);
             New_Index := Destination.Count;
+            --  Copies keep the source registration identity, so one
+            --  Remove_Middleware or Replace_Middleware on that identity
+            --  reaches every mounted chain that carries it.
             for Middleware_Index in
               1 .. Source_Configuration.Middleware_Count
             loop
                Destination.Routes (New_Index).Middleware
                  (Destination.Routes (New_Index).Middleware_Count + 1) :=
                    Source_Configuration.Middleware (Middleware_Index);
-               Identity_Source.Next_Middleware
-                 (Destination.Routes (New_Index).Middleware
-                    (Destination.Routes (New_Index).Middleware_Count + 1).ID);
                Destination.Routes (New_Index).Middleware_Count :=
                  Destination.Routes (New_Index).Middleware_Count + 1;
             end loop;
@@ -1534,9 +1537,6 @@ package body Flyology.HTTP.Server.Routing is
                  (Destination.Routes (New_Index).Middleware_Count + 1) :=
                    Source_Configuration.Routes (Index).Middleware
                      (Middleware_Index);
-               Identity_Source.Next_Middleware
-                 (Destination.Routes (New_Index).Middleware
-                    (Destination.Routes (New_Index).Middleware_Count + 1).ID);
                Destination.Routes (New_Index).Middleware_Count :=
                  Destination.Routes (New_Index).Middleware_Count + 1;
             end loop;
