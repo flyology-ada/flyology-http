@@ -8,6 +8,13 @@ package body Flyology.QUIC.Handshake_Connection is
    function Is_Initialized (Item : Connection) return Boolean is
      (Item.Initialized);
 
+   function Encode_ACK
+     (Item      : Connection;
+      ACK_Delay : Varint_Policy.Value_Type)
+      return ACK_Frame_Policy.Encode_Result
+   is
+     (ACK_Frame_Policy.Encode (Item.Receive_State, ACK_Delay));
+
    procedure Initialize
      (Item        : in out Connection;
       Sending     : TLS_Key_Schedule.QUIC_Traffic_Keys;

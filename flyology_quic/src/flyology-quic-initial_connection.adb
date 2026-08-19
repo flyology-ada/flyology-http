@@ -9,6 +9,13 @@ package body Flyology.QUIC.Initial_Connection is
    function Is_Initialized (Item : Connection) return Boolean is
      (Item.Initialized);
 
+   function Encode_ACK
+     (Item      : Connection;
+      ACK_Delay : Varint_Policy.Value_Type)
+      return ACK_Frame_Policy.Encode_Result
+   is
+     (ACK_Frame_Policy.Encode (Item.Receive_State, ACK_Delay));
+
    procedure Initialize
      (Item                    : in out Connection;
       Role                    : Endpoint_Role;

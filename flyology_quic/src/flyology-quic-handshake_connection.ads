@@ -1,9 +1,11 @@
 with Ada.Streams;
+with Flyology.QUIC.ACK_Frame_Policy;
 with Flyology.QUIC.Connection_State_Policy;
 with Flyology.QUIC.Crypto_OpenSSL;
 with Flyology.QUIC.Handshake_Receiver;
 with Flyology.QUIC.Handshake_Sender;
 with Flyology.QUIC.Long_Header_Policy;
+with Flyology.QUIC.Varint_Policy;
 with Flyology.QUIC.TLS_Key_Schedule;
 
 --  Internal connection state for the QUIC Handshake encryption level.
@@ -90,6 +92,12 @@ private package Flyology.QUIC.Handshake_Connection is
      Post =>
        (if Result.Status /= Processed then
            Plaintext = (Plaintext'Range => 0));
+
+   function Encode_ACK
+     (Item      : Connection;
+      ACK_Delay : Varint_Policy.Value_Type)
+      return ACK_Frame_Policy.Encode_Result
+   with Pre => Is_Initialized (Item);
 private
    type Connection is limited record
       Backend     : Crypto_OpenSSL.Provider;

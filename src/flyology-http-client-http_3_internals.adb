@@ -255,13 +255,17 @@ package body HTTP_3_Internals is
          Destination.Data (1 .. Stream_Element_Offset (Destination.Length)),
          Destination,
          Source);
-      QUIC.Start_Client (Connection.QUIC_Transport, Flight, Status);
+      QUIC.Start_Client
+        (Connection.QUIC_Transport, Flight, Status, Now (Connection.all));
       if Status /= QUIC.Succeeded then
          raise Protocol_Error with
            "QUIC client start failed: " & QUIC.Operation_Status'Image (Status);
       end if;
       Send
         (State, Connection, Flight, Started, Timeout, Token, Race_Token);
+      --  Receive_One bounds each wait by the QUIC recovery deadline, so a lost
+      --  Initial or a lost server flight is retransmitted by the RFC 9002
+      --  handshake probe timeout instead of stalling until Timeout expires.
       while not QUIC.Is_Connected (Connection.QUIC_Transport) loop
          Receive_One
            (State, Connection, Started, Timeout, Token, Race_Token);

@@ -94,6 +94,14 @@ for the next layer.
   and authenticated replay admission. The client Initial is padded to 1,200
   bytes, and success requires matching directional 1-RTT keys after both
   endpoints process the encrypted peer flight.
+- RFC 9002 section 6.2 handshake-space loss recovery is exercised with an
+  explicit monotonic clock. A dropped client Initial is retransmitted by the
+  probe timeout under a fresh packet number and still completes the handshake;
+  a dropped server Handshake flight is retransmitted by the server while the
+  Initial flight it already had acknowledged is not; and a client whose peer
+  has not yet completed address validation sends the section 6.2.2.1
+  anti-deadlock probe. Backoff doubles the next deadline, and a confirmed
+  endpoint disarms the timer.
 - SPARK discharges the arithmetic, range, index, and contract checks in the
   wire-policy units.
 
@@ -126,7 +134,10 @@ the complete QUIC v1 feature set:
 
 1. Version negotiation, Retry, connection-ID changes, and stateless reset.
 2. Coalesced Initial and Handshake packets, reordered packets, duplicates,
-   loss, PTO, and key discard.
+   and key discard. Initial and Handshake loss detection and probe timeouts
+   are covered deterministically above and end to end in the HTTP crate's
+   `http3_handshake_recovery`; application-space PTO under sustained network
+   loss is not.
 3. Flow control, stream limits, reset/stop semantics, graceful close, and idle
    timeout.
 4. Wildcard and concrete IPv4/IPv6 binds, local-address preservation,

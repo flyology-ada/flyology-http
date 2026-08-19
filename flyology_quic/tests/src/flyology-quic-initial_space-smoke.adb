@@ -39,13 +39,11 @@ begin
      (Server, Initial_Connection.Server, Original_ID, Client_ID, Server_ID);
 
    Build_Crypto_Packet
-     (Client, (1 .. 0 => 0), 0, Flight (1 .. 1_000), Packet_1, Built_1);
+     (Client, 0, Flight (1 .. 1_000), 100, Packet_1, Built_1);
    Build_Crypto_Packet
-     (Client, (1 .. 0 => 0), 1_000, Flight (1_001 .. 2_000),
-      Packet_2, Built_2);
+     (Client, 1_000, Flight (1_001 .. 2_000), 100, Packet_2, Built_2);
    Build_Crypto_Packet
-     (Client, (1 .. 0 => 0), 2_000, Flight (2_001 .. 2_500),
-      Packet_3, Built_3);
+     (Client, 2_000, Flight (2_001 .. 2_500), 100, Packet_3, Built_3);
    pragma Assert
      (Built_1.Status = Built and then Built_2.Status = Built
       and then Built_3.Status = Built
@@ -57,7 +55,7 @@ begin
      (Server,
       Packet_2
         (1 .. Ada.Streams.Stream_Element_Offset (Built_2.Packet_Length)),
-      Received);
+      200, 1_000, Received);
    pragma Assert
      (Received.Status = Processed
       and then Received.Peer_Source = Client_ID
@@ -66,13 +64,13 @@ begin
      (Server,
       Packet_1
         (1 .. Ada.Streams.Stream_Element_Offset (Built_1.Packet_Length)),
-      Received);
+      200, 1_000, Received);
    pragma Assert (Contiguous_Length (Server) = 2_000);
    Process_Packet
      (Server,
       Packet_3
         (1 .. Ada.Streams.Stream_Element_Offset (Built_3.Packet_Length)),
-      Received);
+      200, 1_000, Received);
    pragma Assert (Contiguous_Length (Server) = Flight'Length);
    for Index in Crypto_Reassembly_Policy.Stream_Index
      range 0 .. Flight'Length - 1
@@ -82,7 +80,7 @@ begin
    end loop;
 
    Build_Crypto_Packet
-     (Server, (1 .. 0 => 0), 0, Flight (1 .. 32), Packet_1, Built_1);
+     (Server, 0, Flight (1 .. 32), 300, Packet_1, Built_1);
    pragma Assert
      (Built_1.Status = Built
       and then Built_1.Packet_Length < Max_Datagram_Length);

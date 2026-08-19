@@ -1,5 +1,6 @@
 with Ada.Environment_Variables;
 with Ada.Exceptions;
+with Ada.Real_Time;
 with Ada.Streams;
 with Ada.Strings.Unbounded;
 with Flyology.Bytes;
@@ -10,6 +11,7 @@ with Flyology.HTTP.HTTP_3;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Routing;
+with Flyology.IO;
 with Flyology.IO.Sockets;
 with Flyology.IO.TLS.ALPN;
 with Flyology.IO.TLS.OpenSSL;
@@ -32,6 +34,9 @@ procedure HTTP3_Server_Integration is
    use type H3.Event_Kind;
    use type H3.Operation_Status;
    use type QUIC.Operation_Status;
+   use type QUIC.Timeout_Status;
+   use type QUIC.Timestamp;
+   use type Ada.Real_Time.Time;
    use type Flyology.HTTP.Origin_Scheme;
    use type Flyology.HTTP.Protocol;
 
@@ -229,10 +234,6 @@ begin
          Transport : QUIC.Connection;
          Session : H3.Session;
          Flight : QUIC.Datagram_Batch;
-         --  Last handshake flight handed to the server. Handshake-space loss
-         --  recovery has no probe timeout below this test, so a discarded
-         --  datagram is retransmitted from here.
-         Handshake_Flight : QUIC.Datagram_Batch;
          QUIC_Status : QUIC.Operation_Status;
          H3_Status : H3.Operation_Status;
          Phase : Client_Phase := Initialize_Mixed_Client;
@@ -242,11 +243,59 @@ begin
          pragma Volatile (Exchange_Number);
          pragma Volatile (Attempt_Number);
 
+         --  The raw lane drives one QUIC connection directly, so it owns the
+         --  monotonic clock and the RFC 9002 recovery loop the pooled client
+         --  and the routed server keep internally.
+         Raw_Epoch : Ada.Real_Time.Time := Ada.Real_Time.Clock;
+
          function Failure_Context return String is
            (Sockets.Image (Raw_Address) &
             " phase=" & Client_Phase'Image (Phase) &
             " exchange=" & Decimal (Exchange_Number) &
             " attempt=" & Decimal (Attempt_Number));
+
+         function Raw_Now return QUIC.Timestamp is
+            Elapsed : constant Duration := Ada.Real_Time.To_Duration
+              (Ada.Real_Time.Clock - Raw_Epoch);
+         begin
+            return QUIC.Timestamp (Long_Long_Integer (Elapsed * 1_000_000.0));
+         end Raw_Now;
+
+         --  Wait no longer than the next probe deadline, so a handshake
+         --  flight lost on the loopback path is retransmitted rather than
+         --  stalling the whole attempt budget.
+         function Raw_Receive_Timeout return Duration is
+            Current : constant QUIC.Timestamp := Raw_Now;
+         begin
+            if not QUIC.Has_Recovery_Timeout (Transport) then
+               return 10.0;
+            end if;
+            declare
+               Deadline : constant QUIC.Timestamp :=
+                 QUIC.Recovery_Deadline (Transport);
+            begin
+               if Deadline <= Current then
+                  return 0.0;
+               end if;
+               return Duration'Min
+                 (10.0, Duration (Deadline - Current) / 1_000_000.0);
+            end;
+         end Raw_Receive_Timeout;
+
+         procedure Recover_Raw_Handshake is
+            Probes : QUIC.Datagram_Batch;
+            Status : QUIC.Timeout_Status;
+         begin
+            QUIC.Process_Timeout (Transport, Raw_Now, Probes, Status);
+            if Status = QUIC.Probes_Ready then
+               QUIC_IO.Send (Socket, Probes, Timeout => 10.0);
+            elsif Status not in QUIC.Not_Due | QUIC.No_Pending_Recovery then
+               raise Program_Error with
+                 "raw QUIC recovery failed: "
+                 & QUIC.Timeout_Status'Image (Status)
+                 & " " & Failure_Context;
+            end if;
+         end Recover_Raw_Handshake;
       begin
       declare
          HTTP : aliased Client.Client (Capacity => 2);
@@ -435,31 +484,29 @@ begin
       Sockets.Create_Socket
         (Socket, Raw_Address.Family, Sockets.Socket_Datagram);
       Sockets.Connect_Socket (Socket, Raw_Address);
-      QUIC.Start_Client (Transport, Flight, QUIC_Status);
+      Raw_Epoch := Ada.Real_Time.Clock;
+      QUIC.Start_Client (Transport, Flight, QUIC_Status, Raw_Now);
       pragma Assert (QUIC_Status = QUIC.Succeeded);
-      Handshake_Flight := Flight;
       QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
 
       --  A listener whose connection registry is momentarily full discards a
-      --  QUIC Initial without answering it, and no handshake-space probe
-      --  timeout retransmits it. Spend the attempt budget on retransmission
-      --  rather than on one long wait, so a discarded datagram costs a probe
-      --  interval instead of the whole exchange.
-      for Attempt in 1 .. 8 loop
+      --  QUIC Initial without answering it. The transport now owns that
+      --  retransmission, so the loop drives its probe timeout rather than
+      --  resending the last flight itself, and a discarded datagram costs a
+      --  probe interval instead of the whole exchange.
+      for Attempt in 1 .. 16 loop
          exit when QUIC.Is_Connected (Transport);
          Attempt_Number := Attempt;
          begin
             QUIC_IO.Receive
-              (Socket, Transport, Flight, QUIC_Status, Timeout => 2.0);
+              (Socket, Transport, Flight, QUIC_Status,
+               Now => Raw_Now, Timeout => Raw_Receive_Timeout);
             pragma Assert
               (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
-            if Flight.Count > 0 then
-               Handshake_Flight := Flight;
-            end if;
             QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
          exception
             when Flyology.IO.Timeout_Error =>
-               QUIC_IO.Send (Socket, Handshake_Flight, Timeout => 10.0);
+               Recover_Raw_Handshake;
          end;
       end loop;
       Attempt_Number := 0;
