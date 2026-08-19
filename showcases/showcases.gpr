@@ -10,6 +10,7 @@ project Flyology_HTTP_Showcases is
    for Exec_Dir use "bin";
    for Main use
      ("http_server.adb",
+      "http_router_reload_benchmark.adb",
       "http_application_benchmark_server.adb",
       "http_plain_benchmark_server.adb",
       "http_benchmark_server.adb",
