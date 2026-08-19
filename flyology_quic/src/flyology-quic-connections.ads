@@ -632,6 +632,26 @@ package Flyology.QUIC.Connections is
       Status     : out Send_Status)
    with Pre => Is_Connected (Item);
 
+   --  Build a transport CONNECTION_CLOSE for a connection abandoned before
+   --  application keys exist. An application CONNECTION_CLOSE cannot be sent
+   --  in the Initial or Handshake space, so this carries the transport
+   --  APPLICATION_ERROR code that RFC 9000 10.2.3 reserves for that case. The
+   --  packet uses Handshake protection once the handshake space is available
+   --  and Initial protection otherwise; a peer that reached either level can
+   --  read it. The connection becomes Failed whether or not a packet could be
+   --  produced, because an endpoint that has started closing must not send
+   --  anything else.
+   --  @param Item Endpoint that has not completed its handshake
+   --  @param Packet Datagram to transmit when Status is Sent
+   --  @param Status Build outcome
+   procedure Build_Handshake_Close_Datagram
+     (Item   : in out Connection;
+      Packet : out Datagram;
+      Status : out Send_Status)
+   with Pre => State (Item) in
+     Client_Initial | Client_Handshake | Server_Initial | Server_Handshake,
+     Post => State (Item) = Failed;
+
    --  Return the number of peer streams retained by the connection.
    --  @param Item Connection to inspect
    --  @return Number of retained streams

@@ -88,13 +88,18 @@ package body Flyology.QUIC.Initial_Space is
       Frame : constant Initial_Frame_Policy.Transport_Close_Encode_Result :=
         Initial_Frame_Policy.Encode_Transport_Close (Error_Code, Frame_Type);
       Built : Initial_Connection.Build_Result;
+      --  RFC 9000 14.1 has a server discard any client Initial packet whose
+      --  datagram payload is under 1,200 bytes, closes included.
+      Minimum : constant Natural :=
+        (if Item.Role = Initial_Connection.Client
+         then 1_200 else 0);
    begin
       Packet := (others => 0);
       Result := (others => <>);
       Initial_Connection.Build_Initial_At_Least
         (Item.Packets, (1 .. 0 => 0),
          Frame.Data (1 .. Ada.Streams.Stream_Element_Offset (Frame.Length)),
-         Minimum_Packet_Length => 0, Packet => Packet, Result => Built);
+         Minimum_Packet_Length => Minimum, Packet => Packet, Result => Built);
       Result.Status :=
         (case Built.Status is
             when Initial_Connection.Built => Initial_Space.Built,
@@ -180,6 +185,13 @@ package body Flyology.QUIC.Initial_Space is
                Result.Status := Crypto_Data_Too_Large;
                return;
             end if;
+         elsif Frame.Kind = Initial_Frame_Policy.Transport_Close then
+            --  RFC 9000 10.2.2 puts the receiver into the draining state, so
+            --  the remaining frames of this packet cannot change the outcome.
+            Result.Peer_Closed := True;
+            Result.Close_Error := Frame.Close_Error_Code;
+            Result.Status := Processed;
+            return;
          end if;
          Cursor := Cursor + Frame.Consumed;
       end loop;

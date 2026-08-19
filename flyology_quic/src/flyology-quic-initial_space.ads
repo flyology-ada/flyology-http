@@ -86,6 +86,8 @@ private package Flyology.QUIC.Initial_Space is
       Status      : Process_Status := Envelope_Rejected;
       Frame_Count : Natural := 0;
       Peer_Source : Long_Header_Policy.Connection_ID;
+      Peer_Closed : Boolean := False;
+      Close_Error : Varint_Policy.Value_Type := 0;
    end record;
 
    procedure Process_Packet

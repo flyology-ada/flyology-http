@@ -280,6 +280,83 @@ package body Flyology.QUIC.Connection_Driver is
       end if;
    end Build_Application_Close_Datagram;
 
+   function Send_Status_For
+     (Value : Initial_Space.Build_Status)
+      return Application_Space.Send_Status
+   is
+     (case Value is
+         when Initial_Space.Built => Application_Space.Sent,
+         when Initial_Space.Crypto_Range_Too_Large =>
+           Application_Space.Internal_State_Error,
+         when Initial_Space.Packet_Number_Exhausted =>
+           Application_Space.Packet_Number_Exhausted,
+         when Initial_Space.Packet_Number_Unrepresentable =>
+           Application_Space.Packet_Number_Unrepresentable,
+         when Initial_Space.Packet_Too_Large =>
+           Application_Space.Packet_Too_Large,
+         when Initial_Space.Output_Too_Small =>
+           Application_Space.Output_Too_Small);
+
+   function Send_Status_For
+     (Value : Handshake_Space.Build_Status)
+      return Application_Space.Send_Status
+   is
+     (case Value is
+         when Handshake_Space.Built => Application_Space.Sent,
+         when Handshake_Space.Crypto_Range_Too_Large =>
+           Application_Space.Internal_State_Error,
+         when Handshake_Space.Packet_Number_Exhausted =>
+           Application_Space.Packet_Number_Exhausted,
+         when Handshake_Space.Packet_Number_Unrepresentable =>
+           Application_Space.Packet_Number_Unrepresentable,
+         when Handshake_Space.Packet_Too_Large =>
+           Application_Space.Packet_Too_Large,
+         when Handshake_Space.Output_Too_Small =>
+           Application_Space.Output_Too_Small);
+
+   procedure Build_Handshake_Close_Datagram
+     (Item       : in out Connection;
+      Error_Code : Varint_Policy.Value_Type;
+      Packet     : out Datagram;
+      Status     : out Application_Space.Send_Status)
+   is
+      Buffer : Ada.Streams.Stream_Element_Array (1 .. Max_Datagram_Length);
+      Length : Natural := 0;
+   begin
+      Packet := (others => <>);
+      if Item.Handshake_Initialized then
+         declare
+            Built : Handshake_Space.Build_Result;
+         begin
+            --  Frame type zero reports a close that no received frame
+            --  triggered, as RFC 9000 19.19 requires.
+            Handshake_Space.Build_Transport_Close_Packet
+              (Item.Handshake, Error_Code, 0, Buffer, Built);
+            Status := Send_Status_For (Built.Status);
+            if Built.Status = Handshake_Space.Built then
+               Length := Built.Packet_Length;
+            end if;
+         end;
+      else
+         declare
+            Built : Initial_Space.Build_Result;
+         begin
+            Initial_Space.Build_Transport_Close_Packet
+              (Item.Initial, Error_Code, 0, Buffer, Built);
+            Status := Send_Status_For (Built.Status);
+            if Built.Status = Initial_Space.Built then
+               Length := Built.Packet_Length;
+            end if;
+         end;
+      end if;
+      Packet.Length := Length;
+      if Length > 0 then
+         Packet.Data (1 .. Ada.Streams.Stream_Element_Offset (Length)) :=
+           Buffer (1 .. Ada.Streams.Stream_Element_Offset (Length));
+      end if;
+      Item.Current := Failed;
+   end Build_Handshake_Close_Datagram;
+
    function Append
      (Output : in out Datagram_Batch;
       Packet : Ada.Streams.Stream_Element_Array;
@@ -719,6 +796,12 @@ package body Flyology.QUIC.Connection_Driver is
            (Item, Transport_Error_For (Processed.Status),
             Frame_Type => 16#06#, Output => Output, Result => Result);
          return;
+      elsif Processed.Peer_Closed then
+         Item.Close_Is_Application := False;
+         Item.Close_Error := Processed.Close_Error;
+         Item.Current := Peer_Closed;
+         Result.Status := Connection_Closed;
+         return;
       end if;
       Length := Message_Length (Item.Initial);
       if Length = 0 then
@@ -871,6 +954,12 @@ package body Flyology.QUIC.Connection_Driver is
          Fail_Handshake_With_Close
            (Item, Transport_Error_For (Processed.Status),
             Frame_Type => 16#06#, Output => Output, Result => Result);
+         return;
+      elsif Processed.Peer_Closed then
+         Item.Close_Is_Application := False;
+         Item.Close_Error := Processed.Close_Error;
+         Item.Current := Peer_Closed;
+         Result.Status := Connection_Closed;
          return;
       end if;
 
