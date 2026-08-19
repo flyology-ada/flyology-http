@@ -2,7 +2,6 @@ with Ada.Characters.Handling;
 with Ada.Exceptions;
 with Ada.Real_Time;
 with Ada.Strings.Fixed;
-with Ada.Unchecked_Conversion;
 with Ada.Unchecked_Deallocation;
 with Flyology.HTTP.Decoded_Path_Policy;
 with Flyology.HTTP.Route_Parameter_Policy;
@@ -34,9 +33,6 @@ package body Flyology.HTTP.Server.Routing is
 
    package Configuration_Conversions is new
      System.Address_To_Access_Conversions (Router_Configuration);
-
-   function As_Configuration is new Ada.Unchecked_Conversion
-     (Configuration_Conversions.Object_Pointer, Configuration_Access);
 
    procedure Free_Configuration is new Ada.Unchecked_Deallocation
      (Router_Configuration, Configuration_Access);
@@ -84,7 +80,8 @@ package body Flyology.HTTP.Server.Routing is
      (Value : System.Address) return Configuration_Access
    is
      (if Value = System.Null_Address then null
-      else As_Configuration (Configuration_Conversions.To_Pointer (Value)));
+      else Configuration_Access
+             (Configuration_Conversions.To_Pointer (Value)));
 
    function Current_Configuration
      (Item : Router) return Configuration_Access
@@ -102,14 +99,14 @@ package body Flyology.HTTP.Server.Routing is
    end Current_Configuration;
 
    protected body Publication_Gate is
-      procedure Initialize (Configuration : System.Address) is
+      procedure Initialize (Configuration : Configuration_Access) is
       begin
          Latest := Configuration;
       end Initialize;
 
       procedure Try_Publish
-        (Expected : System.Address;
-         Desired  : System.Address;
+        (Expected : Configuration_Access;
+         Desired  : Configuration_Access;
          Accepted : out Boolean)
       is
       begin
@@ -120,17 +117,20 @@ package body Flyology.HTTP.Server.Routing is
       end Try_Publish;
    end Publication_Gate;
 
+   --  The allocator is a statement, not a declaration, so a Storage_Error
+   --  from it reaches the handler below instead of bypassing it.
    overriding procedure Initialize (Item : in out Router) is
-      Configuration : Configuration_Access :=
-        new Router_Configuration (Item.Capacity, Item.Slashes);
-      Address : constant System.Address := Configuration.all'Address;
+      Configuration : Configuration_Access;
    begin
-      Item.First_Configuration := Address;
-      Item.Publisher.Initialize (Address);
+      Configuration := new Router_Configuration (Item.Capacity, Item.Slashes);
+      Item.First_Configuration := Configuration;
+      Item.Publisher.Initialize (Configuration);
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Configuration'Address, Address_Word (Address));
+        (Item.Current_Configuration'Address,
+         Address_Word (Configuration.all'Address));
    exception
       when others =>
+         Item.First_Configuration := null;
          if Configuration /= null then
             Free_Configuration (Configuration);
          end if;
@@ -138,21 +138,19 @@ package body Flyology.HTTP.Server.Routing is
    end Initialize;
 
    overriding procedure Finalize (Item : in out Router) is
-      Address : System.Address := Item.First_Configuration;
+      Retained : Configuration_Access := Item.First_Configuration;
    begin
       Flyology.Atomic_Primitives.Store_Release_U64
         (Item.Current_Configuration'Address, 0);
-      while Address /= System.Null_Address loop
+      while Retained /= null loop
          declare
-            Configuration : Configuration_Access :=
-              To_Configuration (Address);
-            Previous : constant System.Address := Configuration.Previous;
+            Configuration : Configuration_Access := Retained;
          begin
+            Retained := Configuration.Previous;
             Free_Configuration (Configuration);
-            Address := Previous;
          end;
       end loop;
-      Item.First_Configuration := System.Null_Address;
+      Item.First_Configuration := null;
    end Finalize;
 
    overriding procedure Finalize (Item : in out Update_State) is
@@ -161,7 +159,7 @@ package body Flyology.HTTP.Server.Routing is
          Free_Configuration (Item.Candidate);
       end if;
       Item.Owner := System.Null_Address;
-      Item.Base := System.Null_Address;
+      Item.Base := null;
    end Finalize;
 
    function Exception_Summary
@@ -1065,10 +1063,10 @@ package body Flyology.HTTP.Server.Routing is
          raise Program_Error with "HTTP router update is already active";
       end if;
       Change.State.Owner := Item'Address;
-      Change.State.Base := Configuration.all'Address;
+      Change.State.Base := Configuration;
       Change.State.Candidate :=
         new Router_Configuration'(Configuration.all);
-      Change.State.Candidate.Previous := System.Null_Address;
+      Change.State.Candidate.Previous := null;
    end Begin_Update;
 
    procedure Add
@@ -1354,26 +1352,27 @@ package body Flyology.HTTP.Server.Routing is
    end Set_Authentication_Challenge;
 
    procedure Commit (Item : in out Router; Change : in out Update) is
-      Address  : System.Address;
-      Accepted : Boolean;
+      Candidate : Configuration_Access;
+      Accepted  : Boolean;
    begin
       Require_Candidate (Change);
       if Change.State.Owner /= Item'Address then
          raise Route_Error with "HTTP router update belongs to another router";
       end if;
       Validate_Configuration (Change.State.Candidate.all);
-      Address := Change.State.Candidate.all'Address;
-      Item.Publisher.Try_Publish (Change.State.Base, Address, Accepted);
+      Candidate := Change.State.Candidate;
+      Item.Publisher.Try_Publish (Change.State.Base, Candidate, Accepted);
       if not Accepted then
          raise Stale_Update with "HTTP router generation was replaced";
       end if;
-      Change.State.Candidate.Previous := Item.First_Configuration;
-      Item.First_Configuration := Address;
+      Candidate.Previous := Item.First_Configuration;
+      Item.First_Configuration := Candidate;
       Flyology.Atomic_Primitives.Store_Release_U64
-        (Item.Current_Configuration'Address, Address_Word (Address));
+        (Item.Current_Configuration'Address,
+         Address_Word (Candidate.all'Address));
       Change.State.Candidate := null;
       Change.State.Owner := System.Null_Address;
-      Change.State.Base := System.Null_Address;
+      Change.State.Base := null;
    end Commit;
 
    procedure Set_Automatic_Admission
