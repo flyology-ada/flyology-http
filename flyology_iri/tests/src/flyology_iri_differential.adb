@@ -149,8 +149,9 @@ package body Flyology_IRI_Differential is
    end Report;
 
    --  Contract of flyology_iri.ads: Can_Parse is True exactly when Diagnose
-   --  reports No_Error, Parse raises exactly when it does not, and
-   --  Try_Parse reports the same failure Diagnose does.
+   --  reports No_Error, Parse raises exactly when it does not, Try_Parse
+   --  reports the same failure Diagnose does, and Inspect reports what
+   --  Try_Parse reports without building the reference.
    procedure Check
      (Input : String;
       Syn   : Syntax_Kind;
@@ -162,8 +163,23 @@ package body Flyology_IRI_Differential is
       Value   : Reference;
       Error   : Parse_Error;
       Raised  : Boolean := False;
+      Seen    : Reference_Kind;
+      Seen_Error : Parse_Error;
    begin
       Try_Parse (Input, Value, Error, Syn, Max);
+      Inspect (Input, Seen, Seen_Error, Syn, Max);
+      if Seen_Error /= Error then
+         Report
+           ("inspect/try_parse", Input, Syn, Max,
+            "try_parse=" & Image (Error) & " inspect=" & Image (Seen_Error),
+            Count);
+      end if;
+      if Seen /= Kind (Value) then
+         Report
+           ("inspect_kind/try_parse", Input, Syn, Max,
+            "try_parse=" & Reference_Kind'Image (Kind (Value))
+            & " inspect=" & Reference_Kind'Image (Seen), Count);
+      end if;
       if Allowed /= (Found.Kind = No_Error) then
          Report
            ("can_parse/diagnose", Input, Syn, Max,

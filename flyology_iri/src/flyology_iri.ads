@@ -87,6 +87,25 @@ package Flyology_IRI is
       Syntax     : Syntax_Kind := IRI_Syntax;
       Max_Length : Positive := Default_Max_Length) return Parse_Error;
 
+   --  Validate and report the structural classification without building a
+   --  Reference. URI and IRI inputs and the common absolute HTTP(S) fast path
+   --  do not allocate, so a caller that only has to admit or reject a
+   --  reference -- an RDF crate deciding whether bytes are an absolute IRI,
+   --  say -- pays no serialization copy. Try_Parse answers the same question
+   --  but must first store the serialization it is about to be asked for.
+   --  @param Input URI, IRI, or URL bytes
+   --  @param Kind Structural classification, meaningful only when Error
+   --     reports No_Error
+   --  @param Error No_Error on success, otherwise the first detected failure
+   --  @param Syntax Grammar and policy to apply
+   --  @param Max_Length Maximum accepted input and serialized byte length
+   procedure Inspect
+     (Input      : String;
+      Kind       : out Reference_Kind;
+      Error      : out Parse_Error;
+      Syntax     : Syntax_Kind := IRI_Syntax;
+      Max_Length : Positive := Default_Max_Length);
+
    --  Parse into a compact owned representation. Web URL mode lowercases the
    --  scheme and ASCII host and inserts `/` for an empty HTTP-style path.
    --  @param Input URI, IRI, or URL bytes
