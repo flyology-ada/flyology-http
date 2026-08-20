@@ -98,8 +98,24 @@ project Flyology_HTTP is
    end Binder;
 
    package Documentation is
+      --  GNATdoc documents every project in the closure that is not excluded
+      --  here, so a documented spec that names a dependency drags that
+      --  dependency's entities into the generated index. This reference
+      --  publishes the HTTP API, as its own footer says, so every dependency
+      --  is excluded and the index lists this crate's units alone.
+      --
+      --  Each is named through the prefix Alire exports for its crate rather
+      --  than a path under FLYOLOGY_ROOT: the Flyology crate vendors copies
+      --  of these sources, so the two resolve to different build directories,
+      --  and GNATdoc rejects an excluded file that is not the project it
+      --  actually loaded rather than quietly ignoring it.
       for Excluded_Project_Files use
-        (external ("FLYOLOGY_ROOT", "") & "/flyology.gpr");
+        (external ("FLYOLOGY_ROOT", "") & "/flyology.gpr",
+         external ("FLYOLOGY_CACHELINES_ALIRE_PREFIX", "")
+         & "/flyology_cachelines.gpr",
+         external ("FLYOLOGY_ALLOCATORS_ALIRE_PREFIX", "")
+         & "/flyology_allocators.gpr",
+         external ("FLYOLOGY_QUIC_ALIRE_PREFIX", "") & "/flyology_quic.gpr");
       for Resources_Dir ("html") use "docs/gnatdoc/html";
    end Documentation;
 
