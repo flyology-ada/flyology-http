@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added exact 64-bit fixed-length server response streams through the raw and
+  application APIs across HTTP/1.1, HTTP/2, and HTTP/3. Known-length streams
+  emit `Content-Length` without retaining the whole response, while the
+  existing unknown-length API remains available.
+
+### Fixed
+
+- Reject fixed-response overruns before transport writes, fail underruns at
+  stream completion, isolate failed HTTP/2 and HTTP/3 streams, and preserve the
+  declared representation length while suppressing `HEAD` response bodies.
+
 ## [0.1.1] - 2026-08-21
 
 ### Added
