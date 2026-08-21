@@ -41,6 +41,7 @@ project Flyology_HTTP is
             "flyology-http-client-request_bodies-channels.ads",
             "flyology-http-client-request_bodies-files.ads",
             "flyology-http-headers.ads",
+            "flyology-http-fixed_response_policy.ads",
             "flyology-http-http_3.ads",
             "flyology-http-methods.ads",
             "flyology-http-server.ads",
@@ -105,16 +106,15 @@ project Flyology_HTTP is
       --  is excluded and the index lists this crate's units alone.
       --
       --  Each is named through the prefix Alire exports for its crate rather
-      --  than a path under FLYOLOGY_ROOT: the Flyology crate vendors copies
-      --  of these sources, so the two resolve to different build directories,
+      --  than a path under FLYOLOGY_ROOT: the Flyology crate vendors a copy
+      --  of cachelines, so the two resolve to different build directories,
       --  and GNATdoc rejects an excluded file that is not the project it
-      --  actually loaded rather than quietly ignoring it.
+      --  actually loaded rather than quietly ignoring it. The stable
+      --  dependency closure has no separate allocators project to exclude.
       for Excluded_Project_Files use
         (external ("FLYOLOGY_ROOT", "") & "/flyology.gpr",
          external ("FLYOLOGY_CACHELINES_ALIRE_PREFIX", "")
          & "/flyology_cachelines.gpr",
-         external ("FLYOLOGY_ALLOCATORS_ALIRE_PREFIX", "")
-         & "/flyology_allocators.gpr",
          external ("FLYOLOGY_QUIC_ALIRE_PREFIX", "") & "/flyology_quic.gpr");
       for Resources_Dir ("html") use "docs/gnatdoc/html";
    end Documentation;

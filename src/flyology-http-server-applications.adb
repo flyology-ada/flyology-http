@@ -600,6 +600,46 @@ package body Flyology.HTTP.Server.Applications is
          raise;
    end Begin_Stream;
 
+   procedure Begin_Stream
+     (Item           : in out Exchange;
+      Status         : Positive;
+      Content_Type   : String;
+      Content_Length : Body_Size;
+      Close          : Boolean := False)
+   is
+   begin
+      Require_Owner (Item);
+      if Item.Response_Value /= Not_Started then
+         raise Program_Error with "HTTP exchange response already started";
+      elsif Item.Authentication_Value = Required_Authentication
+        and then not Item.Principal_Present
+        and then Status < 400
+      then
+         raise Program_Error with
+           "required-authentication route cannot start an unauthenticated"
+           & " stream";
+      end if;
+      if Item.Backend_Handle = null then
+         Begin_Response_Stream
+           (Item.Connection_Handle.all, Status, Content_Type, Content_Length,
+            Extra_Headers => To_String (Item.Extra_Headers),
+            Close         => Close,
+            Timeout       => Remaining (Item),
+            Token         => Item.Token_Handle);
+      else
+         Exchange_Backends.Begin_Response_Stream
+           (Item.Backend_Handle.all, Status, Content_Type, Content_Length,
+            To_String (Item.Extra_Headers), Close, Remaining (Item),
+            Item.Token_Handle);
+      end if;
+      Item.Status_Value := Status;
+      Item.Response_Value := Streaming_Response;
+   exception
+      when others =>
+         Item.Response_Value := Failed;
+         raise;
+   end Begin_Stream;
+
    procedure Write_Chunk (Item : in out Exchange; Data : String) is
    begin
       Require_Owner (Item);

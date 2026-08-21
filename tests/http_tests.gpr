@@ -25,6 +25,7 @@ project HTTP_Tests is
       "flyology-websocket_client_policy-smoke.adb",
       "flyology-http-decoded_path_policy-smoke.adb",
       "flyology-http-expect_policy-smoke.adb",
+      "flyology-http-fixed_response_policy-smoke.adb",
       "flyology-http-header_huffman_policy-smoke.adb",
       "flyology-http-header_huffman_policy-differential.adb",
       "flyology-http-client_policy-smoke.adb",

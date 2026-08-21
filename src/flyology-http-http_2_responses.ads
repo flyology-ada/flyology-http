@@ -9,6 +9,6 @@ private package Flyology.HTTP.HTTP_2_Responses is
       Content_Type       : String;
       Fields             : Flyology.HTTP.Headers.List;
       Has_Content_Length : Boolean;
-      Content_Length     : Natural) return Flyology.Bytes.Unbounded_Bytes;
+      Content_Length     : Body_Size) return Flyology.Bytes.Unbounded_Bytes;
 
 end Flyology.HTTP.HTTP_2_Responses;

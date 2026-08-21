@@ -312,7 +312,8 @@ QUIC flow control. `Expect: 100-continue` remains unavailable on H3.
 - Origin-bound HTTP pools with one monotonic exchange deadline and
   single-session WebSocket clients with monotonic operation deadlines,
   including direct or same-origin Alt-Svc-discovered HTTP/3 transports.
-- Fixed-length and chunked bodies with bounded streaming adapters.
+- Fixed-length and chunked request bodies with bounded streaming adapters.
+- Exact 64-bit fixed-length server response streams, plus compatible unknown-length streams, without retaining the whole body.
 - Optional routing, middleware, native offload, SSE, and WebSocket facilities.
 - Provider-neutral TLS integration through Flyology I/O.
 - A low-level HTTP/3 client/server session over the Ada-native `flyology_quic`

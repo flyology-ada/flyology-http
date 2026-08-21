@@ -148,6 +148,25 @@ package Flyology.HTTP.Server.Exchange_Backends is
 
    --  @exclude
    --  @param Item Backend state
+   --  @param Status Response status
+   --  @param Content_Type Response media type
+   --  @param Content_Length Declared representation length
+   --  @param Extra_Headers Serialized application fields
+   --  @param Close Ignored HTTP/1.x close policy
+   --  @param Timeout Operation deadline interval
+   --  @param Token Cancellation token
+   procedure Begin_Response_Stream
+     (Item           : in out Backend;
+      Status         : Positive;
+      Content_Type   : String;
+      Content_Length : Body_Size;
+      Extra_Headers  : String;
+      Close          : Boolean;
+      Timeout        : Duration;
+      Token          : access Flyology.Cancellation.Token) is abstract;
+
+   --  @exclude
+   --  @param Item Backend state
    --  @param Data Response bytes
    --  @param Timeout Operation deadline interval
    --  @param Token Cancellation token

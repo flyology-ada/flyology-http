@@ -139,7 +139,7 @@ procedure HTTP2_Server_Integration is
 
    package Routing is new Flyology.HTTP.Server.Routing (Context);
    Routes : Routing.Router
-     (Capacity => 6,
+     (Capacity => 10,
       Slashes  => Routing.Strict_Slashes);
 
    procedure Identify_Protocol
@@ -191,6 +191,50 @@ procedure HTTP2_Server_Integration is
       X.End_Stream;
    end Large;
 
+   procedure Fixed_Large
+     (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+   begin
+      X.Begin_Stream
+        (200, "application/octet-stream", Content_Length => 80 * 1_024);
+      for Index in 1 .. 80 loop
+         X.Write_Chunk
+           (String'(1 .. 1_024 => Character'Val (Index mod 256)));
+      end loop;
+      X.End_Stream;
+   end Fixed_Large;
+
+   procedure Fixed_One_Byte
+     (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+      Value : constant String := "fixed";
+   begin
+      X.Begin_Stream (200, "text/plain", Content_Length => Value'Length);
+      for Item of Value loop
+         X.Write_Chunk (String'(1 => Item));
+      end loop;
+      X.End_Stream;
+   end Fixed_One_Byte;
+
+   procedure Fixed_Zero
+     (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+   begin
+      X.Begin_Stream
+        (200, "application/octet-stream", Content_Length => 0);
+      X.End_Stream;
+   end Fixed_Zero;
+
+   procedure Fixed_Head
+     (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+   begin
+      X.Begin_Stream
+        (200, "application/octet-stream",
+         Content_Length => 5 * 1_024 * 1_024 * 1_024 + 9);
+      X.End_Stream;
+   end Fixed_Head;
+
    procedure Early (State : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (State);
    begin
@@ -206,6 +250,11 @@ begin
    Routes.Get ("/first", Basic'Access, Name => "first");
    Routes.Get ("/second", Basic'Access, Name => "second");
    Routes.Get ("/large", Large'Access, Name => "large");
+   Routes.Get ("/fixed-large", Fixed_Large'Access, Name => "fixed.large");
+   Routes.Get
+     ("/fixed-one", Fixed_One_Byte'Access, Name => "fixed.one");
+   Routes.Get ("/fixed-zero", Fixed_Zero'Access, Name => "fixed.zero");
+   Routes.Get ("/fixed-head", Fixed_Head'Access, Name => "fixed.head");
    Routes.Get ("/http1", Basic'Access, Name => "http1");
    Routes.Post
      ("/echo", Echo'Access, Name => "echo",
@@ -380,6 +429,72 @@ begin
          end;
          pragma Assert (Raised);
       end;
+
+      declare
+         Request : Client.Request;
+      begin
+         Client.Set_Target (Request, "/fixed-large");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+            Value : constant Ada.Streams.Stream_Element_Array :=
+              Flyology.Bytes.To_Array
+                (Client.Read_All (Reply, Maximum => 100_000));
+         begin
+            pragma Assert
+              (Client.Header (Reply, "content-length") = "81920");
+            pragma Assert
+              (Client.Header (Reply, "transfer-encoding") = "");
+            pragma Assert (Value'Length = 80 * 1_024);
+         end;
+      end;
+
+      declare
+         Request : Client.Request;
+      begin
+         Client.Set_Target (Request, "/fixed-one");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert (Client.Header (Reply, "content-length") = "5");
+            pragma Assert
+              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                 "fixed");
+         end;
+      end;
+
+      declare
+         Request : Client.Request;
+      begin
+         Client.Set_Target (Request, "/fixed-zero");
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert
+              (Client.Header (Reply, "content-length") = "0");
+            pragma Assert
+              (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
+         end;
+      end;
+
+      declare
+         Request : Client.Request;
+      begin
+         Client.Set_Target (Request, "/fixed-head");
+         Client.Set_Method (Request, Flyology.HTTP.Methods.HEAD);
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert
+              (Client.Header (Reply, "content-length") = "5368709129");
+            pragma Assert
+              (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
+         end;
+      end;
+
       Check ("/second", "/second");
 
       --  These are protocol-specific borrowed-source contract cases. Each

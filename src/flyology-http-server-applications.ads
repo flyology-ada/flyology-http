@@ -438,6 +438,23 @@ package Flyology.HTTP.Server.Applications is
       Content_Type : String;
       Close        : Boolean := False);
 
+   --  Start a fixed-length streaming response. The caller declares the
+   --  complete 64-bit representation length before the first body write.
+   --  Every protocol emits content-length and enforces exact completion.
+   --  HEAD emits the declared length but suppresses body writes, so a HEAD
+   --  handler can end the stream without generating the representation.
+   --  @param Item Request exchange
+   --  @param Status HTTP status
+   --  @param Content_Type Media type, or empty to omit
+   --  @param Content_Length Declared representation length
+   --  @param Close Force connection close after the stream
+   procedure Begin_Stream
+     (Item           : in out Exchange;
+      Status         : Positive;
+      Content_Type   : String;
+      Content_Length : Body_Size;
+      Close          : Boolean := False);
+
    --  Write one response chunk with synchronous transport backpressure.
    --  @param Item Exchange with an active streaming response
    --  @param Data Response bytes

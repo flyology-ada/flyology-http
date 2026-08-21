@@ -26,6 +26,7 @@ cd "$http_root/proof"
   flyology-websocket_client_policy.adb \
   flyology-http-decoded_path_policy.adb \
   flyology-http-expect_policy.adb \
+  flyology-http-fixed_response_policy.adb \
   flyology-http-header_huffman_policy.adb \
   flyology-http-client_policy.adb \
   flyology-http-http_2_policy.adb \
