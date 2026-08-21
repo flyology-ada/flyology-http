@@ -167,7 +167,7 @@ end;</code></pre></figure>
    Flyology.HTTP.Parse_Origin ("https://api.example.com"),
    Client.Require_HTTP_3,
    HTTP_3_Certificate_DER =&gt; Pinned_Certificate_DER);</code></pre></figure>
-            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The current HTTP/3 client profile reuses each pooled QUIC connection sequentially rather than multiplexing requests. Retained and borrowed request bodies are emitted incrementally under QUIC flow control. <code>Expect: 100-continue</code> remains HTTP/1.1-only.</p></aside>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The current HTTP/3 client profile reuses each pooled QUIC connection sequentially rather than multiplexing requests. Retained and borrowed request bodies are emitted incrementally under QUIC flow control. The client stops a borrowed source when an early final response arrives. It closes that QUIC transport after consuming the response because the request sending direction is incomplete. <code>Expect: 100-continue</code> remains HTTP/1.1-only.</p></aside>
             <p>The maintained qualification gate runs the Ada client against pinned aioquic and quic-go servers and runs both independent clients against the routed Ada server. Published RFC vectors separately cover deterministic QUIC packet protection, TLS, and the supported static-QPACK profile. Run <code>./scripts/test-http3-interop.sh all</code>; see <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http3-conformance.md"><code>tests/http3-conformance.md</code></a> for the exact evidence boundary.</p>
           </section>
 

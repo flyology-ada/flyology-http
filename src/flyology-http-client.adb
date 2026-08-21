@@ -1280,7 +1280,8 @@ package body Flyology.HTTP.Client is
             end Wait_For_HTTP_2;
 
             procedure Wait_For_HTTP_2_Upload
-              (Handle : H2_Connections.Stream_Handle)
+              (Handle   : H2_Connections.Stream_Handle;
+               Required : Natural)
             is
                Stream_FD   : Flyology.IO.Descriptor;
                Shutdown_FD : Flyology.IO.Descriptor;
@@ -1293,7 +1294,7 @@ package body Flyology.HTTP.Client is
             begin
                H2_Connections.Upload_Wait_Source
                  (Result.Data.Connection.HTTP_2.all,
-                  Handle, Stream_FD, Ready_Now);
+                  Handle, Required, Stream_FD, Ready_Now);
                if Ready_Now then
                   return;
                end if;
@@ -1413,6 +1414,13 @@ package body Flyology.HTTP.Client is
                            Result.Data.Source_Failed := True;
                            raise;
                      end;
+                     if Token /= null and then Token.Requested then
+                        raise Flyology.Cancellation.Operation_Cancelled;
+                     elsif Timeout >= 0.0
+                       and then Remaining (Started, Timeout) <= 0.0
+                     then
+                        raise Flyology.IO.Timeout_Error;
+                     end if;
                      if Last < Buffer'First - 1 or else Last > Buffer'Last then
                         raise Request_Body_Error with
                           "request body source returned an invalid last index";
@@ -1454,7 +1462,7 @@ package body Flyology.HTTP.Client is
                               Upload);
                            exit when Upload /=
                              H2_Connections.Upload_Would_Block;
-                           Wait_For_HTTP_2_Upload (Handle);
+                           Wait_For_HTTP_2_Upload (Handle, Produced);
                         end loop;
                         if Upload = H2_Connections.Upload_Failed then
                            Result.Data.Request_Incomplete := True;

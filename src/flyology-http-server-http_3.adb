@@ -1343,6 +1343,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Authority   : Unbounded_String;
       Has_Host    : Boolean := False;
       Saw_Headers : Boolean := False;
+      Early_Response : Boolean := False;
+      Declared_Too_Large : Boolean := False;
       Trailers    : Flyology.HTTP.Headers.List;
       Payload_Bytes : Bytes.Unbounded_Bytes;
       Started     : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
@@ -1366,6 +1368,31 @@ package body Flyology.HTTP.Server.HTTP_3 is
       end loop;
       return 0;
    end Find;
+
+   function Exceeds_Buffer_Limit (Value : String) return Boolean is
+      Parsed : Body_Size := 0;
+      Digit  : Body_Size;
+   begin
+      if Value = "" then
+         return False;
+      end if;
+      for Character_Value of Value loop
+         if Character_Value not in '0' .. '9' then
+            return False;
+         end if;
+         Digit := Body_Size
+           (Character'Pos (Character_Value) - Character'Pos ('0'));
+         if Parsed > Maximum_Buffered_Request_Body / 10
+           or else
+             (Parsed = Maximum_Buffered_Request_Body / 10
+              and then Digit > Maximum_Buffered_Request_Body mod 10)
+         then
+            return True;
+         end if;
+         Parsed := Parsed * 10 + Digit;
+      end loop;
+      return Parsed > Maximum_Buffered_Request_Body;
+   end Exceeds_Buffer_Limit;
 
    procedure Serve_Connection
      (Context            : in out App_Context;
@@ -1518,6 +1545,23 @@ package body Flyology.HTTP.Server.HTTP_3 is
          end if;
       end Dispatch_Request;
 
+      procedure Reject_Oversized_Request (Slot : Positive) is
+         Backend : Stream_Backend;
+         Deadline : constant Ada.Real_Time.Time :=
+           (if Timeout < 0.0 then Ada.Real_Time.Time_Last
+            else Requests (Slot).Started +
+              Ada.Real_Time.To_Time_Span (Timeout));
+      begin
+         Backend.Owner := State;
+         Backend.Stream := Requests (Slot).Stream;
+         Backend.Deadline := Deadline;
+         Send_Response_Head
+           (Backend, 413, "", "",
+            Has_Content_Length => True, Content_Length => 0, Fin => True);
+         Requests (Slot).Early_Response := True;
+         Served := Served + 1;
+      end Reject_Oversized_Request;
+
       procedure Return_Request_Credit is
          Packet : QUIC.Datagram;
          Status : QUIC.Send_Status;
@@ -1562,6 +1606,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Requests (Slot).Authority := Null_Unbounded_String;
          Requests (Slot).Has_Host := False;
          Requests (Slot).Saw_Headers := False;
+         Requests (Slot).Early_Response := False;
+         Requests (Slot).Declared_Too_Large := False;
          Flyology.HTTP.Headers.Clear (Requests (Slot).Trailers);
          Requests (Slot).Started := Ada.Real_Time.Time_Last;
          Bytes.Clear (Requests (Slot).Payload_Bytes);
@@ -1622,11 +1668,18 @@ package body Flyology.HTTP.Server.HTTP_3 is
                               Name & ": " & Field_Value & CRLF);
                            if Name = "host" then
                               Requests (Slot).Has_Host := True;
+                           elsif Name = "content-length"
+                             and then Exceeds_Buffer_Limit (Field_Value)
+                           then
+                              Requests (Slot).Declared_Too_Large := True;
                            end if;
                         end if;
                      end;
                   end loop;
                   Requests (Slot).Saw_Headers := True;
+                  if Requests (Slot).Declared_Too_Large then
+                     Reject_Oversized_Request (Positive (Slot));
+                  end if;
                else
                   for Index in 1 .. H3.Header_Count (Value.Headers) loop
                      declare
@@ -1648,6 +1701,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
                if Slot = 0 or else not Requests (Slot).Saw_Headers then
                   raise Protocol_Error with
                     "HTTP/3 DATA preceded request HEADERS";
+               elsif Requests (Slot).Early_Response then
+                  null;
                elsif Body_Size (Value.Data_Length) >
                  Maximum_Buffered_Request_Body -
                    Body_Size (Bytes.Length (Requests (Slot).Payload_Bytes))
@@ -1664,22 +1719,33 @@ package body Flyology.HTTP.Server.HTTP_3 is
                   raise Protocol_Error with
                     "HTTP/3 stream ended without request";
                end if;
-               declare
-                  Response_Buffered : Boolean;
-               begin
-                  Dispatch_Request
-                    (Positive (Slot), Response_Buffered);
-                  if not Response_Buffered then
-                     H3.Release_Request
-                       (State.Session, State.Transport,
-                        Requests (Slot).Stream, H3_Status);
-                     if H3_Status /= H3.Succeeded then
-                        raise Protocol_Error with
-                          "HTTP/3 request release failed: " &
-                          H3.Operation_Status'Image (H3_Status);
-                     end if;
+               if Requests (Slot).Early_Response then
+                  H3.Release_Request
+                    (State.Session, State.Transport,
+                     Requests (Slot).Stream, H3_Status);
+                  if H3_Status /= H3.Succeeded then
+                     raise Protocol_Error with
+                       "HTTP/3 rejected request release failed: " &
+                         H3.Operation_Status'Image (H3_Status);
                   end if;
-               end;
+               else
+                  declare
+                     Response_Buffered : Boolean;
+                  begin
+                     Dispatch_Request
+                       (Positive (Slot), Response_Buffered);
+                     if not Response_Buffered then
+                        H3.Release_Request
+                          (State.Session, State.Transport,
+                           Requests (Slot).Stream, H3_Status);
+                        if H3_Status /= H3.Succeeded then
+                           raise Protocol_Error with
+                             "HTTP/3 request release failed: " &
+                             H3.Operation_Status'Image (H3_Status);
+                        end if;
+                     end if;
+                  end;
+               end if;
                Release (Positive (Slot));
                if Served < Max_Requests and then Request_Credit_Due then
                   Return_Request_Credit;

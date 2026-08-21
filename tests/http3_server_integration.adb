@@ -110,11 +110,67 @@ procedure HTTP3_Server_Integration is
       Finished := True;
    end Read;
 
+   Source_Failure : exception;
+   type Adversarial_Kind is
+     (Zero_Progress, Overrun, Source_Exception, Cancelled_Source,
+      Expired_Source, Early_Final_Source);
+   type Adversarial_Source (Kind : Adversarial_Kind) is limited new
+     Client.Request_Body_Source with record
+      Reads : Natural := 0;
+   end record;
+
+   overriding function Declared_Length
+     (Item : Adversarial_Source) return Client.Body_Length is
+     (case Item.Kind is
+         when Zero_Progress | Source_Exception => Client.Unknown_Length,
+         when Overrun | Cancelled_Source | Expired_Source =>
+           Client.Known_Length (1),
+         when Early_Final_Source =>
+           Client.Known_Length (64 * 1_024 * 1_024 * 1_024));
+
+   overriding procedure Read
+     (Item     : in out Adversarial_Source;
+      Data     : out Ada.Streams.Stream_Element_Array;
+      Last     : out Ada.Streams.Stream_Element_Offset;
+      Finished : out Boolean;
+      Timeout  : Duration;
+      Token    : access Flyology.Cancellation.Token) is
+   begin
+      Item.Reads := Item.Reads + 1;
+      Last := Data'First - 1;
+      Finished := False;
+      case Item.Kind is
+         when Zero_Progress =>
+            null;
+         when Overrun =>
+            Data (Data'First .. Data'First + 1) := (others => 1);
+            Last := Data'First + 1;
+            Finished := True;
+         when Source_Exception =>
+            raise Source_Failure;
+         when Cancelled_Source =>
+            pragma Assert (Token /= null);
+            Token.Request;
+            Data (Data'First) := 1;
+            Last := Data'First;
+            Finished := True;
+         when Expired_Source =>
+            pragma Assert (Timeout >= 0.0);
+            delay 0.02;
+            Data (Data'First) := 1;
+            Last := Data'First;
+            Finished := True;
+         when Early_Final_Source =>
+            Data := (others => 1);
+            Last := Data'Last;
+      end case;
+   end Read;
+
    type Context is limited null record;
    package Routing is new Flyology.HTTP.Server.Routing (Context);
 
    Routes : aliased Routing.Router
-     (Capacity => 2, Slashes => Routing.Strict_Slashes);
+     (Capacity => 3, Slashes => Routing.Strict_Slashes);
    State : aliased Context;
    Server_Backend : aliased OpenSSL.OpenSSL_Provider;
    Probe : Sockets.Socket_Type;
@@ -201,6 +257,13 @@ procedure HTTP3_Server_Integration is
          X.Text (200, "same routes");
       end if;
    end Discover;
+
+   procedure Early
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      X.Text (409, "upload stopped");
+   end Early;
 begin
    Routes.Add_Middleware (Observe'Access);
    Routes.Post
@@ -210,6 +273,12 @@ begin
            Body_Handling => App.Buffer_Body,
            Max_Body      => 6 * 1_024 * 1_024 * 1_024));
    Routes.Get ("/discover", Discover'Access, Name => "discover");
+   Routes.Post
+     ("/early", Early'Access, Name => "early",
+      Policy =>
+        (Routing.Default_Route_Policy with delta
+           Body_Handling => App.Reject_Body,
+           Max_Body => 64 * 1_024 * 1_024 * 1_024));
 
    OpenSSL.Initialize_Server
      (Server_Backend, Certificate, Private_Key,
@@ -556,6 +625,89 @@ begin
                when Client.Request_Body_Error => Raised := True;
             end;
             pragma Assert (Raised);
+         end;
+         --  Cover the borrowed-source contract on a live H3 stream after
+         --  allocation. A successful retained exchange after each failure
+         --  proves either safe reuse or safe replacement of the lease.
+         for Kind in Zero_Progress .. Expired_Source loop
+            declare
+               Fault_Request : Client.Request;
+               Source        : Adversarial_Source (Kind);
+               Cancel        : aliased Flyology.Cancellation.Token;
+               Raised        : Boolean := False;
+            begin
+               Client.Set_Method
+                 (Fault_Request, Flyology.HTTP.To_Method ("POST"));
+               Client.Set_Target (Fault_Request, "/hello/Ada");
+               begin
+                  declare
+                     Unexpected : Client.Response := Client.Execute
+                       (HTTP, Fault_Request, Source,
+                        Timeout =>
+                          (if Kind = Expired_Source then 0.005 else 10.0),
+                        Token =>
+                          (if Kind = Cancelled_Source
+                           then Cancel'Access else null));
+                     pragma Unreferenced (Unexpected);
+                  begin
+                     null;
+                  end;
+               exception
+                  when Client.Request_Body_Error =>
+                     Raised := Kind in Zero_Progress | Overrun;
+                  when Source_Failure =>
+                     Raised := Kind = Source_Exception;
+                  when Flyology.Cancellation.Operation_Cancelled =>
+                     Raised := Kind = Cancelled_Source;
+                  when Flyology.IO.Timeout_Error =>
+                     Raised := Kind = Expired_Source;
+               end;
+               pragma Assert (Raised);
+               declare
+                  Reply : Client.Response :=
+                    Client.Execute (HTTP, Request, Timeout => 10.0);
+               begin
+                  pragma Assert (Client.Status (Reply) = 200);
+                  pragma Assert
+                    (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                       "hello Ada");
+               end;
+            end;
+         end loop;
+
+         --  A final response can arrive while an effectively unbounded source
+         --  is flow-control blocked. Stop pulling promptly; the incomplete H3
+         --  upload closes only that transport before the next pooled exchange.
+         declare
+            Early_Request : Client.Request;
+            Source        : Adversarial_Source (Early_Final_Source);
+         begin
+            Client.Set_Method
+              (Early_Request, Flyology.HTTP.To_Method ("POST"));
+            Client.Set_Target (Early_Request, "/early");
+            declare
+               Reply : Client.Response := Client.Execute
+                 (HTTP, Early_Request, Source, Timeout => 10.0);
+            begin
+               pragma Assert (Client.Status (Reply) = 413);
+               pragma Assert (Source.Reads > 0 and then Source.Reads < 1_024);
+               declare
+                  Rejection : constant Flyology.Bytes.Unbounded_Bytes :=
+                    Client.Read_All (Reply);
+                  pragma Unreferenced (Rejection);
+               begin
+                  null;
+               end;
+            end;
+         end;
+         declare
+            Reply : Client.Response :=
+              Client.Execute (HTTP, Request, Timeout => 10.0);
+         begin
+            pragma Assert (Client.Status (Reply) = 200);
+            pragma Assert
+              (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                 "hello Ada");
          end;
          --  Cross the concurrent and former lifetime stream tables, then the
          --  initial 512 KiB connection receive window, on one pooled

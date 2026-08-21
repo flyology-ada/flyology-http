@@ -166,7 +166,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
       procedure Handler_Finished (Slot : Positive);
       procedure Wait_Source
         (Slot       : Positive;
-         For_Output : Boolean;
+         Required_Output : Natural;
          FD         : out Flyology.IO.Descriptor;
          Ready_Now  : out Boolean);
       procedure Pull_Output
@@ -918,15 +918,16 @@ package body Flyology.HTTP.Server.HTTP_2 is
 
       procedure Wait_Source
         (Slot       : Positive;
-         For_Output : Boolean;
+         Required_Output : Natural;
          FD         : out Flyology.IO.Descriptor;
          Ready_Now  : out Boolean) is
       begin
          Ready_Now := Streams (Slot).Phase = Free
            or else Streams (Slot).Failure /= No_Failure
            or else
-             (if For_Output
-              then Streams (Slot).Output_Count < Stream_Buffer_Capacity
+             (if Required_Output > 0
+              then Required_Output <=
+                Stream_Buffer_Capacity - Streams (Slot).Output_Count
               else Streams (Slot).Input_Count > 0
                 or else Streams (Slot).Remote_End);
          if Ready_Now then
@@ -1381,7 +1382,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
    end Remaining;
 
    procedure Wait_For_Stream
-     (Item : in out Stream_Backend; For_Output : Boolean)
+     (Item : in out Stream_Backend; Required_Output : Natural := 0)
    is
       Stream_FD : Flyology.IO.Descriptor;
       Token_FD  : Flyology.IO.Descriptor;
@@ -1390,7 +1391,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Selected  : Natural;
    begin
       Item.State.Streams.Wait_Source
-        (Item.Slot, For_Output, Stream_FD, Ready);
+        (Item.Slot, Required_Output, Stream_FD, Ready);
       if Ready then
          return;
       end if;
@@ -1515,7 +1516,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
                Drivers.Signal (Item.State.Outbound);
                return;
             when Read_Would_Block =>
-               Wait_For_Stream (Item, For_Output => False);
+               Wait_For_Stream (Item);
             when Read_Body_Too_Large =>
                raise Payload_Too_Large;
             when Read_Failed =>
@@ -1567,7 +1568,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          elsif Finished then
             return;
          end if;
-         Wait_For_Stream (Item, For_Output => False);
+         Wait_For_Stream (Item);
       end loop;
    end Discard_Body;
 
@@ -1655,7 +1656,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
                if Result = Queue_Failed then
                   raise Flyology.IO.Device_Error;
                end if;
-               Wait_For_Stream (Item, For_Output => True);
+               Wait_For_Stream (Item, Required_Output => Count);
             end loop;
             Drivers.Signal (Item.State.Outbound);
             Cursor := Last + 1;
@@ -2683,6 +2684,13 @@ package body Flyology.HTTP.Server.HTTP_2 is
                      when Drivers.Need_Read | Drivers.Need_Write => null;
                   end case;
                end if;
+            end if;
+            if not Progress and then not Have_Output then
+               --  Observe application output once more immediately before
+               --  sleeping; handlers can publish during input processing.
+               State.Streams.Pull_Output
+                 (Output, Output_Last, Have_Output);
+               Output_Cursor := Output'First;
             end if;
             if not Progress then
                Drivers.Wait

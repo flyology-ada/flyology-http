@@ -79,6 +79,7 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
    procedure Upload_Wait_Source
      (Item      : in out Session;
       Handle    : Stream_Handle;
+      Required  : Natural;
       FD        : out Flyology.IO.Descriptor;
       Ready_Now : out Boolean);
 

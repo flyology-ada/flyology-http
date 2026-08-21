@@ -175,6 +175,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Ready_Now : out Boolean);
       procedure Upload_Wait_Source
         (Handle    : Stream_Handle;
+         Required  : Natural;
          FD        : out Flyology.IO.Descriptor;
          Ready_Now : out Boolean);
       procedure Cancel_Stream
@@ -1440,6 +1441,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
 
       procedure Upload_Wait_Source
         (Handle    : Stream_Handle;
+         Required  : Natural;
          FD        : out Flyology.IO.Descriptor;
          Ready_Now : out Boolean) is
       begin
@@ -1450,8 +1452,8 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          end if;
          Ready_Now := Streams (Handle.Slot).Failure /= No_Failure
            or else Streams (Handle.Slot).Remote_End
-           or else Streams (Handle.Slot).Upload_Count <
-             Request_Stream_Buffer_Capacity;
+           or else Required <= Request_Stream_Buffer_Capacity -
+             Streams (Handle.Slot).Upload_Count;
          if Ready_Now then
             FD := Flyology.IO.Invalid_Descriptor;
          else
@@ -1470,13 +1472,20 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       begin
          Wake_Pump := False;
          if Valid (Handle) then
-            Queue_Control_Frame
-              (Frames.Reset_Stream_Frame, 0,
-               Streams (Handle.Slot).ID,
-               U31_Payload (Natural (Frames.Cancel)));
+            --  A stream whose request field section has not entered the pump
+            --  is still idle at the peer. Sending RST_STREAM for that stream
+            --  would itself be a connection-level protocol error. Once any
+            --  header bytes have been pulled, continuation ordering ensures
+            --  the reset follows the complete field section on the wire.
+            if Streams (Handle.Slot).Head_Cursor > 1 then
+               Queue_Control_Frame
+                 (Frames.Reset_Stream_Frame, 0,
+                  Streams (Handle.Slot).ID,
+                  U31_Payload (Natural (Frames.Cancel)));
+               Wake_Pump := True;
+            end if;
             Streams (Handle.Slot).Remote_End := True;
             Streams (Handle.Slot).Phase := Complete;
-            Wake_Pump := True;
          end if;
       end Cancel_Stream;
 
@@ -1818,6 +1827,18 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             end if;
 
             if not Progress then
+               if not Have_Output then
+                  --  Observe protocol work one final time immediately before
+                  --  sleeping.  Work can be published while this iteration
+                  --  processes input, and outbound wakeups intentionally
+                  --  coalesce until the driver's wait consumes them.
+                  State.Streams.Pull_Output
+                    (Output, Output_Last, Have_Output);
+                  Output_Cursor := Output'First;
+               end if;
+            end if;
+
+            if not Progress then
                Drivers.Wait
                  (IO, State.Outbound,
                   (if Have_Output then Drivers.Duplex_Interest
@@ -1979,11 +2000,12 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    procedure Upload_Wait_Source
      (Item      : in out Session;
       Handle    : Stream_Handle;
+      Required  : Natural;
       FD        : out Flyology.IO.Descriptor;
       Ready_Now : out Boolean) is
    begin
       Item.State.Streams.Upload_Wait_Source
-        (Handle, FD, Ready_Now);
+        (Handle, Required, FD, Ready_Now);
    end Upload_Wait_Source;
 
    procedure Cancel_Stream (Item : in out Session; Handle : Stream_Handle) is
