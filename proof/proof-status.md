@@ -74,6 +74,14 @@ identity, trailer-field definition rules, or the connection-lifecycle actions
 selected by those classifications. Exhaustive policy matrices and focused
 wire, adapter, ownership, and retry tests cover that integration boundary.
 
+The fixed-response policy proves overflow-safe 64-bit accounting for declared
+response lengths, including exact completion, overrun rejection before the
+transport write, underrun classification, and HEAD suppression. It does not
+prove header encoding, protocol stream state, transport I/O, backpressure,
+deadline delivery, or cancellation. Focused HTTP/1.1, HTTP/2, and HTTP/3
+behavioral tests cover those adapters and their connection or stream failure
+boundaries.
+
 Finding #43 records an undischarged obligation rather than a proof. The
 `flyology_iri` release profile passes `-gnatp` to one body, `flyology_iri.adb`,
 suppressing every runtime check in it: index, range, discriminant, overflow,
@@ -403,6 +411,13 @@ unnoticed. That is coverage of the suppressed body, not a proof of it.
       repeat its leak check after the conformance campaign exposed the race
 - [x] Record socket I/O, parser extraction, source callbacks, rewind fidelity,
       trailer-field semantics, and connection disposal outside the SPARK model
+- [x] Prove the complete fixed-response policy at level 1 and mode all,
+      including overflow safety through `Body_Size'Last`
+- [x] Confirm HTTP/1.1, HTTP/2, and HTTP/3 response writers consume the proved
+      write and finish classifications
+- [x] Cover exact, zero, one-byte-chunk, overrun, underrun, HEAD, large logical
+      length, backpressure, exception, cancellation, deadline, and reuse paths
+- [x] Re-run the complete HTTP proof suite: 2,950 checks proved
 - [ ] GNATcoverage was not run because the required `gnatcov_bin` tool crate
       is not installed in the available Alire tool environment
 - [x] Measure what `-gnatp` buys per operation and per body, and keep it only

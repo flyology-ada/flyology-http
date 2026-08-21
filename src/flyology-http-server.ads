@@ -5,6 +5,7 @@ with Ada.Strings.Unbounded;
 with Flyology.Bytes;
 with Flyology.Cancellation;
 private with Flyology.WebSocket_Policy;
+private with Flyology.HTTP.Fixed_Response_Policy;
 
 --  Provides bounded HTTP server protocol and application foundations over
 --  task-aware transports. Connection is the HTTP/1.x low-level engine;
@@ -456,6 +457,32 @@ package Flyology.HTTP.Server is
       Timeout       : Duration := 30.0;
       Token         : access Flyology.Cancellation.Token := null);
 
+   --  Start a fixed-length streaming response. The caller declares the
+   --  complete representation length before the first body write. HTTP/1.x
+   --  emits Content-Length and never uses Transfer-Encoding for this stream.
+   --  HTTP/2 and HTTP/3 emit the corresponding content-length field. A write
+   --  that exceeds Content_Length fails before any bytes from that write are
+   --  sent. End_Response_Stream fails and makes transport reuse unsafe when
+   --  fewer bytes were written. HEAD emits the declared length and suppresses
+   --  all body writes without requiring the representation to be generated.
+   --  @param Item HTTP connection
+   --  @param Status HTTP status
+   --  @param Content_Type Media type, or empty to omit
+   --  @param Content_Length Declared representation length
+   --  @param Extra_Headers Additional validated response fields
+   --  @param Close Force connection closure after the stream
+   --  @param Timeout Transport send deadline
+   --  @param Token Optional cancellation source
+   procedure Begin_Response_Stream
+     (Item           : in out Connection;
+      Status         : Positive;
+      Content_Type   : String;
+      Content_Length : Body_Size;
+      Extra_Headers  : String := "";
+      Close          : Boolean := False;
+      Timeout        : Duration := 30.0;
+      Token          : access Flyology.Cancellation.Token := null);
+
    --  Send one streaming response chunk with transport backpressure.
    --  Empty data is a no-op and HEAD suppresses data bytes.
    --  @param Item Active streaming response
@@ -752,6 +779,7 @@ private
       State            : Connection_State := Reading_HTTP;
       Request_Close    : Boolean := False;
       Response_Begun   : Boolean := False;
+      Fixed_Response   : Flyology.HTTP.Fixed_Response_Policy.Tracker;
       Current_Is_Head  : Boolean := False;
       Current_Version  : HTTP_Version := HTTP_1_1;
       Body_Mode        : Request_Body_Mode := No_Body;

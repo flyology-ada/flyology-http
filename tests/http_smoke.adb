@@ -131,9 +131,12 @@ procedure HTTP_Smoke is
       Timeout : Duration;
       Token   : access Flyology.Cancellation.Token)
    is
-      pragma Unreferenced (Timeout, Token);
+      pragma Unreferenced (Timeout);
    begin
       Item.Send_Calls := Item.Send_Calls + 1;
+      if Token /= null and then Token.Requested then
+         raise Flyology.Cancellation.Operation_Cancelled;
+      end if;
       if Item.Timeout_On_Send_Call = Item.Send_Calls then
          Item.Timeout_On_Send_Call := 0;
          if Data'Length > 0 then
@@ -189,6 +192,239 @@ procedure HTTP_Smoke is
            (Ada.Strings.Fixed.Index (Result, "hidden") = 0);
       end;
    end Check_HTTP;
+
+   procedure Check_Fixed_Response_Streams is
+      Five_GiB : constant Flyology.HTTP.Body_Size :=
+        5 * 1_024 * 1_024 * 1_024;
+
+      procedure Read_Head
+        (Client : in out HTTP_Server.Connection;
+         Value  : out HTTP_Server.Request)
+      is
+         Closed : Boolean;
+      begin
+         HTTP_Server.Read_Request_Head (Client, Value, Closed);
+         pragma Assert (not Closed);
+      end Read_Head;
+   begin
+      declare
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /fixed HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: keep-alive" & CRLF & CRLF
+            & "GET /next HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Payload : constant String := "onetwo";
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "text/plain", Content_Length => 6);
+            for Value of Payload loop
+               HTTP_Server.Write_Response_Chunk
+                 (Client, String'(1 => Value));
+            end loop;
+            HTTP_Server.End_Response_Stream (Client);
+            pragma Assert (not HTTP_Server.Should_Close (Client));
+            Read_Head (Client, Request);
+            HTTP_Server.Respond (Client, 204, "", "");
+         end;
+         declare
+            Output : constant String := To_String (Wire.Output);
+         begin
+            pragma Assert
+              (Ada.Strings.Fixed.Index (Output, "Content-Length: 6") /= 0);
+            pragma Assert
+              (Ada.Strings.Fixed.Index (Output, "Transfer-Encoding") = 0);
+            pragma Assert
+              (Ada.Strings.Fixed.Index (Output, "onetwoHTTP/1.1 204") /= 0,
+               Output);
+         end;
+      end;
+
+      declare
+         Wire : aliased Memory_Transport;
+         Chunk : constant String := String'(1 .. 16_384 => 'w');
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /window HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "application/octet-stream",
+               Content_Length => 8 * Flyology.HTTP.Body_Size (Chunk'Length));
+            for Index in 1 .. 8 loop
+               HTTP_Server.Write_Response_Chunk (Client, Chunk);
+            end loop;
+            HTTP_Server.End_Response_Stream (Client);
+         end;
+         pragma Assert
+           (Ada.Strings.Fixed.Index
+              (To_String (Wire.Output), "Content-Length: 131072") /= 0);
+      end;
+
+      declare
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("HEAD /large HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "application/octet-stream",
+               Content_Length => Five_GiB + 9);
+            HTTP_Server.End_Response_Stream (Client);
+         end;
+         pragma Assert
+           (Ada.Strings.Fixed.Index
+              (To_String (Wire.Output), "Content-Length: 5368709129") /= 0);
+      end;
+
+      declare
+         Wire : aliased Memory_Transport;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /zero HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Connection: close" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "application/octet-stream", Content_Length => 0);
+            HTTP_Server.End_Response_Stream (Client);
+         end;
+         pragma Assert
+           (Ada.Strings.Fixed.Index
+              (To_String (Wire.Output), "Content-Length: 0") /= 0);
+         pragma Assert
+           (Ada.Strings.Fixed.Index
+              (To_String (Wire.Output), "Transfer-Encoding") = 0);
+      end;
+
+      declare
+         Wire : aliased Memory_Transport;
+         Rejected : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /overrun HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "text/plain", Content_Length => 1);
+            begin
+               HTTP_Server.Write_Response_Chunk (Client, "ab");
+            exception
+               when Program_Error => Rejected := True;
+            end;
+            pragma Assert (HTTP_Server.Should_Close (Client));
+         end;
+         pragma Assert (Rejected);
+         pragma Assert
+           (Ada.Strings.Fixed.Index (To_String (Wire.Output), "ab") = 0);
+      end;
+
+      declare
+         Wire : aliased Memory_Transport;
+         Rejected : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /underrun HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "text/plain", Content_Length => 2);
+            HTTP_Server.Write_Response_Chunk (Client, "a");
+            begin
+               HTTP_Server.End_Response_Stream (Client);
+            exception
+               when Program_Error => Rejected := True;
+            end;
+            pragma Assert (HTTP_Server.Should_Close (Client));
+         end;
+         pragma Assert (Rejected);
+      end;
+
+      declare
+         Wire : aliased Memory_Transport;
+         Failed : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /write-failure HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF & CRLF);
+         Wire.Timeout_On_Send_Call := 2;
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "text/plain", Content_Length => 2);
+            begin
+               HTTP_Server.Write_Response_Chunk (Client, "ok");
+            exception
+               when Flyology.IO.Timeout_Error => Failed := True;
+            end;
+            pragma Assert (HTTP_Server.Should_Close (Client));
+         end;
+         pragma Assert (Failed);
+      end;
+
+      declare
+         Wire   : aliased Memory_Transport;
+         Stop   : aliased Flyology.Cancellation.Token;
+         Failed : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("GET /cancelled-write HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+         begin
+            Read_Head (Client, Request);
+            HTTP_Server.Begin_Response_Stream
+              (Client, 200, "text/plain", Content_Length => 2);
+            Stop.Request;
+            begin
+               HTTP_Server.Write_Response_Chunk
+                 (Client, "ok", Token => Stop'Access);
+            exception
+               when Flyology.Cancellation.Operation_Cancelled =>
+                  Failed := True;
+            end;
+            pragma Assert (HTTP_Server.Should_Close (Client));
+         end;
+         pragma Assert (Failed);
+         pragma Assert
+           (Ada.Strings.Fixed.Index (To_String (Wire.Output), "ok") = 0);
+      end;
+   end Check_Fixed_Response_Streams;
 
    procedure Check_Chunked_And_Expect is
       Wire : aliased Memory_Transport;
@@ -2582,8 +2818,19 @@ procedure HTTP_Smoke is
          raise Constraint_Error with "failure after response start";
       end Partial;
 
+      procedure Fixed_Partial
+        (State : in out Context;
+         X     : in out Applications.Exchange)
+      is
+         pragma Unreferenced (State);
+      begin
+         X.Begin_Stream (200, "text/plain", Content_Length => 7);
+         X.Write_Chunk ("partial");
+         raise Constraint_Error with "fixed source failure";
+      end Fixed_Partial;
+
       Routes : Routing.Router
-        (Capacity => 7, Slashes => Routing.Strict_Slashes);
+        (Capacity => 8, Slashes => Routing.Strict_Slashes);
       State : Context;
       Peer  : constant Sockets.Endpoint := Test_Peer;
 
@@ -2614,6 +2861,8 @@ procedure HTTP_Smoke is
       Routes.Get ("/expected", Expected'Access, Name => "expected");
       Routes.Get ("/unexpected", Unexpected'Access, Name => "unexpected");
       Routes.Get ("/partial", Partial'Access, Name => "partial");
+      Routes.Get
+        ("/fixed-partial", Fixed_Partial'Access, Name => "fixed.partial");
       Routes.Post
         ("/body", Normal'Access, Name => "body",
          Policy =>
@@ -2640,6 +2889,20 @@ procedure HTTP_Smoke is
          pragma Assert (To_String (State.Trace) = "ABHCD");
          pragma Assert
            (Ada.Strings.Fixed.Index (Output, "200 OK") /= 0);
+      end;
+
+      declare
+         Before : constant Natural := Logged;
+         Output : constant String := Run ("/fixed-partial");
+      begin
+         pragma Assert (Logged = Before + 1);
+         pragma Assert
+           (Ada.Strings.Fixed.Index (Output, "Content-Length: 7") /= 0);
+         pragma Assert
+           (Ada.Strings.Fixed.Index (Output, "partial") /= 0);
+         pragma Assert
+           (Ada.Strings.Fixed.Index
+              (Output, "500 Internal Server Error") = 0);
       end;
 
       declare
@@ -4370,6 +4633,7 @@ procedure HTTP_Smoke is
 
 begin
    Check_HTTP;
+   Check_Fixed_Response_Streams;
    Check_Chunked_And_Expect;
    Check_Streaming_Body;
    Check_Ingress_Budget;

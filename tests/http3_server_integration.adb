@@ -170,7 +170,7 @@ procedure HTTP3_Server_Integration is
    package Routing is new Flyology.HTTP.Server.Routing (Context);
 
    Routes : aliased Routing.Router
-     (Capacity => 3, Slashes => Routing.Strict_Slashes);
+     (Capacity => 9, Slashes => Routing.Strict_Slashes);
    State : aliased Context;
    Server_Backend : aliased OpenSSL.OpenSSL_Provider;
    Probe : Sockets.Socket_Type;
@@ -264,6 +264,62 @@ procedure HTTP3_Server_Integration is
    begin
       X.Text (409, "upload stopped");
    end Early;
+
+   procedure Fixed
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+      Value : constant String := "fixed";
+   begin
+      X.Begin_Stream (200, "text/plain", Content_Length => Value'Length);
+      for Item of Value loop
+         X.Write_Chunk (String'(1 => Item));
+      end loop;
+      X.End_Stream;
+   end Fixed;
+
+   procedure Fixed_Zero
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      X.Begin_Stream
+        (200, "application/octet-stream", Content_Length => 0);
+      X.End_Stream;
+   end Fixed_Zero;
+
+   procedure Fixed_Head
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      X.Begin_Stream
+        (200, "application/octet-stream",
+         Content_Length => 5 * 1_024 * 1_024 * 1_024 + 9);
+      X.End_Stream;
+   end Fixed_Head;
+
+   procedure Fixed_Overrun
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      X.Begin_Stream (200, "text/plain", Content_Length => 1);
+      X.Write_Chunk ("xx");
+   end Fixed_Overrun;
+
+   procedure Fixed_Underrun
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      X.Begin_Stream (200, "text/plain", Content_Length => 2);
+      X.Write_Chunk ("x");
+      X.End_Stream;
+   end Fixed_Underrun;
+
+   procedure Fixed_Exception
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+   begin
+      X.Begin_Stream (200, "text/plain", Content_Length => 2);
+      raise Constraint_Error with "fixed source failure";
+   end Fixed_Exception;
 begin
    Routes.Add_Middleware (Observe'Access);
    Routes.Post
@@ -273,6 +329,15 @@ begin
            Body_Handling => App.Buffer_Body,
            Max_Body      => 6 * 1_024 * 1_024 * 1_024));
    Routes.Get ("/discover", Discover'Access, Name => "discover");
+   Routes.Get ("/fixed", Fixed'Access, Name => "fixed");
+   Routes.Get ("/fixed-zero", Fixed_Zero'Access, Name => "fixed.zero");
+   Routes.Get ("/fixed-head", Fixed_Head'Access, Name => "fixed.head");
+   Routes.Get
+     ("/fixed-overrun", Fixed_Overrun'Access, Name => "fixed.overrun");
+   Routes.Get
+     ("/fixed-underrun", Fixed_Underrun'Access, Name => "fixed.underrun");
+   Routes.Get
+     ("/fixed-exception", Fixed_Exception'Access, Name => "fixed.exception");
    Routes.Post
      ("/early", Early'Access, Name => "early",
       Policy =>
@@ -436,6 +501,111 @@ begin
                  & " " & Failure_Context;
             end if;
          end Recover_Raw_Handshake;
+
+         procedure Send_Raw_Get
+           (Path   : String;
+            Stream : out QUIC.Stream_ID)
+         is
+            Headers : H3.Header_Block;
+            Packet  : QUIC.Datagram;
+         begin
+            H3.Append (Headers, H3.Make_Field (":method", "GET"));
+            H3.Append (Headers, H3.Make_Field (":scheme", "https"));
+            H3.Append (Headers, H3.Make_Field (":path", Path));
+            H3.Append
+              (Headers, H3.Make_Field (":authority", "localhost"));
+            H3.Open_Request (Session, Transport, Stream, H3_Status);
+            pragma Assert (H3_Status = H3.Succeeded);
+            H3.Send_Headers
+              (Session, Transport, Stream, Headers, Fin => True,
+               Now => Raw_Now, Packet => Packet, Status => H3_Status);
+            pragma Assert (H3_Status = H3.Succeeded);
+            QUIC_IO.Send (Socket, Packet, Timeout => 10.0);
+         end Send_Raw_Get;
+
+         procedure Await_Raw_Reset (Stream : QUIC.Stream_ID) is
+            Event : H3.Event;
+            Seen  : Boolean := False;
+         begin
+            for Attempt in 1 .. 16 loop
+               begin
+                  QUIC_IO.Receive
+                    (Socket, Transport, Flight, QUIC_Status, Timeout => 1.0);
+                  pragma Assert
+                    (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
+                  QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+               exception
+                  when Flyology.IO.Timeout_Error => null;
+               end;
+               loop
+                  H3.Poll (Session, Transport, Event, H3_Status);
+                  exit when H3_Status = H3.No_Event;
+                  pragma Assert (H3_Status = H3.Succeeded);
+                  if Event.Stream = Stream and then Event.Kind = H3.Stream_Reset
+                  then
+                     Seen := True;
+                  end if;
+               end loop;
+               exit when Seen;
+            end loop;
+            pragma Assert (Seen);
+         end Await_Raw_Reset;
+
+         procedure Await_Raw_Fixed (Stream : QUIC.Stream_ID) is
+            Event  : H3.Event;
+            Ended  : Boolean := False;
+            Length : Boolean := False;
+            Payload : Unbounded_String;
+         begin
+            for Attempt in 1 .. 16 loop
+               begin
+                  QUIC_IO.Receive
+                    (Socket, Transport, Flight, QUIC_Status, Timeout => 1.0);
+                  pragma Assert
+                    (QUIC_Status in QUIC.Succeeded | QUIC.Waiting_For_More);
+                  QUIC_IO.Send (Socket, Flight, Timeout => 10.0);
+               exception
+                  when Flyology.IO.Timeout_Error => null;
+               end;
+               loop
+                  H3.Poll (Session, Transport, Event, H3_Status);
+                  exit when H3_Status = H3.No_Event;
+                  pragma Assert (H3_Status = H3.Succeeded);
+                  if Event.Stream = Stream
+                    and then Event.Kind = H3.Headers_Received
+                  then
+                     for Index in 1 .. H3.Header_Count (Event.Headers) loop
+                        declare
+                           Field : constant H3.Header_Field :=
+                             H3.Field_At (Event.Headers, Index);
+                        begin
+                           Length := Length or else
+                             (H3.Field_Name (Field) = "content-length"
+                              and then H3.Field_Value (Field) = "5");
+                        end;
+                     end loop;
+                  elsif Event.Stream = Stream
+                    and then Event.Kind = H3.Data_Received
+                  then
+                     for Index in 1 .. Event.Data_Length loop
+                        Append
+                          (Payload,
+                           Character'Val
+                             (Event.Data
+                                (Ada.Streams.Stream_Element_Offset (Index))));
+                     end loop;
+                  elsif Event.Stream = Stream
+                    and then Event.Kind = H3.Stream_Ended
+                  then
+                     Ended := True;
+                  end if;
+               end loop;
+               exit when Ended;
+            end loop;
+            pragma Assert (Length);
+            pragma Assert (To_String (Payload) = "fixed");
+            pragma Assert (Ended);
+         end Await_Raw_Fixed;
       begin
       declare
          HTTP : aliased Client.Client (Capacity => 2);
@@ -602,6 +772,53 @@ begin
          Client.Set_Method (Request, Flyology.HTTP.To_Method ("POST"));
          Client.Set_Target (Request, "/hello/Ada");
          Client.Set_Body (Request, "payload");
+         declare
+            Fixed_Request : Client.Request;
+         begin
+            Client.Set_Target (Fixed_Request, "/fixed");
+            declare
+               Reply : Client.Response :=
+                 Client.Execute (HTTP, Fixed_Request, Timeout => 10.0);
+            begin
+               pragma Assert
+                 (Client.Header (Reply, "content-length") = "5");
+               pragma Assert
+                 (Client.Header (Reply, "transfer-encoding") = "");
+               pragma Assert
+                 (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
+                    "fixed");
+            end;
+         end;
+         declare
+            Zero_Request : Client.Request;
+         begin
+            Client.Set_Target (Zero_Request, "/fixed-zero");
+            declare
+               Reply : Client.Response :=
+                 Client.Execute (HTTP, Zero_Request, Timeout => 10.0);
+            begin
+               pragma Assert
+                 (Client.Header (Reply, "content-length") = "0");
+               pragma Assert
+                 (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
+            end;
+         end;
+         declare
+            Head_Request : Client.Request;
+         begin
+            Client.Set_Target (Head_Request, "/fixed-head");
+            Client.Set_Method
+              (Head_Request, Flyology.HTTP.To_Method ("HEAD"));
+            declare
+               Reply : Client.Response :=
+                 Client.Execute (HTTP, Head_Request, Timeout => 10.0);
+            begin
+               pragma Assert
+                 (Client.Header (Reply, "content-length") = "5368709129");
+               pragma Assert
+                 (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
+            end;
+         end;
          --  Validate 64-bit Content-Length framing and premature-EOF cleanup
          --  without retaining or transmitting a multi-gigabyte payload.
          declare
@@ -882,6 +1099,21 @@ begin
          pragma Assert (To_String (Payload) = "hello Ada");
          pragma Assert (Ended);
       end;
+      for Failure in 1 .. 3 loop
+         declare
+            Failed_Stream : QUIC.Stream_ID;
+            Reuse_Stream  : QUIC.Stream_ID;
+         begin
+            Send_Raw_Get
+              ((if Failure = 1 then "/fixed-overrun"
+                elsif Failure = 2 then "/fixed-underrun"
+                else "/fixed-exception"),
+               Failed_Stream);
+            Await_Raw_Reset (Failed_Stream);
+            Send_Raw_Get ("/fixed", Reuse_Stream);
+            Await_Raw_Fixed (Reuse_Stream);
+         end;
+      end loop;
       Phase := Raw_Close;
       Sockets.Close_Socket (Socket);
       exception

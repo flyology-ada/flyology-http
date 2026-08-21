@@ -115,11 +115,23 @@ procedure HTTP2_Server_Audit is
             "probe=" & X.Request_Header ("x-probe") &
               " decoy=" & X.Request_Header ("x-decoy"));
       elsif X.Request_Target = "/flood" then
-         X.Begin_Stream (200, "application/octet-stream");
+         X.Begin_Stream
+           (200, "application/octet-stream",
+            Content_Length => 64 * 16_384);
          for Index in 1 .. 64 loop
             X.Write_Chunk (String'(1 .. 16_384 => 'f'));
          end loop;
          X.End_Stream;
+      elsif X.Request_Target = "/fixed-overrun" then
+         X.Begin_Stream (200, "text/plain", Content_Length => 1);
+         X.Write_Chunk ("xx");
+      elsif X.Request_Target = "/fixed-underrun" then
+         X.Begin_Stream (200, "text/plain", Content_Length => 2);
+         X.Write_Chunk ("x");
+         X.End_Stream;
+      elsif X.Request_Target = "/fixed-exception" then
+         X.Begin_Stream (200, "text/plain", Content_Length => 2);
+         raise Constraint_Error with "fixed source failure";
       elsif X.Request_Target = "/trailers" then
          declare
             Data : Stream_Element_Array (1 .. 16);
@@ -344,7 +356,7 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 14;
+   Sessions : constant := 17;
 
    Router_Manager  : aliased Connections.Server (Capacity => 1);
    Router_Listener : Sockets.Socket_Type;
@@ -484,6 +496,39 @@ begin
          end loop;
       end Server_Task;
    begin
+      ------------------------------------------------------------------------
+      --  Fixed-length application faults reset only their stream. The next
+      --  stream on the same multiplexed connection remains serviceable.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line
+        ("fixed response overrun and underrun stream isolation");
+      for Failure in 1 .. 3 loop
+         declare
+            Socket   : Sockets.Socket_Type;
+            Response : Unbounded_String;
+            Refused  : Boolean;
+            Target   : constant String :=
+              (if Failure = 1 then "/fixed-overrun"
+               elsif Failure = 2 then "/fixed-underrun"
+               else "/fixed-exception");
+         begin
+            Connect_Peer (Socket);
+            Probe_Stream
+              (Socket, 1, Request_Block ("GET", Target), Response, Refused);
+            Check (Refused, Target & " resets its stream");
+            Probe_Stream
+              (Socket, 3, Request_Block ("GET", "/after-fixed-failure"),
+               Response, Refused);
+            Check
+              (not Refused
+               and then Ada.Strings.Fixed.Index
+                 (To_String (Response),
+                  "target=/after-fixed-failure") /= 0,
+               "a later stream survives " & Target);
+            Sockets.Close_Socket (Socket);
+         end;
+      end loop;
+
       ------------------------------------------------------------------------
       --  Request canonicalization retains the HTTP/2 authority, physical
       --  regular-field order, and the terminal trailer field section until

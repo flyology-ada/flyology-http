@@ -6,6 +6,7 @@ with Ada.Unchecked_Deallocation;
 with Flyology.Bytes;
 with Flyology.Channels.Bounded;
 with Flyology.HTTP.Headers;
+with Flyology.HTTP.Fixed_Response_Policy;
 with Flyology.HTTP.HTTP_3;
 with Flyology.HTTP.Server.Applications.Internals;
 with Flyology.HTTP.Server.Exchange_Backends;
@@ -19,6 +20,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
 
    package Bytes renames Flyology.Bytes;
    package H3 renames Flyology.HTTP.HTTP_3;
+   package Fixed_Response_Policy renames
+     Flyology.HTTP.Fixed_Response_Policy;
    package Backends renames Flyology.HTTP.Server.Exchange_Backends;
    package QUIC renames Flyology.QUIC.Connections;
    package Debug renames Flyology.QUIC.Debug;
@@ -26,6 +29,8 @@ package body Flyology.HTTP.Server.HTTP_3 is
 
    use type H3.Event_Kind;
    use type H3.Operation_Status;
+   use type Fixed_Response_Policy.Write_Result;
+   use type Fixed_Response_Policy.Finish_Result;
    use type QUIC.Operation_Status;
    use type QUIC.Connection_State;
    use type QUIC.Server_Initialize_Status;
@@ -561,6 +566,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Response_Begun   : Boolean := False;
       Response_Ended   : Boolean := False;
       Response_Buffered : Boolean := False;
+      Fixed_Response    : Fixed_Response_Policy.Tracker;
       Trailer_Fields    : Flyology.HTTP.Headers.List;
    end record;
 
@@ -617,6 +623,15 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Close         : Boolean;
       Timeout       : Duration;
       Token         : access Flyology.Cancellation.Token);
+   overriding procedure Begin_Response_Stream
+     (Item           : in out Stream_Backend;
+      Status         : Positive;
+      Content_Type   : String;
+      Content_Length : Body_Size;
+      Extra_Headers  : String;
+      Close          : Boolean;
+      Timeout        : Duration;
+      Token          : access Flyology.Cancellation.Token);
    overriding procedure Write_Response_Chunk
      (Item : in out Stream_Backend; Data : String; Timeout : Duration;
       Token : access Flyology.Cancellation.Token);
@@ -910,9 +925,13 @@ package body Flyology.HTTP.Server.HTTP_3 is
                   loop
                      First := First + 1;
                   end loop;
-                  if Name = "content-length" then
+                  if Name in
+                    "connection" | "keep-alive" | "proxy-connection" |
+                    "transfer-encoding" | "upgrade" | "content-length" |
+                    "content-type"
+                  then
                      raise Program_Error with
-                       "content-length is managed by the HTTP/3 adapter";
+                       "managed or connection-specific HTTP/3 response field";
                   end if;
                   Append_Field
                     (Fields, Name,
@@ -928,7 +947,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
    procedure Build_Response_Fields
      (Fields : in out H3.Header_Block; Status : Positive;
       Content_Type, Extra_Headers : String;
-      Has_Content_Length : Boolean; Content_Length : Natural)
+      Has_Content_Length : Boolean; Content_Length : Body_Size)
    is
       Status_Text : constant String :=
         Ada.Strings.Fixed.Trim (Positive'Image (Status), Ada.Strings.Both);
@@ -945,7 +964,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Append_Field
            (Fields, "content-length",
             Ada.Strings.Fixed.Trim
-              (Natural'Image (Content_Length), Ada.Strings.Both));
+              (Body_Size'Image (Content_Length), Ada.Strings.Both));
       end if;
       Add_Extra_Headers (Fields, Extra_Headers);
    end Build_Response_Fields;
@@ -953,7 +972,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
    procedure Send_Response_Head
      (Item : in out Stream_Backend; Status : Positive;
       Content_Type, Extra_Headers : String;
-      Has_Content_Length : Boolean; Content_Length : Natural;
+      Has_Content_Length : Boolean; Content_Length : Body_Size;
       Fin : Boolean)
    is
       Fields : H3.Header_Block renames Item.Owner.Response_Headers;
@@ -1010,7 +1029,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
             Build_Response_Fields
               (Fields, Status, Content_Type, Extra_Headers,
                Has_Content_Length => True,
-               Content_Length => Payload'Length);
+               Content_Length => Body_Size (Payload'Length));
             Try_Send_Response (Item, Fields, Data, Combined);
             if not Combined then
                Send_Headers (Item, Fields, Fin => False);
@@ -1021,7 +1040,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Send_Response_Head
            (Item, Status, Content_Type, Extra_Headers,
             Has_Content_Length => Status not in 204 | 304,
-            Content_Length => Payload'Length, Fin => True);
+            Content_Length => Body_Size (Payload'Length), Fin => True);
       end if;
    end Respond;
 
@@ -1046,13 +1065,49 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Send_Response_Head
         (Item, Status, Content_Type, Extra_Headers,
          Has_Content_Length => False, Content_Length => 0, Fin => False);
+      Fixed_Response_Policy.Reset (Item.Fixed_Response);
+   end Begin_Response_Stream;
+
+   overriding procedure Begin_Response_Stream
+     (Item           : in out Stream_Backend;
+      Status         : Positive;
+      Content_Type   : String;
+      Content_Length : Body_Size;
+      Extra_Headers  : String;
+      Close          : Boolean;
+      Timeout        : Duration;
+      Token          : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Close, Timeout, Token);
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "streaming response requires a consumed request body";
+      elsif Status in 204 | 205 | 304 then
+         raise Program_Error with
+           "HTTP status does not permit a streaming response";
+      end if;
+      Send_Response_Head
+        (Item, Status, Content_Type, Extra_Headers,
+         Has_Content_Length => True, Content_Length => Content_Length,
+         Fin => Item.Head_Request);
+      Fixed_Response_Policy.Start
+        (Item.Fixed_Response, Content_Length, Item.Head_Request);
    end Begin_Response_Stream;
 
    overriding procedure Write_Response_Chunk
      (Item : in out Stream_Backend; Data : String; Timeout : Duration;
       Token : access Flyology.Cancellation.Token) is
       pragma Unreferenced (Timeout, Token);
+      Result : Fixed_Response_Policy.Write_Result;
    begin
+      Fixed_Response_Policy.Write
+        (Item.Fixed_Response, Body_Size (Data'Length), Result);
+      if Result = Fixed_Response_Policy.Overrun then
+         Mark_Failed (Item);
+         raise Program_Error with
+           "fixed-length HTTP/3 response exceeds its declared length";
+      end if;
       if not Item.Head_Request and then Data /= "" then
          declare
             Value : constant Stream_Element_Array :=
@@ -1080,7 +1135,15 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Timeout : Duration; Token : access Flyology.Cancellation.Token) is
       pragma Unreferenced (Timeout, Token);
       Cursor : Stream_Element_Offset := Data'First;
+      Result : Fixed_Response_Policy.Write_Result;
    begin
+      Fixed_Response_Policy.Write
+        (Item.Fixed_Response, Body_Size (Data'Length), Result);
+      if Result = Fixed_Response_Policy.Overrun then
+         Mark_Failed (Item);
+         raise Program_Error with
+           "fixed-length HTTP/3 response exceeds its declared length";
+      end if;
       if not Item.Head_Request then
          while Cursor <= Data'Last loop
             declare
@@ -1101,8 +1164,17 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Token : access Flyology.Cancellation.Token) is
       pragma Unreferenced (Timeout, Token);
       Empty : Stream_Element_Array (1 .. 0);
+      Result : Fixed_Response_Policy.Finish_Result;
    begin
-      Send_Data (Item, Empty, Fin => True);
+      Fixed_Response_Policy.Finish (Item.Fixed_Response, Result);
+      if Result = Fixed_Response_Policy.Underrun then
+         Mark_Failed (Item);
+         raise Program_Error with
+           "fixed-length HTTP/3 response ended before its declared length";
+      end if;
+      if not Item.Response_Ended then
+         Send_Data (Item, Empty, Fin => True);
+      end if;
    end End_Response_Stream;
 
    overriding procedure Begin_SSE

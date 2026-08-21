@@ -17,9 +17,13 @@ package body Flyology.HTTP.Server is
    use type Interfaces.Unsigned_32;
    use type Interfaces.Unsigned_64;
    use type Flyology.WebSocket_Policy.Cursor_Phase;
+   use type Flyology.HTTP.Fixed_Response_Policy.Write_Result;
+   use type Flyology.HTTP.Fixed_Response_Policy.Finish_Result;
 
    package Chunk_Encoding renames Flyology.HTTP_Chunk_Encoding;
    package Expect_Policy renames Flyology.HTTP.Expect_Policy;
+   package Fixed_Response_Policy renames
+     Flyology.HTTP.Fixed_Response_Policy;
    package WebSocket_Deflate_Policy renames
      Flyology.WebSocket_Deflate_Policy;
    package WebSocket_Policy renames Flyology.WebSocket_Policy;
@@ -1769,6 +1773,9 @@ package body Flyology.HTTP.Server is
    function Decimal (Value : Natural) return String is
      (Trim (Natural'Image (Value)));
 
+   function Decimal (Value : Body_Size) return String is
+     (Trim (Body_Size'Image (Value)));
+
    procedure Validate_Extra_Headers (Value : String) is
       Position : Natural := Value'First;
    begin
@@ -1906,7 +1913,9 @@ package body Flyology.HTTP.Server is
          & Decimal (Status) & " " & Reason (Status) & CRLF);
       Append (Head, "Date: " & HTTP_Date & CRLF);
       if Status not in 204 | 304 then
-         Append (Head, "Content-Length: " & Decimal (Payload'Length) & CRLF);
+         Append
+           (Head,
+            "Content-Length: " & Decimal (Natural (Payload'Length)) & CRLF);
       end if;
       if Content_Type'Length > 0 then
          for Item of Content_Type loop
@@ -1953,19 +1962,22 @@ package body Flyology.HTTP.Server is
    function Response_Started (Item : Connection) return Boolean is
      (Item.Response_Begun);
 
-   procedure Begin_Response_Stream
+   procedure Begin_Response_Stream_Internal
      (Item          : in out Connection;
       Status        : Positive;
       Content_Type  : String;
-      Extra_Headers : String := "";
-      Close         : Boolean := False;
-      Timeout       : Duration := 30.0;
-      Token         : access Flyology.Cancellation.Token := null)
+      Extra_Headers : String;
+      Close         : Boolean;
+      Timeout       : Duration;
+      Token         : access Flyology.Cancellation.Token;
+      Length_Known  : Boolean;
+      Content_Length : Body_Size)
    is
       Must_Close : constant Boolean :=
         Close
         or else Item.Request_Close
-        or else Item.Current_Version = HTTP_1_0;
+        or else
+          (not Length_Known and then Item.Current_Version = HTTP_1_0);
       Head : Unbounded_String;
    begin
       if Item.State /= Reading_HTTP or else Item.Response_Begun then
@@ -1995,7 +2007,10 @@ package body Flyology.HTTP.Server is
       if Content_Type'Length > 0 then
          Append (Head, "Content-Type: " & Content_Type & CRLF);
       end if;
-      if Item.Current_Version = HTTP_1_1 then
+      if Length_Known then
+         Append
+           (Head, "Content-Length: " & Decimal (Content_Length) & CRLF);
+      elsif Item.Current_Version = HTTP_1_1 then
          Append (Head, "Transfer-Encoding: chunked" & CRLF);
       end if;
       Append (Head, Extra_Headers);
@@ -2006,6 +2021,12 @@ package body Flyology.HTTP.Server is
       Item.Response_Begun := True;
       Item.Request_Close := Must_Close;
       Item.State := Streaming_HTTP;
+      if Length_Known then
+         Fixed_Response_Policy.Start
+           (Item.Fixed_Response, Content_Length, Item.Current_Is_Head);
+      else
+         Fixed_Response_Policy.Reset (Item.Fixed_Response);
+      end if;
       begin
          Write (Item, To_String (Head), Timeout, Token);
       exception
@@ -2014,6 +2035,35 @@ package body Flyology.HTTP.Server is
             Item.State := Terminal;
             raise;
       end;
+   end Begin_Response_Stream_Internal;
+
+   procedure Begin_Response_Stream
+     (Item          : in out Connection;
+      Status        : Positive;
+      Content_Type  : String;
+      Extra_Headers : String := "";
+      Close         : Boolean := False;
+      Timeout       : Duration := 30.0;
+      Token         : access Flyology.Cancellation.Token := null) is
+   begin
+      Begin_Response_Stream_Internal
+        (Item, Status, Content_Type, Extra_Headers, Close, Timeout, Token,
+         Length_Known => False, Content_Length => 0);
+   end Begin_Response_Stream;
+
+   procedure Begin_Response_Stream
+     (Item           : in out Connection;
+      Status         : Positive;
+      Content_Type   : String;
+      Content_Length : Body_Size;
+      Extra_Headers  : String := "";
+      Close          : Boolean := False;
+      Timeout        : Duration := 30.0;
+      Token          : access Flyology.Cancellation.Token := null) is
+   begin
+      Begin_Response_Stream_Internal
+        (Item, Status, Content_Type, Extra_Headers, Close, Timeout, Token,
+         Length_Known => True, Content_Length => Content_Length);
    end Begin_Response_Stream;
 
    procedure Write_Response_Chunk
@@ -2022,12 +2072,23 @@ package body Flyology.HTTP.Server is
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null)
    is
+      Result : Fixed_Response_Policy.Write_Result;
+      Fixed  : constant Boolean :=
+        Fixed_Response_Policy.Is_Active (Item.Fixed_Response);
    begin
       if Item.State /= Streaming_HTTP then
          raise Program_Error with "HTTP streaming response is not active";
+      end if;
+      Fixed_Response_Policy.Write
+        (Item.Fixed_Response, Body_Size (Data'Length), Result);
+      if Result = Fixed_Response_Policy.Overrun then
+         Item.Request_Close := True;
+         Item.State := Terminal;
+         raise Program_Error with
+           "fixed-length HTTP response exceeds its declared length";
       elsif Data'Length = 0 or else Item.Current_Is_Head then
          return;
-      elsif Item.Current_Version = HTTP_1_1 then
+      elsif Item.Current_Version = HTTP_1_1 and then not Fixed then
          begin
             Write
               (Item,
@@ -2058,12 +2119,23 @@ package body Flyology.HTTP.Server is
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null)
    is
+      Result : Fixed_Response_Policy.Write_Result;
+      Fixed  : constant Boolean :=
+        Fixed_Response_Policy.Is_Active (Item.Fixed_Response);
    begin
       if Item.State /= Streaming_HTTP then
          raise Program_Error with "HTTP streaming response is not active";
+      end if;
+      Fixed_Response_Policy.Write
+        (Item.Fixed_Response, Body_Size (Data'Length), Result);
+      if Result = Fixed_Response_Policy.Overrun then
+         Item.Request_Close := True;
+         Item.State := Terminal;
+         raise Program_Error with
+           "fixed-length HTTP response exceeds its declared length";
       elsif Data'Length = 0 or else Item.Current_Is_Head then
          return;
-      elsif Item.Current_Version = HTTP_1_1 then
+      elsif Item.Current_Version = HTTP_1_1 and then not Fixed then
          declare
             Prefix : constant Ada.Streams.Stream_Element_Array :=
               Bytes
@@ -2110,11 +2182,22 @@ package body Flyology.HTTP.Server is
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null)
    is
+      Result : Fixed_Response_Policy.Finish_Result;
    begin
       if Item.State /= Streaming_HTTP then
          raise Program_Error with "HTTP streaming response is not active";
       end if;
-      if Item.Current_Version = HTTP_1_1 and then not Item.Current_Is_Head then
+      Fixed_Response_Policy.Finish (Item.Fixed_Response, Result);
+      if Result = Fixed_Response_Policy.Underrun then
+         Item.Request_Close := True;
+         Item.State := Terminal;
+         raise Program_Error with
+           "fixed-length HTTP response ended before its declared length";
+      end if;
+      if Result = Fixed_Response_Policy.Finish_Inactive
+        and then Item.Current_Version = HTTP_1_1
+        and then not Item.Current_Is_Head
+      then
          begin
             Write (Item, "0" & CRLF & CRLF, Timeout, Token);
          exception
