@@ -8,6 +8,7 @@ with Flyology;
 with Flyology.Bytes;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
+with Flyology.HTTP.Methods;
 with Flyology.IO.TLS.OpenSSL;
 
 procedure HTTP2_Client_Integration is
@@ -289,6 +290,8 @@ begin
                end if;
             elsif Scenario = "refused-post" then
                Client.Set_Method (Value, Flyology.HTTP.To_Method ("POST"));
+            elsif Scenario = "head-empty-data" then
+               Client.Set_Method (Value, Flyology.HTTP.Methods.HEAD);
             end if;
             if Scenario in
               "require-failure" | "refused-post" | "bad-preface" |
@@ -316,6 +319,12 @@ begin
                      Check_Flow (Reply);
                   elsif Scenario = "early-final" then
                      pragma Assert (Client.Status (Reply) = 413);
+                     pragma Assert
+                       (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
+                  elsif Scenario = "head-empty-data" then
+                     pragma Assert
+                       (Client.Header (Reply, "content-length") =
+                          "5368709129");
                      pragma Assert
                        (Flyology.Bytes.Length (Client.Read_All (Reply)) = 0);
                   elsif Scenario = "zero-read" then

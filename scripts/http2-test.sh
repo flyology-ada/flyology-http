@@ -51,7 +51,7 @@ run_client () {
   require_tester
   build_test http2_client_integration http2-integration
   for model in native lightweight; do
-    for scenario in basic prior fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post; do
+    for scenario in basic prior fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final head-empty-data reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post; do
       run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2.XXXXXX")
       port_file="$run_dir/port"
       log_file="$run_dir/events.jsonl"

@@ -1162,6 +1162,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          end if;
          if End_Stream then
             if Streams (Index).Has_Expected_Length
+              and then not Streams (Index).Body_Forbidden
               and then Streams (Index).Received_Length /=
                 Streams (Index).Expected_Length
             then
