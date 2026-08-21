@@ -30,13 +30,13 @@ package Flyology.HTTP.Server.Exchange_Backends is
    --  @exclude
    --  @param Item Backend state
    --  @return Request body bytes received
-   function Body_Bytes (Item : Backend) return Natural is abstract;
+   function Body_Bytes (Item : Backend) return Body_Size is abstract;
 
    --  @exclude
    --  @param Item Backend state
    --  @param Maximum New request body limit
    procedure Narrow_Body_Limit
-     (Item : in out Backend; Maximum : Natural) is abstract;
+     (Item : in out Backend; Maximum : Body_Size) is abstract;
 
    --  @exclude
    --  @param Item Backend state

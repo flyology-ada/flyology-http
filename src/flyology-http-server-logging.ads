@@ -28,8 +28,8 @@ package Flyology.HTTP.Server.Logging is
       Status         : Natural;
       Request_ID     : String;
       Peer           : Flyology.IO.Sockets.Endpoint;
-      Request_Bytes  : Natural;
-      Response_Bytes : Natural;
+      Request_Bytes  : Body_Size;
+      Response_Bytes : Body_Size;
       Elapsed        : Duration) is abstract;
 
 end Flyology.HTTP.Server.Logging;

@@ -779,24 +779,27 @@ package body Flyology.HTTP.Server is
    end Read_Line;
 
    function Parse_Chunk_Size
-     (Line : String; Maximum_Body : Natural) return Natural
+     (Line : String; Maximum_Body : Body_Size) return Body_Size
    is
       Semicolon : constant Natural := Ada.Strings.Fixed.Index (Line, ";");
       Last      : constant Natural :=
         (if Semicolon = 0 then Line'Last else Semicolon - 1);
-      Result    : Natural := 0;
-      Digit     : Natural;
+      Result    : Body_Size := 0;
+      Digit     : Body_Size;
    begin
       if Line'Length = 0 or else Last < Line'First then
          raise Protocol_Error with "empty HTTP chunk size";
       end if;
       for Index in Line'First .. Last loop
          if Line (Index) in '0' .. '9' then
-            Digit := Character'Pos (Line (Index)) - Character'Pos ('0');
+            Digit := Body_Size
+              (Character'Pos (Line (Index)) - Character'Pos ('0'));
          elsif Line (Index) in 'a' .. 'f' then
-            Digit := Character'Pos (Line (Index)) - Character'Pos ('a') + 10;
+            Digit := Body_Size
+              (Character'Pos (Line (Index)) - Character'Pos ('a') + 10);
          elsif Line (Index) in 'A' .. 'F' then
-            Digit := Character'Pos (Line (Index)) - Character'Pos ('A') + 10;
+            Digit := Body_Size
+              (Character'Pos (Line (Index)) - Character'Pos ('A') + 10);
          else
             raise Protocol_Error with "invalid HTTP chunk size";
          end if;
@@ -910,7 +913,7 @@ package body Flyology.HTTP.Server is
       Value       : out Request;
       Peer_Closed : out Boolean;
       Timeout     : Duration := 30.0;
-      Max_Body    : Natural := Max_Request_Body;
+      Max_Body    : Body_Size := Max_Request_Body;
       Token       : access Flyology.Cancellation.Token := null)
    is
    begin
@@ -928,14 +931,14 @@ package body Flyology.HTTP.Server is
       Peer_Closed     : out Boolean;
       Header_Timeout  : Duration;
       Request_Timeout : Duration;
-      Max_Body        : Natural := Max_Request_Body;
+      Max_Body        : Body_Size := Max_Request_Body;
       Token           : access Flyology.Cancellation.Token := null)
    is
       Header_End : Natural := 0;
       Closed     : Boolean;
-      Body_Size  : Natural := 0;
+      Declared_Body_Size : Body_Size := 0;
       Chunked    : Boolean := False;
-      Body_Limit : constant Natural := Natural'Min
+      Body_Limit : constant Body_Size := Body_Size'Min
         (Max_Body, Max_Request_Body);
       Started    : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
       Effective_Header_Timeout : constant Duration :=
@@ -1086,12 +1089,12 @@ package body Flyology.HTTP.Server is
                end if;
             end loop;
             begin
-               Body_Size := Natural'Value (Length_Field);
+               Declared_Body_Size := Body_Size'Value (Length_Field);
             exception
                when Constraint_Error =>
                   raise Protocol_Error with "invalid Content-Length";
             end;
-            if Body_Size > Body_Limit then
+            if Declared_Body_Size > Body_Limit then
                raise Payload_Too_Large with "HTTP request body is too large";
             end if;
          end if;
@@ -1134,7 +1137,7 @@ package body Flyology.HTTP.Server is
             when Expect_Policy.Reject =>
                raise Expectation_Failed with "unsupported HTTP expectation";
             when Expect_Policy.Proceed =>
-               if Chunked or else Body_Size > 0 then
+               if Chunked or else Declared_Body_Size > 0 then
                   Item.Continue_Pending := True;
                   Item.Body_Accepted := False;
                end if;
@@ -1146,9 +1149,9 @@ package body Flyology.HTTP.Server is
          Item.Body_Mode := Chunked_Body;
          Item.Body_Done := False;
          Item.Body_Accepted := not Item.Continue_Pending;
-      elsif Body_Size > 0 then
+      elsif Declared_Body_Size > 0 then
          Item.Body_Mode := Fixed_Body;
-         Item.Body_Remaining := Body_Size;
+         Item.Body_Remaining := Declared_Body_Size;
          Item.Body_Done := False;
          Item.Body_Accepted := not Item.Continue_Pending;
       else
@@ -1211,10 +1214,13 @@ package body Flyology.HTTP.Server is
       Written : Natural := 0;
       Closed  : Boolean;
 
-      procedure Copy_Pending (Maximum : Natural) is
+      procedure Copy_Pending (Maximum : Body_Size) is
          Available : constant String := To_String (Item.Pending);
+         Bounded_Maximum : constant Natural :=
+           (if Maximum > Body_Size (Natural'Last)
+            then Natural'Last else Natural (Maximum));
          Count     : constant Natural := Natural'Min
-           (Maximum,
+           (Bounded_Maximum,
             Natural'Min
               (Available'Length, Natural (Data'Length) - Written));
       begin
@@ -1227,8 +1233,8 @@ package body Flyology.HTTP.Server is
          end loop;
          Consume (Item, Count);
          Written := Written + Count;
-         Item.Body_Remaining := Item.Body_Remaining - Count;
-         Item.Body_Total := Item.Body_Total + Count;
+         Item.Body_Remaining := Item.Body_Remaining - Body_Size (Count);
+         Item.Body_Total := Item.Body_Total + Body_Size (Count);
       end Copy_Pending;
 
       procedure Need (Count : Natural; Description : String) is
@@ -1319,7 +1325,9 @@ package body Flyology.HTTP.Server is
                   Receive_More
                     (Item, Closed, Item.Body_Started, Item.Body_Timeout, Token,
                      Maximum => Natural'Min
-                       (Item.Body_Remaining,
+                       ((if Item.Body_Remaining > Body_Size (Natural'Last)
+                         then Natural'Last
+                         else Natural (Item.Body_Remaining)),
                         Natural (Data'Length) - Written));
                   if Closed then
                      raise Protocol_Error with
@@ -1339,7 +1347,7 @@ package body Flyology.HTTP.Server is
                if Item.Body_Remaining = 0 then
                   declare
                      Line       : Unbounded_String;
-                     Chunk_Size : Natural;
+                     Chunk_Size : Body_Size;
                   begin
                      Read_Line
                        (Item, Line, Item.Body_Started, Item.Body_Timeout,
@@ -1362,7 +1370,9 @@ package body Flyology.HTTP.Server is
                        (Item, Closed, Item.Body_Started, Item.Body_Timeout,
                         Token,
                         Maximum => Natural'Min
-                          (Item.Body_Remaining,
+                          ((if Item.Body_Remaining > Body_Size (Natural'Last)
+                            then Natural'Last
+                            else Natural (Item.Body_Remaining)),
                            Natural (Data'Length) - Written));
                      if Closed then
                         raise Protocol_Error with
@@ -1426,7 +1436,7 @@ package body Flyology.HTTP.Server is
 
    procedure Narrow_Body_Limit
      (Item    : in out Connection;
-      Maximum : Natural)
+      Maximum : Body_Size)
    is
    begin
       if Maximum > Item.Body_Limit then
@@ -1448,8 +1458,9 @@ package body Flyology.HTTP.Server is
       Buffer   : Ada.Streams.Stream_Element_Array (1 .. 8 * 1_024);
       Last     : Ada.Streams.Stream_Element_Offset;
       Finished : Boolean;
-      Ceiling  : Natural := 0;
+      Ceiling  : Body_Size := 0;
       Wanted   : Natural;
+      Natural_Ceiling : Natural;
    begin
       if Item.Body_Done then
          return;
@@ -1459,12 +1470,15 @@ package body Flyology.HTTP.Server is
             when No_Body      => 0,
             when Fixed_Body   => Item.Body_Remaining,
             when Chunked_Body => Item.Body_Limit);
+      Natural_Ceiling :=
+        (if Ceiling > Body_Size (Natural'Last)
+         then Natural'Last else Natural (Ceiling));
       --  Reserve only the bytes the next read can deliver, then follow the
       --  body as it arrives. Reserving the declared length or the chunked
       --  ceiling here would let a peer pin that whole amount by sending a
       --  request head and then stalling.
       Reserve_Buffered
-        (Item, Natural'Min (Ceiling, Natural (Buffer'Length)));
+        (Item, Natural'Min (Natural_Ceiling, Natural (Buffer'Length)));
       Accept_Body (Item, Token);
       loop
          Read_Body (Item, Buffer, Last, Finished, Token);
@@ -1475,14 +1489,18 @@ package body Flyology.HTTP.Server is
          end if;
          exit when Finished;
          Wanted := Natural'Min
-           (Ceiling, Item.Body_Total + Natural (Buffer'Length));
+           (Natural_Ceiling,
+            (if Natural (Item.Body_Total) >
+                  Natural'Last - Natural (Buffer'Length)
+             then Natural'Last
+             else Natural (Item.Body_Total) + Natural (Buffer'Length)));
          if Wanted > Item.Buffered_Bytes then
             Resize_Buffered (Item, Wanted);
          end if;
       end loop;
 
-      if Item.Buffered_Bytes /= Item.Body_Total then
-         Resize_Buffered (Item, Item.Body_Total);
+      if Body_Size (Item.Buffered_Bytes) /= Item.Body_Total then
+         Resize_Buffered (Item, Natural (Item.Body_Total));
       end if;
    exception
       when others =>
@@ -1495,7 +1513,7 @@ package body Flyology.HTTP.Server is
       Value       : out Request;
       Peer_Closed : out Boolean;
       Timeout     : Duration := 30.0;
-      Max_Body    : Natural := Max_Request_Body;
+      Max_Body    : Body_Size := Max_Request_Body;
       Token       : access Flyology.Cancellation.Token := null)
    is
    begin

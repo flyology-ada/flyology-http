@@ -100,6 +100,11 @@ package Flyology.HTTP is
    --  Three-digit HTTP status code.
    subtype Status_Code is Positive range 100 .. 599;
 
+   --  Nonnegative protocol representation byte count. This 64-bit-safe type
+   --  is shared by clients and servers so message lengths do not depend on
+   --  the implementation range of Natural.
+   subtype Body_Size is Long_Long_Integer range 0 .. Long_Long_Integer'Last;
+
 private
    type Method is record
       Value : Ada.Strings.Unbounded.Unbounded_String;

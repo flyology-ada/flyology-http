@@ -3,6 +3,9 @@ package body Flyology.HTTP.Server.Metrics is
    function Saturating_Add (Left, Right : Natural) return Natural is
      (if Right > Natural'Last - Left then Natural'Last else Left + Right);
 
+   function Saturating_Add (Left, Right : Body_Size) return Body_Size is
+     (if Right > Body_Size'Last - Left then Body_Size'Last else Left + Right);
+
    function Saturating_Add
      (Left, Right : Duration) return Duration is
      (if Right <= 0.0 then Left
@@ -23,8 +26,8 @@ package body Flyology.HTTP.Server.Metrics is
          Route          : String;
          Status         : Natural;
          Elapsed        : Duration;
-         Request_Bytes  : Natural;
-         Response_Bytes : Natural)
+         Request_Bytes  : Body_Size;
+         Response_Bytes : Body_Size)
       is
          Found : Natural := 0;
          Class : constant Natural := Status_Class (Status);
@@ -101,8 +104,8 @@ package body Flyology.HTTP.Server.Metrics is
       Route          : String;
       Status         : Natural;
       Elapsed        : Duration;
-      Request_Bytes  : Natural;
-      Response_Bytes : Natural)
+      Request_Bytes  : Body_Size;
+      Response_Bytes : Body_Size)
    is
    begin
       Item.State.End_Request

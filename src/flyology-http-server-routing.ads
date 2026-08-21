@@ -94,7 +94,7 @@ package Flyology.HTTP.Server.Routing is
       Body_Handling   :
         Flyology.HTTP.Server.Applications.Request_Body_Policy :=
           Flyology.HTTP.Server.Applications.Reject_Body;
-      Max_Body        : Natural := Max_Request_Body;
+      Max_Body        : Body_Size := Max_Request_Body;
       Timeout         : Duration := -1.0;
       Concurrency     : Natural := 0;
       Rate_Per_Second : Natural := 0;

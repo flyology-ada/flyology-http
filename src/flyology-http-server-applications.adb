@@ -219,7 +219,7 @@ package body Flyology.HTTP.Server.Applications is
       then Flyology.HTTP.Server.Body_Complete (Item.Connection_Handle.all)
       else Exchange_Backends.Body_Complete (Item.Backend_Handle.all));
 
-   function Request_Body_Bytes (Item : Exchange) return Natural is
+   function Request_Body_Bytes (Item : Exchange) return Body_Size is
      (if Item.Backend_Handle = null
       then Item.Connection_Handle.Body_Total
       else Exchange_Backends.Body_Bytes (Item.Backend_Handle.all));
@@ -406,7 +406,7 @@ package body Flyology.HTTP.Server.Applications is
       Item.Status_Value := Status;
       Item.Response_Length :=
         (if Is_Head or else Status in 204 | 205 | 304
-         then 0 else Payload'Length);
+         then 0 else Body_Size (Payload'Length));
       Item.Response_Value := Completed;
    exception
       when others =>
@@ -562,7 +562,8 @@ package body Flyology.HTTP.Server.Applications is
             Item.Token_Handle);
       end if;
       if Method (Item.Request_Handle.all) /= "HEAD" then
-         Item.Response_Length := Item.Response_Length + Data'Length;
+         Item.Response_Length :=
+           Item.Response_Length + Body_Size (Data'Length);
       end if;
    exception
       when others =>
@@ -588,7 +589,8 @@ package body Flyology.HTTP.Server.Applications is
             Item.Token_Handle);
       end if;
       if Method (Item.Request_Handle.all) /= "HEAD" then
-         Item.Response_Length := Item.Response_Length + Natural (Data'Length);
+         Item.Response_Length :=
+           Item.Response_Length + Body_Size (Data'Length);
       end if;
    exception
       when others =>
@@ -672,7 +674,8 @@ package body Flyology.HTTP.Server.Applications is
             Remaining (Item), Item.Token_Handle, Include_Id, Include_Retry);
       end if;
       if Method (Item.Request_Handle.all) /= "HEAD" then
-         Item.Response_Length := Item.Response_Length + Data'Length;
+         Item.Response_Length :=
+           Item.Response_Length + Body_Size (Data'Length);
       end if;
    exception
       when others =>
@@ -814,7 +817,8 @@ package body Flyology.HTTP.Server.Applications is
       Flyology.HTTP.Server.Send_WebSocket
         (Item.Connection_Handle.all, Kind, Data, Remaining (Item),
          Item.Token_Handle);
-      Item.Response_Length := Item.Response_Length + Data'Length;
+      Item.Response_Length :=
+        Item.Response_Length + Body_Size (Data'Length);
    exception
       when others =>
          Item.Response_Value := Failed;
@@ -835,7 +839,7 @@ package body Flyology.HTTP.Server.Applications is
         (Item.Connection_Handle.all, Kind, Data, Remaining (Item),
          Item.Token_Handle);
       Item.Response_Length :=
-        Item.Response_Length + Flyology.Bytes.Length (Data);
+        Item.Response_Length + Body_Size (Flyology.Bytes.Length (Data));
    exception
       when others =>
          Item.Response_Value := Failed;
@@ -854,7 +858,8 @@ package body Flyology.HTTP.Server.Applications is
       Flyology.HTTP.Server.Send_WebSocket
         (Item.Connection_Handle.all, Data, Remaining (Item),
          Item.Token_Handle);
-      Item.Response_Length := Item.Response_Length + Data'Length;
+      Item.Response_Length :=
+        Item.Response_Length + Body_Size (Data'Length);
    exception
       when others =>
          Item.Response_Value := Failed;
@@ -896,7 +901,7 @@ package body Flyology.HTTP.Server.Applications is
    function Response_Status (Item : Exchange) return Natural is
      (Item.Status_Value);
 
-   function Response_Bytes (Item : Exchange) return Natural is
+   function Response_Bytes (Item : Exchange) return Body_Size is
      (Item.Response_Length);
 
    procedure Mark_Failed (Item : in out Exchange) is
@@ -957,7 +962,7 @@ package body Flyology.HTTP.Server.Applications is
    end Apply_Body_Policy;
 
    procedure Narrow_Body_Limit
-     (Item : in out Exchange; Maximum : Natural)
+     (Item : in out Exchange; Maximum : Body_Size)
    is
    begin
       Require_Owner (Item);

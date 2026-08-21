@@ -2748,8 +2748,8 @@ procedure HTTP_Smoke is
          Status         : Natural;
          Request_ID     : String;
          Peer           : Sockets.Endpoint;
-         Request_Bytes  : Natural;
-         Response_Bytes : Natural;
+         Request_Bytes  : Flyology.HTTP.Body_Size;
+         Response_Bytes : Flyology.HTTP.Body_Size;
          Elapsed        : Duration);
 
       overriding procedure Write
@@ -2760,8 +2760,8 @@ procedure HTTP_Smoke is
          Status         : Natural;
          Request_ID     : String;
          Peer           : Sockets.Endpoint;
-         Request_Bytes  : Natural;
-         Response_Bytes : Natural;
+         Request_Bytes  : Flyology.HTTP.Body_Size;
+         Response_Bytes : Flyology.HTTP.Body_Size;
          Elapsed        : Duration)
       is
          pragma Unreferenced
@@ -3078,8 +3078,8 @@ procedure HTTP_Smoke is
          Saturating.End_Request
            (Method => "GET", Route => "bounded", Status => 200,
             Elapsed => Duration'Last,
-            Request_Bytes => Natural'Last,
-            Response_Bytes => Natural'Last);
+            Request_Bytes => Flyology.HTTP.Body_Size'Last,
+            Response_Bytes => Flyology.HTTP.Body_Size'Last);
          Saturating.End_Request
            (Method => "GET", Route => "bounded", Status => 200,
             Elapsed => 1.0, Request_Bytes => 1, Response_Bytes => 1);
@@ -3087,8 +3087,10 @@ procedure HTTP_Smoke is
             Values : constant Flyology.HTTP.Server.Metrics.Snapshot :=
               Saturating.Read;
          begin
-            pragma Assert (Values.Request_Bytes = Natural'Last);
-            pragma Assert (Values.Response_Bytes = Natural'Last);
+            pragma Assert
+              (Values.Request_Bytes = Flyology.HTTP.Body_Size'Last);
+            pragma Assert
+              (Values.Response_Bytes = Flyology.HTTP.Body_Size'Last);
             pragma Assert (Values.Latency_Total = Duration'Last);
             pragma Assert (Values.Requests = 2);
          end;

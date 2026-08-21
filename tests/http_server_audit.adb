@@ -492,7 +492,7 @@ procedure HTTP_Server_Audit is
    end Check_Query_Control_Bytes;
 
    --  Finding 12. Buffer_Request_Body reserved the whole declared length, or
-   --  the whole 1 MiB body ceiling for a chunked request, before any body
+   --  the whole body ceiling for a chunked request, before any body
    --  byte arrived. A peer that dribbled one chunk and stalled pinned the
    --  entire ceiling, and every later buffered request was refused.
    procedure Check_Buffered_Ingress_Reservation is
@@ -501,7 +501,7 @@ procedure HTTP_Server_Audit is
       --  A chunked peer that has delivered one byte.
       declare
          Budget : aliased HTTP_Server.Ingress_Budget
-           (Limit => HTTP_Server.Max_Request_Body);
+           (Limit => HTTP_Server.Default_Ingress_Budget_Bytes);
          Wire   : aliased Probing_Transport (Budget'Access);
          Stalled : Boolean := False;
       begin
@@ -538,7 +538,7 @@ procedure HTTP_Server_Audit is
       --  A fixed-length peer that declared a full body and delivered one byte.
       declare
          Budget : aliased HTTP_Server.Ingress_Budget
-           (Limit => HTTP_Server.Max_Request_Body);
+           (Limit => HTTP_Server.Default_Ingress_Budget_Bytes);
          Wire   : aliased Probing_Transport (Budget'Access);
          Stalled : Boolean := False;
       begin
@@ -546,7 +546,8 @@ procedure HTTP_Server_Audit is
            ("POST /upload HTTP/1.1" & CRLF
             & "Host: localhost" & CRLF
             & "Content-Length:"
-            & Natural'Image (HTTP_Server.Max_Request_Body) & CRLF & CRLF
+            & Flyology.HTTP.Body_Size'Image
+                (HTTP_Server.Max_Request_Body) & CRLF & CRLF
             & "A");
          declare
             Client  : HTTP_Server.Connection (Wire'Access);
@@ -629,6 +630,99 @@ procedure HTTP_Server_Audit is
       end;
    end Check_Buffered_Ingress_Reservation;
 
+   procedure Check_64_Bit_Body_Bounds is
+      Large : constant Flyology.HTTP.Body_Size := 5 * 1_024 * 1_024 * 1_024;
+   begin
+      pragma Assert (Large > Flyology.HTTP.Body_Size (Natural'Last));
+
+      --  A fixed-length S3 multipart-sized request is admitted without
+      --  narrowing through Natural, while a route may still reject it by
+      --  applying an explicit smaller limit before any body byte is read.
+      declare
+         Wire     : aliased Memory_Transport;
+         Rejected : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("PUT /part HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Content-Length:" & Flyology.HTTP.Body_Size'Image (Large)
+            & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Closed  : Boolean;
+         begin
+            HTTP_Server.Read_Request_Head
+              (Client, Request, Closed, Max_Body => Large);
+            pragma Assert (not Closed);
+            pragma Assert (not HTTP_Server.Body_Complete (Client));
+            begin
+               HTTP_Server.Narrow_Body_Limit (Client, Large - 1);
+            exception
+               when HTTP_Server.Payload_Too_Large =>
+                  Rejected := True;
+            end;
+         end;
+         pragma Assert (Rejected);
+      end;
+
+      --  The same 5 GiB value in chunk framing reaches the body receive path.
+      --  A missing chunk payload is a protocol EOF, not an integer failure.
+      declare
+         Wire        : aliased Memory_Transport;
+         Saw_EOF     : Boolean := False;
+         Data        : Ada.Streams.Stream_Element_Array (1 .. 1);
+         Last        : Ada.Streams.Stream_Element_Offset;
+         Finished    : Boolean;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("PUT /part HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Transfer-Encoding: chunked" & CRLF & CRLF
+            & "140000000" & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Closed  : Boolean;
+         begin
+            HTTP_Server.Read_Request_Head
+              (Client, Request, Closed, Max_Body => Large);
+            begin
+               HTTP_Server.Read_Body (Client, Data, Last, Finished);
+            exception
+               when Flyology.HTTP.Protocol_Error =>
+                  Saw_EOF := True;
+            end;
+         end;
+         pragma Assert (Saw_EOF);
+      end;
+
+      --  Decimal framing outside Body_Size is rejected as malformed instead
+      --  of wrapping or leaking Constraint_Error through the public parser.
+      declare
+         Wire     : aliased Memory_Transport;
+         Rejected : Boolean := False;
+      begin
+         Wire.Input := To_Unbounded_String
+           ("PUT /overflow HTTP/1.1" & CRLF
+            & "Host: localhost" & CRLF
+            & "Content-Length: 9223372036854775808" & CRLF & CRLF);
+         declare
+            Client  : HTTP_Server.Connection (Wire'Access);
+            Request : HTTP_Server.Request;
+            Closed  : Boolean;
+         begin
+            begin
+               HTTP_Server.Read_Request_Head (Client, Request, Closed);
+            exception
+               when Flyology.HTTP.Protocol_Error =>
+                  Rejected := True;
+            end;
+         end;
+         pragma Assert (Rejected);
+      end;
+   end Check_64_Bit_Body_Bounds;
+
    --  Finding 34. Close_WebSocket dropped back to the 1 MiB default message
    --  limit once the receive it was draining had finished, so a frame the
    --  application's own limit permits aborted the close handshake it had
@@ -697,5 +791,6 @@ begin
    Check_Repeated_Cookie_Fields;
    Check_Query_Control_Bytes;
    Check_Buffered_Ingress_Reservation;
+   Check_64_Bit_Body_Bounds;
    Check_Close_Handshake_Message_Limit;
 end HTTP_Server_Audit;
