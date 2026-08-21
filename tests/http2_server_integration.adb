@@ -3,6 +3,7 @@ with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Flyology;
 with Flyology.Bytes;
+with Flyology.Cancellation;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
 with Flyology.HTTP.Methods;
@@ -17,9 +18,66 @@ procedure HTTP2_Server_Integration is
    package Connections renames Flyology.IO.Connections;
    package Sockets renames Flyology.IO.Sockets;
    use type Flyology.HTTP.Protocol;
+   use type Ada.Streams.Stream_Element_Offset;
 
    function Decimal (Value : Natural) return String is
      (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+
+   type Unknown_String_Source
+     (Data : not null access constant String)
+   is limited new Client.Request_Body_Source with record
+      Cursor : Natural := 1;
+   end record;
+
+   overriding function Declared_Length
+     (Item : Unknown_String_Source) return Client.Body_Length is
+     (Client.Unknown_Length);
+
+   overriding procedure Read
+     (Item     : in out Unknown_String_Source;
+      Data     : out Ada.Streams.Stream_Element_Array;
+      Last     : out Ada.Streams.Stream_Element_Offset;
+      Finished : out Boolean;
+      Timeout  : Duration;
+      Token    : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Timeout, Token);
+      Count : constant Natural := Natural'Min
+        (Natural (Data'Length), Item.Data'Length - Item.Cursor + 1);
+   begin
+      Last := Data'First - 1;
+      if Count > 0 then
+         for Offset in 0 .. Count - 1 loop
+            Data (Data'First + Ada.Streams.Stream_Element_Offset (Offset)) :=
+              Ada.Streams.Stream_Element
+                (Character'Pos (Item.Data (Item.Cursor + Offset)));
+         end loop;
+         Last := Data'First + Ada.Streams.Stream_Element_Offset (Count - 1);
+      end if;
+      Item.Cursor := Item.Cursor + Count;
+      Finished := Item.Cursor > Item.Data'Length;
+   end Read;
+
+   type Sparse_Five_GiB_Source is
+     limited new Client.Request_Body_Source with null record;
+
+   overriding function Declared_Length
+     (Item : Sparse_Five_GiB_Source) return Client.Body_Length is
+     (Client.Known_Length (5 * 1_024 * 1_024 * 1_024));
+
+   overriding procedure Read
+     (Item     : in out Sparse_Five_GiB_Source;
+      Data     : out Ada.Streams.Stream_Element_Array;
+      Last     : out Ada.Streams.Stream_Element_Offset;
+      Finished : out Boolean;
+      Timeout  : Duration;
+      Token    : access Flyology.Cancellation.Token) is
+   begin
+      pragma Unreferenced (Item, Timeout, Token);
+      Data := (others => 0);
+      Last := Data'First - 1;
+      Finished := True;
+   end Read;
 
    type Context is limited null record;
 
@@ -55,6 +113,14 @@ procedure HTTP2_Server_Integration is
    procedure Echo (State : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (State);
    begin
+      pragma Assert (X.Request_Authority /= "");
+      if X.Request_Trailer_Count > 0 then
+         pragma Assert (X.Request_Trailer_Count = 2);
+         pragma Assert
+           (X.Request_Trailer ("x-amz-checksum-sha256") = "checksum");
+         pragma Assert
+           (X.Request_Trailer_Name (2) = "x-amz-trailer-signature");
+      end if;
       X.Text (200, X.Content);
    end Echo;
 
@@ -83,7 +149,7 @@ begin
      ("/echo", Echo'Access, Name => "echo",
       Policy =>
         (Body_Handling => App.Buffer_Body,
-         Max_Body => 30_000,
+         Max_Body => 6 * 1_024 * 1_024 * 1_024,
          others => <>));
    Sockets.Create_Socket (Listener);
    Sockets.Set_Socket_Option
@@ -222,20 +288,50 @@ begin
          pragma Assert (Passed);
       end;
 
+      --  Exercise 64-bit request framing without retaining or transmitting a
+      --  multi-gigabyte payload. The source deliberately ends immediately;
+      --  the client must detect the premature EOF, abandon only that stream,
+      --  and leave the multiplexed connection usable.
       declare
          Request : Client.Request;
-         Payload : constant String := (1 .. 20_000 => 'e');
+         Source  : Sparse_Five_GiB_Source;
+         Raised  : Boolean := False;
       begin
          Client.Set_Target (Request, "/echo");
          Client.Set_Method (Request, Flyology.HTTP.Methods.POST);
-         Client.Set_Body (Request, Payload);
+         begin
+            declare
+               Unexpected : Client.Response :=
+                 Client.Execute (HTTP, Request, Source, Timeout => 10.0);
+               pragma Unreferenced (Unexpected);
+            begin
+               null;
+            end;
+         exception
+            when Client.Request_Body_Error => Raised := True;
+         end;
+         pragma Assert (Raised);
+      end;
+      Check ("/second", "/second");
+
+      declare
+         Request : Client.Request;
+         Payload : aliased constant String := (1 .. 120_000 => 'e');
+         Source  : Unknown_String_Source (Payload'Access);
+      begin
+         Client.Set_Target (Request, "/echo");
+         Client.Set_Method (Request, Flyology.HTTP.Methods.POST);
+         Client.Add_Trailer
+           (Request, "x-amz-checksum-sha256", "checksum");
+         Client.Add_Trailer
+           (Request, "x-amz-trailer-signature", "signature");
          declare
             Reply : Client.Response :=
-              Client.Execute (HTTP, Request, Timeout => 10.0);
+              Client.Execute (HTTP, Request, Source, Timeout => 10.0);
          begin
             pragma Assert
               (Flyology.Bytes.To_Byte_String
-                 (Client.Read_All (Reply, Maximum => 30_000)) = Payload);
+                 (Client.Read_All (Reply, Maximum => 200_000)) = Payload);
          end;
       end;
 

@@ -12,7 +12,7 @@ is
    use type Ada.Streams.Stream_Element_Offset;
 
    Max_Name_Length    : constant := 256;
-   Max_Value_Length   : constant := 4_096;
+   Max_Value_Length   : constant := 16 * 1_024;
    Max_Fields         : constant := 32;
    Max_Encoded_Length : constant := 65_535;
    --  Encoded field sections are immediately wrapped in a bounded HTTP/3

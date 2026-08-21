@@ -5,6 +5,7 @@ with Ada.Strings.Fixed;
 with Ada.Unchecked_Deallocation;
 with Flyology.Bytes;
 with Flyology.Channels.Bounded;
+with Flyology.HTTP.Headers;
 with Flyology.HTTP.HTTP_3;
 with Flyology.HTTP.Server.Applications.Internals;
 with Flyology.HTTP.Server.Exchange_Backends;
@@ -560,6 +561,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Response_Begun   : Boolean := False;
       Response_Ended   : Boolean := False;
       Response_Buffered : Boolean := False;
+      Trailer_Fields    : Flyology.HTTP.Headers.List;
    end record;
 
    overriding function Response_Started
@@ -569,6 +571,17 @@ package body Flyology.HTTP.Server.HTTP_3 is
    overriding function Body_Complete
      (Item : Stream_Backend) return Boolean;
    overriding function Body_Bytes (Item : Stream_Backend) return Body_Size;
+   overriding function Trailer_Count (Item : Stream_Backend) return Natural;
+   overriding function Trailer_Count
+     (Item : Stream_Backend; Name : String) return Natural;
+   overriding function Trailer_Name
+     (Item : Stream_Backend; Index : Positive) return String;
+   overriding function Trailer_Value
+     (Item : Stream_Backend; Index : Positive) return String;
+   overriding function Trailer
+     (Item       : Stream_Backend;
+      Name       : String;
+      Occurrence : Positive) return String;
    overriding procedure Narrow_Body_Limit
      (Item : in out Stream_Backend; Maximum : Body_Size);
    overriding procedure Read_Body
@@ -644,6 +657,55 @@ package body Flyology.HTTP.Server.HTTP_3 is
 
    overriding function Body_Bytes (Item : Stream_Backend) return Body_Size is
      (Body_Size (Bytes.Length (Item.Payload_Bytes)));
+
+   procedure Require_Complete_Trailers (Item : Stream_Backend) is
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "request trailers are unavailable before body completion";
+      end if;
+   end Require_Complete_Trailers;
+
+   overriding function Trailer_Count (Item : Stream_Backend) return Natural is
+   begin
+      Require_Complete_Trailers (Item);
+      return Flyology.HTTP.Headers.Count (Item.Trailer_Fields);
+   end Trailer_Count;
+
+   overriding function Trailer_Count
+     (Item : Stream_Backend; Name : String) return Natural
+   is
+   begin
+      Require_Complete_Trailers (Item);
+      return Flyology.HTTP.Headers.Count (Item.Trailer_Fields, Name);
+   end Trailer_Count;
+
+   overriding function Trailer_Name
+     (Item : Stream_Backend; Index : Positive) return String
+   is
+   begin
+      Require_Complete_Trailers (Item);
+      return Flyology.HTTP.Headers.Name (Item.Trailer_Fields, Index);
+   end Trailer_Name;
+
+   overriding function Trailer_Value
+     (Item : Stream_Backend; Index : Positive) return String
+   is
+   begin
+      Require_Complete_Trailers (Item);
+      return Flyology.HTTP.Headers.Value (Item.Trailer_Fields, Index);
+   end Trailer_Value;
+
+   overriding function Trailer
+     (Item       : Stream_Backend;
+      Name       : String;
+      Occurrence : Positive) return String
+   is
+   begin
+      Require_Complete_Trailers (Item);
+      return Flyology.HTTP.Headers.Value
+        (Item.Trailer_Fields, Name, Occurrence);
+   end Trailer;
 
    overriding procedure Narrow_Body_Limit
      (Item : in out Stream_Backend; Maximum : Body_Size) is
@@ -1281,6 +1343,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Authority   : Unbounded_String;
       Has_Host    : Boolean := False;
       Saw_Headers : Boolean := False;
+      Trailers    : Flyology.HTTP.Headers.List;
       Payload_Bytes : Bytes.Unbounded_Bytes;
       Started     : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
    end record;
@@ -1407,9 +1470,14 @@ package body Flyology.HTTP.Server.HTTP_3 is
               (Requests (Slot).Value.Header_Block,
                "Host: " & Authority & CRLF);
          end if;
+         Requests (Slot).Value.Authority_Value :=
+           To_Unbounded_String
+             (if Authority /= "" then Authority
+              else Header (Requests (Slot).Value, "host"));
          Backend.Owner := State;
          Backend.Stream := Requests (Slot).Stream;
          Backend.Payload_Bytes := Requests (Slot).Payload_Bytes;
+         Backend.Trailer_Fields := Requests (Slot).Trailers;
          Backend.Deadline := Deadline;
          Backend.Head_Request := Method = "HEAD";
          begin
@@ -1494,6 +1562,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
          Requests (Slot).Authority := Null_Unbounded_String;
          Requests (Slot).Has_Host := False;
          Requests (Slot).Saw_Headers := False;
+         Flyology.HTTP.Headers.Clear (Requests (Slot).Trailers);
          Requests (Slot).Started := Ada.Real_Time.Time_Last;
          Bytes.Clear (Requests (Slot).Payload_Bytes);
       end Release;
@@ -1521,6 +1590,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
                   Requests (Slot).Value := (others => <>);
                   Requests (Slot).Authority := Null_Unbounded_String;
                   Requests (Slot).Has_Host := False;
+                  Flyology.HTTP.Headers.Clear (Requests (Slot).Trailers);
                   Requests (Slot).Value.Version_Value := HTTP_1_1;
                   Requests (Slot).Value.Protocol_Value := HTTP_3_Protocol;
                   Requests (Slot).Value.Keep_Alive := True;
@@ -1547,6 +1617,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
                            Append
                              (Requests (Slot).Value.Header_Block,
                               Name & ": " & Field_Value & CRLF);
+                           Append
+                             (Requests (Slot).Value.Physical_Header_Block,
+                              Name & ": " & Field_Value & CRLF);
                            if Name = "host" then
                               Requests (Slot).Has_Host := True;
                            end if;
@@ -1554,6 +1627,22 @@ package body Flyology.HTTP.Server.HTTP_3 is
                      end;
                   end loop;
                   Requests (Slot).Saw_Headers := True;
+               else
+                  for Index in 1 .. H3.Header_Count (Value.Headers) loop
+                     declare
+                        Field : constant H3.Header_Field :=
+                          H3.Field_At (Value.Headers, Index);
+                        Name : constant String := H3.Field_Name (Field);
+                     begin
+                        if Name'Length > 0
+                          and then Name (Name'First) /= ':'
+                        then
+                           Flyology.HTTP.Headers.Add
+                             (Requests (Slot).Trailers,
+                              Name, H3.Field_Value (Field));
+                        end if;
+                     end;
+                  end loop;
                end if;
             when H3.Data_Received =>
                if Slot = 0 or else not Requests (Slot).Saw_Headers then

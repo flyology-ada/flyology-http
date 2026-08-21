@@ -37,6 +37,7 @@ procedure HTTP3_Server_Integration is
    use type QUIC.Timeout_Status;
    use type QUIC.Timestamp;
    use type Ada.Real_Time.Time;
+   use type Ada.Streams.Stream_Element_Offset;
    use type Flyology.HTTP.Origin_Scheme;
    use type Flyology.HTTP.Protocol;
 
@@ -52,6 +53,62 @@ procedure HTTP3_Server_Integration is
    begin
       return Image (Image'First + 1 .. Image'Last);
    end Decimal;
+
+   type Unknown_String_Source
+     (Data : not null access constant String)
+   is limited new Client.Request_Body_Source with record
+      Cursor : Natural := 1;
+   end record;
+
+   overriding function Declared_Length
+     (Item : Unknown_String_Source) return Client.Body_Length is
+     (Client.Unknown_Length);
+
+   overriding procedure Read
+     (Item     : in out Unknown_String_Source;
+      Data     : out Ada.Streams.Stream_Element_Array;
+      Last     : out Ada.Streams.Stream_Element_Offset;
+      Finished : out Boolean;
+      Timeout  : Duration;
+      Token    : access Flyology.Cancellation.Token)
+   is
+      pragma Unreferenced (Timeout, Token);
+      Count : constant Natural := Natural'Min
+        (Natural (Data'Length), Item.Data'Length - Item.Cursor + 1);
+   begin
+      Last := Data'First - 1;
+      if Count > 0 then
+         for Offset in 0 .. Count - 1 loop
+            Data (Data'First + Ada.Streams.Stream_Element_Offset (Offset)) :=
+              Ada.Streams.Stream_Element
+                (Character'Pos (Item.Data (Item.Cursor + Offset)));
+         end loop;
+         Last := Data'First + Ada.Streams.Stream_Element_Offset (Count - 1);
+      end if;
+      Item.Cursor := Item.Cursor + Count;
+      Finished := Item.Cursor > Item.Data'Length;
+   end Read;
+
+   type Sparse_Five_GiB_Source is
+     limited new Client.Request_Body_Source with null record;
+
+   overriding function Declared_Length
+     (Item : Sparse_Five_GiB_Source) return Client.Body_Length is
+     (Client.Known_Length (5 * 1_024 * 1_024 * 1_024));
+
+   overriding procedure Read
+     (Item     : in out Sparse_Five_GiB_Source;
+      Data     : out Ada.Streams.Stream_Element_Array;
+      Last     : out Ada.Streams.Stream_Element_Offset;
+      Finished : out Boolean;
+      Timeout  : Duration;
+      Token    : access Flyology.Cancellation.Token) is
+   begin
+      pragma Unreferenced (Item, Timeout, Token);
+      Data := (others => 0);
+      Last := Data'First - 1;
+      Finished := True;
+   end Read;
 
    type Context is limited null record;
    package Routing is new Flyology.HTTP.Server.Routing (Context);
@@ -105,9 +162,23 @@ procedure HTTP3_Server_Integration is
       pragma Assert (X.Request_Protocol = Flyology.HTTP.HTTP_3_Protocol);
       pragma Assert (X.Request_Scheme = Flyology.HTTP.Secure_HTTPS);
       pragma Assert (X.Request_Method = "POST");
+      pragma Assert (X.Request_Authority /= "");
+      if X.Request_Header_Count ("x-repeat") > 0 then
+         pragma Assert (X.Request_Header_Count = 2);
+         pragma Assert (X.Request_Header_Count ("x-repeat") = 2);
+         pragma Assert (X.Request_Header_Name (1) = "x-repeat");
+         pragma Assert (X.Request_Header ("x-repeat", 2) = "two");
+      end if;
       pragma Assert (X.Parameter ("name") = "Ada");
       pragma Assert
         (Flyology.HTTP.Server.Content (X.Request_Value) = "payload");
+      if X.Request_Header_Count ("x-repeat") > 0 then
+         pragma Assert (X.Request_Trailer_Count = 2);
+         pragma Assert
+           (X.Request_Trailer_Name (1) = "x-amz-checksum-sha256");
+         pragma Assert
+           (X.Request_Trailer ("x-amz-trailer-signature") = "signature");
+      end if;
       X.Begin_Stream (200, "text/plain");
       X.Write_Chunk ("hello ");
       X.Write_Chunk (X.Parameter ("name"));
@@ -137,7 +208,7 @@ begin
       Policy =>
         (Routing.Default_Route_Policy with delta
            Body_Handling => App.Buffer_Body,
-           Max_Body      => 64));
+           Max_Body      => 6 * 1_024 * 1_024 * 1_024));
    Routes.Get ("/discover", Discover'Access, Name => "discover");
 
    OpenSSL.Initialize_Server
@@ -378,14 +449,22 @@ begin
 
             task body H3_Request is
                H3_Value : Client.Request;
+               Payload : aliased constant String := "payload";
+               Source : Unknown_String_Source (Payload'Access);
             begin
                Client.Set_Method
                  (H3_Value, Flyology.HTTP.To_Method ("POST"));
                Client.Set_Target (H3_Value, "/hello/Ada");
-               Client.Set_Body (H3_Value, "payload");
+               Client.Add_Header (H3_Value, "x-repeat", "one");
+               Client.Add_Header (H3_Value, "x-repeat", "two");
+               Client.Add_Trailer
+                 (H3_Value, "x-amz-checksum-sha256", "checksum");
+               Client.Add_Trailer
+                 (H3_Value, "x-amz-trailer-signature", "signature");
                declare
                   Reply : Client.Response :=
-                    Client.Execute (HTTP, H3_Value, Timeout => 10.0);
+                    Client.Execute
+                      (HTTP, H3_Value, Source, Timeout => 10.0);
                begin
                   pragma Assert (Client.Status (Reply) = 200);
                   pragma Assert
@@ -454,6 +533,30 @@ begin
          Client.Set_Method (Request, Flyology.HTTP.To_Method ("POST"));
          Client.Set_Target (Request, "/hello/Ada");
          Client.Set_Body (Request, "payload");
+         --  Validate 64-bit Content-Length framing and premature-EOF cleanup
+         --  without retaining or transmitting a multi-gigabyte payload.
+         declare
+            Sparse_Request : Client.Request;
+            Source         : Sparse_Five_GiB_Source;
+            Raised         : Boolean := False;
+         begin
+            Client.Set_Method
+              (Sparse_Request, Flyology.HTTP.To_Method ("POST"));
+            Client.Set_Target (Sparse_Request, "/hello/Ada");
+            begin
+               declare
+                  Unexpected : Client.Response :=
+                    Client.Execute
+                      (HTTP, Sparse_Request, Source, Timeout => 10.0);
+                  pragma Unreferenced (Unexpected);
+               begin
+                  null;
+               end;
+            exception
+               when Client.Request_Body_Error => Raised := True;
+            end;
+            pragma Assert (Raised);
+         end;
          --  Cross the concurrent and former lifetime stream tables, then the
          --  initial 512 KiB connection receive window, on one pooled
          --  connection. This exercises MAX_DATA and MAX_STREAMS credit return

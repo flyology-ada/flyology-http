@@ -6,7 +6,6 @@ package body HTTP_3_Internals is
 
    ALPN : constant Stream_Element_Array := Byte_Array ("h3");
    Request_Chunk_Size : constant Positive := 1_024;
-   Maximum_Retained_Request : constant Natural := 16_384;
 
    function Now (Item : Pooled_Connection) return QUIC.Timestamp is
       Elapsed : constant Duration := Ada.Real_Time.To_Duration
@@ -305,6 +304,8 @@ package body HTTP_3_Internals is
       Value           : Request;
       Authority       : String;
       Retained_Length : Natural;
+      Source          : access Request_Body_Source'Class;
+      Length          : Body_Length;
       Token           : access Flyology.Cancellation.Token)
    is
       Headers   : H3.Header_Block;
@@ -326,7 +327,7 @@ package body HTTP_3_Internals is
       begin
          H3.Send_Headers
            (Data.Connection.HTTP_3, Data.Connection.QUIC_Transport, Stream,
-            Headers, Fin => Retained_Length = 0,
+            Headers, Fin => Retained_Length = 0 and then Source = null,
             Now => Now (Data.Connection.all),
             Packet => Output, Status => Result);
       end Send_Head;
@@ -338,9 +339,6 @@ package body HTTP_3_Internals is
       if Value.Expect_Continue then
          raise Constraint_Error with
            "HTTP/3 Expect: 100-continue is not yet supported";
-      elsif Retained_Length > Maximum_Retained_Request then
-         raise Request_Body_Error with
-           "HTTP/3 retained request exceeds current 16384-byte stream credit";
       end if;
       Add (":method", Image (Value.Method_Value));
       Add (":scheme", "https");
@@ -354,6 +352,8 @@ package body HTTP_3_Internals is
       end loop;
       if Retained_Length > 0 then
          Add ("content-length", Decimal (Retained_Length));
+      elsif Source /= null and then Length.Is_Known then
+         Add ("content-length", Decimal (Length.Bytes));
       end if;
 
       loop
@@ -420,6 +420,130 @@ package body HTTP_3_Internals is
                   Cursor := Last + 1;
                end;
             end loop;
+         end;
+      elsif Source /= null then
+         declare
+            Buffer : Stream_Element_Array
+              (1 .. Stream_Element_Offset (Request_Chunk_Size));
+            Last : Stream_Element_Offset;
+            Finished : Boolean := False;
+            Remaining_Bytes : Body_Size := Length.Bytes;
+            Has_Trailers : constant Boolean :=
+              Flyology.HTTP.Headers.Count (Value.Trailer_Fields) > 0;
+         begin
+            while not Finished loop
+               begin
+                  Read
+                    (Source.all, Buffer, Last, Finished,
+                     Remaining (Data.Started, Data.Timeout), Token);
+               exception
+                  when others =>
+                     Data.Source_Failed := True;
+                     raise;
+               end;
+               if Last < Buffer'First - 1 or else Last > Buffer'Last then
+                  raise Request_Body_Error with
+                    "request body source returned an invalid last index";
+               end if;
+               declare
+                  Produced : constant Natural :=
+                    (if Last < Buffer'First then 0
+                     else Natural (Last - Buffer'First + 1));
+               begin
+                  if Produced = 0 and then not Finished then
+                     raise Request_Body_Error with
+                       "request body source made no progress";
+                  elsif Length.Is_Known
+                    and then Body_Size (Produced) > Remaining_Bytes
+                  then
+                     raise Request_Body_Error with
+                       "request body source exceeded its declared length";
+                  end if;
+                  if Length.Is_Known then
+                     Remaining_Bytes :=
+                       Remaining_Bytes - Body_Size (Produced);
+                     if Finished and then Remaining_Bytes /= 0 then
+                        raise Request_Body_Error with
+                          "request body source ended before its declared " &
+                          "length";
+                     end if;
+                  end if;
+                  declare
+                     Empty : Stream_Element_Array (1 .. 0);
+                     Final_Data : constant Boolean :=
+                       Finished and then not Has_Trailers;
+                     procedure Send_Chunk
+                       (Output : out QUIC.Datagram;
+                        Result : out H3.Operation_Status) is
+                     begin
+                        if Produced = 0 then
+                           H3.Send_Data
+                             (Data.Connection.HTTP_3,
+                              Data.Connection.QUIC_Transport,
+                              Stream, Empty, Final_Data,
+                              Now (Data.Connection.all), Output, Result);
+                        else
+                           H3.Send_Data
+                             (Data.Connection.HTTP_3,
+                              Data.Connection.QUIC_Transport,
+                              Stream, Buffer (Buffer'First .. Last),
+                              Final_Data, Now (Data.Connection.all),
+                              Output, Result);
+                        end if;
+                     end Send_Chunk;
+                  begin
+                     Await_Send_Credit
+                       (Data, Packet, Status, Token, Send_Chunk'Access);
+                     if Status /= H3.Succeeded then
+                        raise Protocol_Error with
+                          "HTTP/3 request data failed: " &
+                            H3.Operation_Status'Image (Status);
+                     end if;
+                     Send
+                       (Data.Owner, Data.Connection, Packet, Data.Started,
+                        Data.Timeout, Token);
+                  end;
+               end;
+            end loop;
+            if Has_Trailers then
+               declare
+                  Trailer_Headers : H3.Header_Block;
+                  procedure Send_Trailers
+                    (Output : out QUIC.Datagram;
+                     Result : out H3.Operation_Status) is
+                  begin
+                     H3.Send_Headers
+                       (Data.Connection.HTTP_3,
+                        Data.Connection.QUIC_Transport, Stream,
+                        Trailer_Headers, Fin => True,
+                        Now => Now (Data.Connection.all),
+                        Packet => Output, Status => Result);
+                  end Send_Trailers;
+               begin
+                  for Index in 1 .. Flyology.HTTP.Headers.Count
+                    (Value.Trailer_Fields)
+                  loop
+                     H3.Append
+                       (Trailer_Headers,
+                        H3.Make_Field
+                          (Ada.Characters.Handling.To_Lower
+                             (Flyology.HTTP.Headers.Name
+                                (Value.Trailer_Fields, Index)),
+                           Flyology.HTTP.Headers.Value
+                             (Value.Trailer_Fields, Index)));
+                  end loop;
+                  Await_Send_Credit
+                    (Data, Packet, Status, Token, Send_Trailers'Access);
+                  if Status /= H3.Succeeded then
+                     raise Protocol_Error with
+                       "HTTP/3 request trailers failed: " &
+                         H3.Operation_Status'Image (Status);
+                  end if;
+                  Send
+                    (Data.Owner, Data.Connection, Packet, Data.Started,
+                     Data.Timeout, Token);
+               end;
+            end if;
          end;
       end if;
 

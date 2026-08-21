@@ -80,6 +80,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Body_Bytes     : Body_Size := 0;
       Has_Length     : Boolean := False;
       Expected_Length : Body_Size := 0;
+      Trailers       : Flyology.HTTP.Headers.List;
       Input          : Byte_Storage;
       Input_First    : Positive := 1;
       Input_Count    : Natural range 0 .. Stream_Buffer_Capacity := 0;
@@ -124,6 +125,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Accepted    : out Boolean);
       procedure Publish_Trailers
         (Stream_ID  : Frames.Stream_Identifier;
+         Fields     : Flyology.HTTP.Headers.List;
          End_Stream : Boolean;
          Accepted   : out Boolean);
       procedure Narrow_Body_Limit
@@ -138,6 +140,17 @@ package body Flyology.HTTP.Server.HTTP_2 is
         (Slot : Positive; Finished : out Boolean; Failed : out Boolean);
       function Body_Complete (Slot : Positive) return Boolean;
       function Body_Bytes (Slot : Positive) return Body_Size;
+      function Trailer_Count (Slot : Positive) return Natural;
+      function Trailer_Count
+        (Slot : Positive; Name : String) return Natural;
+      function Trailer_Name
+        (Slot : Positive; Index : Positive) return String;
+      function Trailer_Value
+        (Slot : Positive; Index : Positive) return String;
+      function Trailer
+        (Slot       : Positive;
+         Name       : String;
+         Occurrence : Positive) return String;
       procedure Queue_Response_Head
         (Slot   : Positive;
          Block  : Stream_Element_Array;
@@ -226,6 +239,17 @@ package body Flyology.HTTP.Server.HTTP_2 is
    overriding function Body_Complete
      (Item : Stream_Backend) return Boolean;
    overriding function Body_Bytes (Item : Stream_Backend) return Body_Size;
+   overriding function Trailer_Count (Item : Stream_Backend) return Natural;
+   overriding function Trailer_Count
+     (Item : Stream_Backend; Name : String) return Natural;
+   overriding function Trailer_Name
+     (Item : Stream_Backend; Index : Positive) return String;
+   overriding function Trailer_Value
+     (Item : Stream_Backend; Index : Positive) return String;
+   overriding function Trailer
+     (Item       : Stream_Backend;
+      Name       : String;
+      Occurrence : Positive) return String;
    overriding procedure Narrow_Body_Limit
      (Item : in out Stream_Backend; Maximum : Body_Size);
    overriding procedure Read_Body
@@ -528,6 +552,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Streams (Slot).Remote_End := End_Stream;
          Streams (Slot).Has_Length := Has_Length;
          Streams (Slot).Expected_Length := Expected_Length;
+         Flyology.HTTP.Headers.Clear (Streams (Slot).Trailers);
          Streams (Slot).Send_Window :=
            Policy.Window_Size (Peer.Initial_Window_Size);
          Accepted := True;
@@ -658,6 +683,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
 
       procedure Publish_Trailers
         (Stream_ID  : Frames.Stream_Identifier;
+         Fields     : Flyology.HTTP.Headers.List;
          End_Stream : Boolean;
          Accepted   : out Boolean)
       is
@@ -668,6 +694,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          if not Accepted then
             return;
          end if;
+         Streams (Index).Trailers := Fields;
          Streams (Index).Remote_End := True;
          if Streams (Index).Has_Length and then
            Streams (Index).Body_Bytes /= Streams (Index).Expected_Length
@@ -766,6 +793,29 @@ package body Flyology.HTTP.Server.HTTP_2 is
 
       function Body_Bytes (Slot : Positive) return Body_Size is
         (Streams (Slot).Body_Bytes);
+
+      function Trailer_Count (Slot : Positive) return Natural is
+        (Flyology.HTTP.Headers.Count (Streams (Slot).Trailers));
+
+      function Trailer_Count
+        (Slot : Positive; Name : String) return Natural
+      is (Flyology.HTTP.Headers.Count (Streams (Slot).Trailers, Name));
+
+      function Trailer_Name
+        (Slot : Positive; Index : Positive) return String
+      is (Flyology.HTTP.Headers.Name (Streams (Slot).Trailers, Index));
+
+      function Trailer_Value
+        (Slot : Positive; Index : Positive) return String
+      is (Flyology.HTTP.Headers.Value (Streams (Slot).Trailers, Index));
+
+      function Trailer
+        (Slot       : Positive;
+         Name       : String;
+         Occurrence : Positive) return String
+      is
+        (Flyology.HTTP.Headers.Value
+           (Streams (Slot).Trailers, Name, Occurrence));
 
       procedure Queue_Response_Head
         (Slot   : Positive;
@@ -1293,6 +1343,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Streams (Slot).Body_Bytes := 0;
          Streams (Slot).Has_Length := False;
          Streams (Slot).Expected_Length := 0;
+         Flyology.HTTP.Headers.Clear (Streams (Slot).Trailers);
          Streams (Slot).Input_First := 1;
          Streams (Slot).Input_Count := 0;
          Streams (Slot).Response_Started := False;
@@ -1377,6 +1428,62 @@ package body Flyology.HTTP.Server.HTTP_2 is
 
    overriding function Body_Bytes (Item : Stream_Backend) return Body_Size is
      (Item.State.Streams.Body_Bytes (Item.Slot));
+
+   overriding function Trailer_Count (Item : Stream_Backend) return Natural is
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "request trailers are unavailable before body completion";
+      end if;
+      return Item.State.Streams.Trailer_Count (Item.Slot);
+   end Trailer_Count;
+
+   overriding function Trailer_Count
+     (Item : Stream_Backend; Name : String) return Natural
+   is
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "request trailers are unavailable before body completion";
+      end if;
+      return Item.State.Streams.Trailer_Count (Item.Slot, Name);
+   end Trailer_Count;
+
+   overriding function Trailer_Name
+     (Item : Stream_Backend; Index : Positive) return String
+   is
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "request trailers are unavailable before body completion";
+      end if;
+      return Item.State.Streams.Trailer_Name (Item.Slot, Index);
+   end Trailer_Name;
+
+   overriding function Trailer_Value
+     (Item : Stream_Backend; Index : Positive) return String
+   is
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "request trailers are unavailable before body completion";
+      end if;
+      return Item.State.Streams.Trailer_Value (Item.Slot, Index);
+   end Trailer_Value;
+
+   overriding function Trailer
+     (Item       : Stream_Backend;
+      Name       : String;
+      Occurrence : Positive) return String
+   is
+   begin
+      if not Body_Complete (Item) then
+         raise Program_Error with
+           "request trailers are unavailable before body completion";
+      end if;
+      return Item.State.Streams.Trailer
+        (Item.Slot, Name, Occurrence);
+   end Trailer;
 
    overriding procedure Narrow_Body_Limit
      (Item : in out Stream_Backend; Maximum : Body_Size)
@@ -2002,12 +2109,20 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Backend.Head_Request := Method = "HEAD";
          Backend.Request_Value.Method_Value := To_Unbounded_String (Method);
          Backend.Request_Value.Target_Value := To_Unbounded_String (Target);
+         Backend.Request_Value.Authority_Value :=
+           To_Unbounded_String
+             (if Authority /= "" then Authority
+              else Flyology.HTTP.Headers.Value (Fields, "host"));
          Backend.Request_Value.Version_Value := HTTP_1_1;
          Backend.Request_Value.Protocol_Value := HTTP_2_Protocol;
          Backend.Request_Value.Keep_Alive := True;
          for Index in 1 .. Flyology.HTTP.Headers.Count (Fields) loop
             Append
               (Backend.Request_Value.Header_Block,
+               Flyology.HTTP.Headers.Name (Fields, Index) & ": " &
+                 Flyology.HTTP.Headers.Value (Fields, Index) & CRLF);
+            Append
+              (Backend.Request_Value.Physical_Header_Block,
                Flyology.HTTP.Headers.Name (Fields, Index) & ": " &
                  Flyology.HTTP.Headers.Value (Fields, Index) & CRLF);
          end loop;
@@ -2146,7 +2261,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
             Protocol_Failure (Frames.Protocol_Error_Code);
          elsif Trailers then
             State.Streams.Publish_Trailers
-              (Header_Stream, Header_End_Stream, Accepted);
+              (Header_Stream, Fields, Header_End_Stream, Accepted);
          else
             declare
                Method_Text : constant String := To_String (Method);

@@ -15,7 +15,9 @@ package Flyology.HTTP.HTTP_3 is
    --  Largest field name retained by the bounded QPACK profile.
    Max_Name_Length : constant := 256;
    --  Largest field value retained by the bounded QPACK profile.
-   Max_Value_Length : constant := 4_096;
+   --  Bounded field-value size, including long :path values used by
+   --  presigned object requests.
+   Max_Value_Length : constant := 16 * 1_024;
    --  Largest number of fields retained in one field section.
    Max_Fields : constant := 32;
    --  Largest DATA payload surfaced by one event.

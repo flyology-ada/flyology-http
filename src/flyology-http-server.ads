@@ -12,7 +12,9 @@ private with Flyology.WebSocket_Policy;
 package Flyology.HTTP.Server is
 
    --  Maximum bytes before the terminating empty request-header line.
-   Max_Header_Bytes : constant := 16 * 1_024;
+   --  Maximum retained HTTP/1 request-head or trailer bytes. A 32 KiB bound
+   --  accommodates long presigned targets plus S3's bounded metadata fields.
+   Max_Header_Bytes : constant := 32 * 1_024;
    --  Maximum decoded streaming request representation. The 50 TB bound
    --  admits the current Amazon S3 object ceiling while remaining explicit.
    --  Buffered operations remain independently bounded by Ingress_Budget.
@@ -148,6 +150,12 @@ package Flyology.HTTP.Server is
    --  @param Item Request to inspect
    --  @return Origin-form or application-defined target
    function Target (Item : Request) return String;
+   --  Return the protocol authority exactly as validated. HTTP/1.x uses the
+   --  Host field or absolute-form target authority; HTTP/2 and HTTP/3 retain
+   --  :authority independently of any physical Host field.
+   --  @param Item Request to inspect
+   --  @return Validated authority, or an empty string when none was present
+   function Authority (Item : Request) return String;
    --  Return the parsed protocol version.
    --  @param Item Request to inspect
    --  @return HTTP/1.0 or HTTP/1.1
@@ -164,11 +172,37 @@ package Flyology.HTTP.Server is
    --  @param Name Header field name
    --  @return Header value, or an empty string when absent
    function Header (Item : Request; Name : String) return String;
+   --  Return one physical occurrence of a case-insensitive request field.
+   --  Protocol line whitespace is removed, while internal spaces and tabs
+   --  remain available for application-defined canonicalization.
+   --  @param Item Request to inspect
+   --  @param Name Header field name
+   --  @param Occurrence One-based physical occurrence
+   --  @return Selected value, or an empty string when absent
+   function Header
+     (Item : Request; Name : String; Occurrence : Positive) return String;
+   --  Count all physical request fields.
+   --  @param Item Request to inspect
+   --  @return Physical field count
+   function Header_Count (Item : Request) return Natural;
    --  Count physical occurrences of one case-insensitive request field.
    --  @param Item Request to inspect
    --  @param Name Header field name
    --  @return Physical field count before joining
    function Header_Count (Item : Request; Name : String) return Natural;
+   --  Return one physical request field name in wire order.
+   --  @param Item Request to inspect
+   --  @param Index One-based physical field index
+   --  @return Preserved field name spelling
+   function Header_Name (Item : Request; Index : Positive) return String
+   with Pre => Index <= Header_Count (Item);
+   --  Return one physical request field value in wire order. Protocol line
+   --  whitespace is removed; internal whitespace is preserved.
+   --  @param Item Request to inspect
+   --  @param Index One-based physical field index
+   --  @return Preserved field value
+   function Header_Value (Item : Request; Index : Positive) return String
+   with Pre => Index <= Header_Count (Item);
    --  Report whether a comma-separated header contains a token.
    --  @param Item Request to inspect
    --  @param Name Header field name
@@ -274,6 +308,48 @@ package Flyology.HTTP.Server is
    --  @param Item HTTP connection
    --  @return True when another request may be parsed after the response
    function Body_Complete (Item : Connection) return Boolean;
+
+   --  Count all request trailers after Body_Complete becomes true. Calling a
+   --  trailer accessor before then raises Program_Error because the physical
+   --  field sequence is not final.
+   --  @param Item HTTP connection carrying the request body
+   --  @return Physical trailer field count
+   function Trailer_Count (Item : Connection) return Natural;
+
+   --  Count physical occurrences of one request trailer after body completion.
+   --  @param Item HTTP connection carrying the request body
+   --  @param Name Trailer field name
+   --  @return Matching physical field count
+   function Trailer_Count
+     (Item : Connection; Name : String) return Natural;
+
+   --  Return one physical request trailer name in wire order after body
+   --  completion.
+   --  @param Item HTTP connection carrying the request body
+   --  @param Index One-based physical field index
+   --  @return Preserved trailer field name
+   function Trailer_Name
+     (Item : Connection; Index : Positive) return String;
+
+   --  Return one physical request trailer value in wire order after body
+   --  completion. Protocol line whitespace is removed; internal whitespace
+   --  is preserved.
+   --  @param Item HTTP connection carrying the request body
+   --  @param Index One-based physical field index
+   --  @return Preserved trailer field value
+   function Trailer_Value
+     (Item : Connection; Index : Positive) return String;
+
+   --  Return one physical occurrence of a request trailer after body
+   --  completion.
+   --  @param Item HTTP connection carrying the request body
+   --  @param Name Trailer field name
+   --  @param Occurrence One-based physical occurrence
+   --  @return Selected trailer value, or an empty string when absent
+   function Trailer
+     (Item       : Connection;
+      Name       : String;
+      Occurrence : Positive := 1) return String;
 
    --  Return the absolute monotonic deadline established for the current
    --  request. Time_Last represents an unlimited deadline.
@@ -618,9 +694,11 @@ private
    type Request is record
       Method_Value  : Unbounded_String;
       Target_Value  : Unbounded_String;
+      Authority_Value : Unbounded_String;
       Version_Value : HTTP_Version := HTTP_1_1;
       Protocol_Value : Protocol := HTTP_1_1_Protocol;
       Header_Block  : Unbounded_String;
+      Physical_Header_Block : Unbounded_String;
       Body_Value    : Unbounded_String;
       Keep_Alive    : Boolean := False;
    end record;
@@ -670,6 +748,7 @@ private
       Budget_Handle     : Ingress_Budget_Access := null;
       Reservation_Budget : Ingress_Budget_Access := null;
       Pending          : Unbounded_String;
+      Trailer_Block    : Unbounded_String;
       State            : Connection_State := Reading_HTTP;
       Request_Close    : Boolean := False;
       Response_Begun   : Boolean := False;

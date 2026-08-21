@@ -317,16 +317,35 @@ package body Flyology.HTTP.Server is
    function Target (Item : Request) return String is
      (To_String (Item.Target_Value));
 
+   function Authority (Item : Request) return String is
+     (To_String (Item.Authority_Value));
+
    function Version (Item : Request) return HTTP_Version is
      (Item.Version_Value);
 
    function Request_Protocol (Item : Request) return Protocol is
      (Item.Protocol_Value);
 
-   function Header_Field_Count
-     (Item : Request; Name : String) return Natural
+   function Field_Count (Block : String) return Natural
    is
-      Block  : constant String := To_String (Item.Header_Block);
+      Result : Natural := 0;
+      First  : Positive := 1;
+   begin
+      while First <= Block'Length loop
+         declare
+            Relative_Last : constant Natural :=
+              Ada.Strings.Fixed.Index (Block (First .. Block'Last), CRLF);
+         begin
+            Result := Result + 1;
+            exit when Relative_Last = 0;
+            First := Relative_Last + CRLF'Length;
+         end;
+      end loop;
+      return Result;
+   end Field_Count;
+
+   function Field_Count (Block : String; Name : String) return Natural
+   is
       Wanted : constant String := Lower (Name);
       Result : Natural := 0;
       First  : Positive := 1;
@@ -351,10 +370,108 @@ package body Flyology.HTTP.Server is
          end;
       end loop;
       return Result;
-   end Header_Field_Count;
+   end Field_Count;
+
+   function Field_Name (Block : String; Index : Positive) return String is
+      First : Positive := 1;
+      Seen  : Natural := 0;
+   begin
+      while First <= Block'Length loop
+         declare
+            Relative_Last : constant Natural :=
+              Ada.Strings.Fixed.Index (Block (First .. Block'Last), CRLF);
+            Last : constant Natural :=
+              (if Relative_Last = 0 then Block'Last else Relative_Last - 1);
+            Line : constant String := Block (First .. Last);
+            Colon : constant Natural := Ada.Strings.Fixed.Index (Line, ":");
+         begin
+            Seen := Seen + 1;
+            if Seen = Index then
+               return Line (Line'First .. Colon - 1);
+            end if;
+            exit when Relative_Last = 0;
+            First := Relative_Last + CRLF'Length;
+         end;
+      end loop;
+      raise Constraint_Error with "header field index is out of range";
+   end Field_Name;
+
+   function Field_Value (Block : String; Index : Positive) return String is
+      First : Positive := 1;
+      Seen  : Natural := 0;
+   begin
+      while First <= Block'Length loop
+         declare
+            Relative_Last : constant Natural :=
+              Ada.Strings.Fixed.Index (Block (First .. Block'Last), CRLF);
+            Last : constant Natural :=
+              (if Relative_Last = 0 then Block'Last else Relative_Last - 1);
+            Line : constant String := Block (First .. Last);
+            Colon : constant Natural := Ada.Strings.Fixed.Index (Line, ":");
+         begin
+            Seen := Seen + 1;
+            if Seen = Index then
+               return Trim (Line (Colon + 1 .. Line'Last));
+            end if;
+            exit when Relative_Last = 0;
+            First := Relative_Last + CRLF'Length;
+         end;
+      end loop;
+      raise Constraint_Error with "header field index is out of range";
+   end Field_Value;
+
+   function Field_Value
+     (Block : String; Name : String; Occurrence : Positive) return String
+   is
+      Wanted : constant String := Lower (Name);
+      First  : Positive := 1;
+      Seen   : Natural := 0;
+   begin
+      Validate_Token (Name, "header name");
+      while First <= Block'Length loop
+         declare
+            Relative_Last : constant Natural :=
+              Ada.Strings.Fixed.Index (Block (First .. Block'Last), CRLF);
+            Last : constant Natural :=
+              (if Relative_Last = 0 then Block'Last else Relative_Last - 1);
+            Line : constant String := Block (First .. Last);
+            Colon : constant Natural := Ada.Strings.Fixed.Index (Line, ":");
+         begin
+            if Colon > Line'First
+              and then Lower (Line (Line'First .. Colon - 1)) = Wanted
+            then
+               Seen := Seen + 1;
+               if Seen = Occurrence then
+                  return Trim (Line (Colon + 1 .. Line'Last));
+               end if;
+            end if;
+            exit when Relative_Last = 0;
+            First := Relative_Last + CRLF'Length;
+         end;
+      end loop;
+      return "";
+   end Field_Value;
+
+   function Header_Count (Item : Request) return Natural is
+     (Field_Count (To_String (Item.Physical_Header_Block)));
+
+   function Header_Field_Count
+     (Item : Request; Name : String) return Natural is
+     (Field_Count (To_String (Item.Physical_Header_Block), Name));
 
    function Header_Count (Item : Request; Name : String) return Natural is
      (Header_Field_Count (Item, Name));
+
+   function Header_Name (Item : Request; Index : Positive) return String is
+     (Field_Name (To_String (Item.Physical_Header_Block), Index));
+
+   function Header_Value (Item : Request; Index : Positive) return String is
+     (Field_Value (To_String (Item.Physical_Header_Block), Index));
+
+   function Header
+     (Item : Request; Name : String; Occurrence : Positive) return String is
+     (Field_Value
+        (To_String (Item.Physical_Header_Block), Name, Occurrence));
 
    function Header (Item : Request; Name : String) return String is
       Block  : constant String := To_String (Item.Header_Block);
@@ -960,6 +1077,8 @@ package body Flyology.HTTP.Server is
       Item.Current_Version := HTTP_1_1;
       Peer_Closed := False;
       Value.Body_Value := Null_Unbounded_String;
+      Value.Authority_Value := Null_Unbounded_String;
+      Item.Trailer_Block := Null_Unbounded_String;
       Item.Body_Mode := No_Body;
       Item.Body_Remaining := 0;
       Item.Body_Total := 0;
@@ -1054,6 +1173,7 @@ package body Flyology.HTTP.Server is
            (if Header_First > Head'Last
             then Null_Unbounded_String
             else To_Unbounded_String (Head (Header_First .. Head'Last)));
+         Value.Physical_Header_Block := Value.Header_Block;
          Validate_Header_Block (To_String (Value.Header_Block));
       end;
 
@@ -1070,6 +1190,44 @@ package body Flyology.HTTP.Server is
          end if;
       end;
       Validate_Target_And_Authority (Value);
+      declare
+         Request_Target : constant String := Target (Value);
+         Host           : constant String := Header (Value, "Host");
+         Scheme_End     : Natural := 0;
+      begin
+         if Request_Target'Length >= 7
+           and then Lower
+             (Request_Target
+                (Request_Target'First .. Request_Target'First + 6)) =
+               "http://"
+         then
+            Scheme_End := Request_Target'First + 6;
+         elsif Request_Target'Length >= 8
+           and then Lower
+             (Request_Target
+                (Request_Target'First .. Request_Target'First + 7)) =
+               "https://"
+         then
+            Scheme_End := Request_Target'First + 7;
+         end if;
+         if Scheme_End = 0 then
+            Value.Authority_Value := To_Unbounded_String (Host);
+         else
+            declare
+               First : constant Natural := Scheme_End + 1;
+               Last  : Natural := Request_Target'Last;
+            begin
+               for Index in First .. Request_Target'Last loop
+                  if Request_Target (Index) in '/' | '?' then
+                     Last := Index - 1;
+                     exit;
+                  end if;
+               end loop;
+               Value.Authority_Value := To_Unbounded_String
+                 (Request_Target (First .. Last));
+            end;
+         end if;
+      end;
       declare
          Length_Field : constant String := Header (Value, "Content-Length");
          Length_Count : constant Natural :=
@@ -1290,6 +1448,7 @@ package body Flyology.HTTP.Server is
                then
                   raise Protocol_Error with "forbidden HTTP trailer field";
                end if;
+               Append (Item.Trailer_Block, Value & CRLF);
             end;
          end loop;
          Item.Body_Mode := No_Body;
@@ -1411,6 +1570,50 @@ package body Flyology.HTTP.Server is
 
    function Body_Complete (Item : Connection) return Boolean is
      (Item.Body_Done);
+
+   procedure Require_Complete_Trailers (Item : Connection) is
+   begin
+      if not Item.Body_Done then
+         raise Program_Error with
+           "request trailers are unavailable before body completion";
+      end if;
+   end Require_Complete_Trailers;
+
+   function Trailer_Count (Item : Connection) return Natural is
+   begin
+      Require_Complete_Trailers (Item);
+      return Field_Count (To_String (Item.Trailer_Block));
+   end Trailer_Count;
+
+   function Trailer_Count
+     (Item : Connection; Name : String) return Natural is
+   begin
+      Require_Complete_Trailers (Item);
+      return Field_Count (To_String (Item.Trailer_Block), Name);
+   end Trailer_Count;
+
+   function Trailer_Name
+     (Item : Connection; Index : Positive) return String is
+   begin
+      Require_Complete_Trailers (Item);
+      return Field_Name (To_String (Item.Trailer_Block), Index);
+   end Trailer_Name;
+
+   function Trailer_Value
+     (Item : Connection; Index : Positive) return String is
+   begin
+      Require_Complete_Trailers (Item);
+      return Field_Value (To_String (Item.Trailer_Block), Index);
+   end Trailer_Value;
+
+   function Trailer
+     (Item       : Connection;
+      Name       : String;
+      Occurrence : Positive := 1) return String is
+   begin
+      Require_Complete_Trailers (Item);
+      return Field_Value (To_String (Item.Trailer_Block), Name, Occurrence);
+   end Trailer;
 
    function Request_Deadline (Item : Connection) return Ada.Real_Time.Time is
      (if Item.Body_Timeout < 0.0

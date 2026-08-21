@@ -50,12 +50,66 @@ package body Flyology.HTTP.Server.Applications is
    function Request_Scheme (Item : Exchange) return Origin_Scheme is
      (Item.Scheme_Value);
 
+   function Request_Authority (Item : Exchange) return String is
+     (Authority (Item.Request_Handle.all));
+
    function Request_Header (Item : Exchange; Name : String) return String is
      (Header (Item.Request_Handle.all, Name));
+
+   function Request_Header
+     (Item : Exchange; Name : String; Occurrence : Positive) return String
+   is (Header (Item.Request_Handle.all, Name, Occurrence));
+
+   function Request_Header_Count (Item : Exchange) return Natural is
+     (Header_Count (Item.Request_Handle.all));
 
    function Request_Header_Count
      (Item : Exchange; Name : String) return Natural
    is (Header_Count (Item.Request_Handle.all, Name));
+
+   function Request_Header_Name
+     (Item : Exchange; Index : Positive) return String
+   is (Header_Name (Item.Request_Handle.all, Index));
+
+   function Request_Header_Value
+     (Item : Exchange; Index : Positive) return String
+   is (Header_Value (Item.Request_Handle.all, Index));
+
+   function Request_Trailer_Count (Item : Exchange) return Natural is
+     (if Item.Backend_Handle = null
+      then Trailer_Count (Item.Connection_Handle.all)
+      else Exchange_Backends.Trailer_Count (Item.Backend_Handle.all));
+
+   function Request_Trailer_Count
+     (Item : Exchange; Name : String) return Natural
+   is
+     (if Item.Backend_Handle = null
+      then Trailer_Count (Item.Connection_Handle.all, Name)
+      else Exchange_Backends.Trailer_Count (Item.Backend_Handle.all, Name));
+
+   function Request_Trailer_Name
+     (Item : Exchange; Index : Positive) return String
+   is
+     (if Item.Backend_Handle = null
+      then Trailer_Name (Item.Connection_Handle.all, Index)
+      else Exchange_Backends.Trailer_Name (Item.Backend_Handle.all, Index));
+
+   function Request_Trailer_Value
+     (Item : Exchange; Index : Positive) return String
+   is
+     (if Item.Backend_Handle = null
+      then Trailer_Value (Item.Connection_Handle.all, Index)
+      else Exchange_Backends.Trailer_Value (Item.Backend_Handle.all, Index));
+
+   function Request_Trailer
+     (Item       : Exchange;
+      Name       : String;
+      Occurrence : Positive := 1) return String
+   is
+     (if Item.Backend_Handle = null
+      then Trailer (Item.Connection_Handle.all, Name, Occurrence)
+      else Exchange_Backends.Trailer
+        (Item.Backend_Handle.all, Name, Occurrence));
 
    function Wire_Response_Started (Item : Exchange) return Boolean is
      (if Item.Backend_Handle = null

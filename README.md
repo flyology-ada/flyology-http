@@ -297,8 +297,8 @@ Use `Require_HTTP_3` with the certificate overload that has no TCP provider to
 send QUIC directly to the HTTPS origin's UDP port. Both modes authenticate the
 exact peer certificate supplied as 1 through 4,096 DER bytes. The current H3
 pool reuses each connection sequentially rather than multiplexing requests;
-retained request bodies are bounded to 16 KiB, and streaming request sources
-and `Expect: 100-continue` remain unavailable on H3.
+retained bodies and borrowed request sources are emitted incrementally under
+QUIC flow control. `Expect: 100-continue` remains unavailable on H3.
 
 ## Scope
 
@@ -337,8 +337,9 @@ through the same `Routing.Router`. Server push is deliberately not exposed;
 the client disables it and applications should use ordinary routed responses.
 Extended CONNECT needs a stream-oriented tunnel API rather than the existing
 HTTP/1.1 connection-borrowing WebSocket API. On the client, borrowed streaming
-request sources and `Expect: 100-continue` remain HTTP/1.1-only. HTTP/3
-currently accepts retained request bodies through 16 KiB and reuses pooled
+request sources use bounded flow-control storage on HTTP/1.1, HTTP/2, and
+HTTP/3; replay still requires an explicit rewindable source. The
+`Expect: 100-continue` handshake remains HTTP/1.1-only. HTTP/3 reuses pooled
 connections sequentially. The library does not provide proxying or content
 decoding. The managed UDP adapter uses a bounded
 connection registry and fixed worker set, dispatches request streams

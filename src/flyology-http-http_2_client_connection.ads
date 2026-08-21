@@ -32,6 +32,9 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
       Body_Connection_Failed,
       Body_Stream_Failed);
 
+   type Upload_Result is
+     (Upload_Accepted, Upload_Would_Block, Upload_Failed);
+
    --  Allocate a session and start its lightweight transport pump.  Channel
    --  remains owned by the caller and must outlive Item.
    procedure Create
@@ -56,9 +59,28 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
      (Item          : in out Session;
       Header_Block  : Ada.Streams.Stream_Element_Array;
       Retained_Body : Flyology.Bytes.Unbounded_Bytes;
+      Streaming     : Boolean;
       Head_Request  : Boolean;
       Handle        : out Stream_Handle;
       Accepted      : out Boolean);
+
+   --  Copy one bounded source chunk into protocol-owned flow-control storage.
+   --  Finished closes the request direction after Data and optional encoded
+   --  trailer fields have been emitted.
+   procedure Write_Request_Data
+     (Item          : in out Session;
+      Handle        : Stream_Handle;
+      Data          : Ada.Streams.Stream_Element_Array;
+      Finished      : Boolean;
+      Trailer_Block : Ada.Streams.Stream_Element_Array;
+      Result        : out Upload_Result);
+
+   --  Return a wake descriptor for request-upload queue space or failure.
+   procedure Upload_Wait_Source
+     (Item      : in out Session;
+      Handle    : Stream_Handle;
+      FD        : out Flyology.IO.Descriptor;
+      Ready_Now : out Boolean);
 
    --  Observe a final response head or a retry/failure classification.
    procedure Poll_Head

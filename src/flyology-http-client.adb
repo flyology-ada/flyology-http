@@ -39,6 +39,7 @@ package body Flyology.HTTP.Client is
    use type Sockets.Address_Family;
    use type H2_Connections.Session_Access;
    use type H2_Connections.Stream_Handle;
+   use type H2_Connections.Upload_Result;
    use type H2_Policy.Retry_Action;
    use type H2_Policy.Retry_Cause;
    use type H3.Event_Kind;
@@ -52,7 +53,6 @@ package body Flyology.HTTP.Client is
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    Receive_Buffer_Size : constant Positive := 8 * 1_024;
    Request_Buffer_Size : constant Positive := 8 * 1_024;
-   Max_Request_Target_Bytes : constant Positive := 8 * 1_024;
 
    --  An intermediate redirect body is never delivered to the caller, so it
    --  is read only to leave the transport reusable. Past this bound the
@@ -906,6 +906,8 @@ package body Flyology.HTTP.Client is
          Value           : Request;
          Authority       : String;
          Retained_Length : Natural;
+         Source          : access Request_Body_Source'Class;
+         Length          : Body_Length;
          Token           : access Flyology.Cancellation.Token);
 
       procedure Read_Response_Body
@@ -1277,6 +1279,69 @@ package body Flyology.HTTP.Client is
                end if;
             end Wait_For_HTTP_2;
 
+            procedure Wait_For_HTTP_2_Upload
+              (Handle : H2_Connections.Stream_Handle)
+            is
+               Stream_FD   : Flyology.IO.Descriptor;
+               Shutdown_FD : Flyology.IO.Descriptor;
+               Token_FD    : Flyology.IO.Descriptor :=
+                 Flyology.IO.Invalid_Descriptor;
+               Ready_Now   : Boolean;
+               Stopping    : Boolean;
+               Cancelled   : Boolean := False;
+               Selected    : Natural;
+            begin
+               H2_Connections.Upload_Wait_Source
+                 (Result.Data.Connection.HTTP_2.all,
+                  Handle, Stream_FD, Ready_Now);
+               if Ready_Now then
+                  return;
+               end if;
+               Item.Control.State.Pool.Shutdown_Source
+                 (Shutdown_FD, Stopping);
+               if Stopping then
+                  raise Client_Closed;
+               end if;
+               if Token /= null then
+                  Token.Wait_Source (Token_FD, Cancelled);
+                  if Cancelled then
+                     raise Flyology.Cancellation.Operation_Cancelled;
+                  end if;
+               end if;
+               if Token = null then
+                  declare
+                     Sources : Flyology.IO.Wait_Request_Array (1 .. 2);
+                  begin
+                     Sources (1) :=
+                       (FD => Stream_FD, Condition => Flyology.IO.For_Read);
+                     Sources (2) :=
+                       (FD => Shutdown_FD, Condition => Flyology.IO.For_Read);
+                     Selected := Flyology.IO.Wait_Any
+                       (Sources, Remaining (Started, Timeout));
+                  end;
+               else
+                  declare
+                     Sources : Flyology.IO.Wait_Request_Array (1 .. 3);
+                  begin
+                     Sources (1) :=
+                       (FD => Stream_FD, Condition => Flyology.IO.For_Read);
+                     Sources (2) :=
+                       (FD => Shutdown_FD, Condition => Flyology.IO.For_Read);
+                     Sources (3) :=
+                       (FD => Token_FD, Condition => Flyology.IO.For_Read);
+                     Selected := Flyology.IO.Wait_Any
+                       (Sources, Remaining (Started, Timeout));
+                  end;
+               end if;
+               if Selected = 0 then
+                  raise Flyology.IO.Timeout_Error;
+               elsif Selected = 2 then
+                  raise Client_Closed;
+               elsif Selected = 3 then
+                  raise Flyology.Cancellation.Operation_Cancelled;
+               end if;
+            end Wait_For_HTTP_2_Upload;
+
             procedure Execute_HTTP_2 (Retry : out Boolean) is
                Handle    : H2_Connections.Stream_Handle;
                Accepted  : Boolean;
@@ -1326,16 +1391,93 @@ package body Flyology.HTTP.Client is
                   Retried := True;
                   Retry := True;
                end Retry_Stream;
+
+               procedure Send_Source is
+                  Buffer : Ada.Streams.Stream_Element_Array
+                    (1 .. Ada.Streams.Stream_Element_Offset
+                      (Request_Buffer_Size));
+                  Last : Ada.Streams.Stream_Element_Offset;
+                  Source_Finished : Boolean := False;
+                  Remaining_Bytes : Body_Size := Length.Bytes;
+                  Trailer_Block : constant Flyology.Bytes.Unbounded_Bytes :=
+                    H2_Requests.Encode_Trailers (Value.Trailer_Fields);
+                  Upload : H2_Connections.Upload_Result;
+               begin
+                  while not Source_Finished loop
+                     begin
+                        Read
+                          (Source.all, Buffer, Last, Source_Finished,
+                           Remaining (Started, Timeout), Token);
+                     exception
+                        when others =>
+                           Result.Data.Source_Failed := True;
+                           raise;
+                     end;
+                     if Last < Buffer'First - 1 or else Last > Buffer'Last then
+                        raise Request_Body_Error with
+                          "request body source returned an invalid last index";
+                     end if;
+                     declare
+                        Produced : constant Natural :=
+                          (if Last < Buffer'First then 0
+                           else Natural (Last - Buffer'First + 1));
+                     begin
+                        if Produced = 0 and then not Source_Finished then
+                           raise Request_Body_Error with
+                             "request body source made no progress";
+                        elsif Length.Is_Known
+                          and then Body_Size (Produced) > Remaining_Bytes
+                        then
+                           raise Request_Body_Error with
+                             "request body source exceeded its declared " &
+                             "length";
+                        end if;
+                        if Length.Is_Known then
+                           Remaining_Bytes :=
+                             Remaining_Bytes - Body_Size (Produced);
+                           if Source_Finished and then Remaining_Bytes /= 0
+                           then
+                              raise Request_Body_Error with
+                                "request body source ended before its " &
+                                "declared length";
+                           end if;
+                        end if;
+                        loop
+                           H2_Connections.Write_Request_Data
+                             (Result.Data.Connection.HTTP_2.all,
+                              Handle,
+                              (if Produced = 0
+                               then Buffer (1 .. 0)
+                               else Buffer (Buffer'First .. Last)),
+                              Source_Finished,
+                              Flyology.Bytes.To_Array (Trailer_Block),
+                              Upload);
+                           exit when Upload /=
+                             H2_Connections.Upload_Would_Block;
+                           Wait_For_HTTP_2_Upload (Handle);
+                        end loop;
+                        if Upload = H2_Connections.Upload_Failed then
+                           Result.Data.Request_Incomplete := True;
+                           return;
+                        end if;
+                     end;
+                  end loop;
+               end Send_Source;
             begin
                Retry := False;
-               if Source /= null then
-                  raise Constraint_Error with
-                    "HTTP/2 streaming request bodies are not yet supported";
-               elsif Value.Expect_Continue then
+               if Value.Expect_Continue then
                   raise Constraint_Error with
                     "HTTP/2 Expect: 100-continue is not yet supported";
                end if;
                declare
+                  Has_Content_Length : constant Boolean :=
+                    Retained_Length > 0
+                      or else (Source /= null and then Length.Is_Known);
+                  Content_Length : constant Body_Size :=
+                    (if Retained_Length > 0
+                     then Body_Size (Retained_Length)
+                     elsif Source /= null and then Length.Is_Known
+                     then Length.Bytes else 0);
                   Header_Block : constant Flyology.Bytes.Unbounded_Bytes :=
                     H2_Requests.Encode_Head
                       (Method_Text => Image (Value.Method_Value),
@@ -1347,16 +1489,17 @@ package body Flyology.HTTP.Client is
                          (Item.Control.State.Origin_Value),
                        Target => To_String (Value.Target_Value),
                        Fields => Value.Fields,
-                       Has_Content_Length => Retained_Length > 0,
-                       Content_Length => Long_Long_Integer (Retained_Length),
+                       Has_Content_Length => Has_Content_Length,
+                       Content_Length => Long_Long_Integer (Content_Length),
                        Expect_Continue => False);
                begin
                   H2_Connections.Open
                     (Result.Data.Connection.HTTP_2.all,
                      Flyology.Bytes.To_Array (Header_Block),
                      Value.Body_Value,
-                     Image (Value.Method_Value) = "HEAD",
-                     Handle, Accepted);
+                     Streaming => Source /= null,
+                     Head_Request => Image (Value.Method_Value) = "HEAD",
+                     Handle => Handle, Accepted => Accepted);
                end;
                if not Accepted then
                   Release_Lease
@@ -1369,6 +1512,19 @@ package body Flyology.HTTP.Client is
                end if;
                Result.Data.Engine := HTTP_2_Response;
                Result.Data.HTTP_2_Stream := Handle;
+               if Source /= null then
+                  begin
+                     Send_Source;
+                  exception
+                     when others =>
+                        --  Complete stream cancellation before the source
+                        --  exception escapes. Relying on finalization alone
+                        --  leaves a window where a following multiplexed
+                        --  exchange can overtake the RST_STREAM.
+                        Abandon_Response (Result.Data.all);
+                        raise;
+                  end;
+               end if;
                loop
                   H2_Connections.Poll_Head
                     (Result.Data.Connection.HTTP_2.all, Handle,
@@ -1446,15 +1602,10 @@ package body Flyology.HTTP.Client is
                Result.Data.Slot_Index := Slot;
                begin
                   if Connection.Protocol = HTTP_3_Transport then
-                     if Source /= null then
-                        raise Constraint_Error with
-                          "HTTP/3 streaming request bodies are not yet " &
-                          "supported";
-                     end if;
                      Execute_Request
                        (Result.Data.all, Value,
                         Host_Field (Item.Control.State.Origin_Value),
-                        Retained_Length, Token);
+                        Retained_Length, Source, Length, Token);
                      Observe_HTTP_3_Alternative (Item, Result.Data.Fields);
                      exit;
                   elsif Connection.Protocol = HTTP_2_Transport then

@@ -13,6 +13,10 @@ with Flyology.IO.TLS;
 --  stream ownership through the request/response API.
 package Flyology.HTTP.Client is
 
+   --  Maximum request-target bytes retained by a Request. This accommodates
+   --  long presigned object URLs while keeping request metadata bounded.
+   Max_Request_Target_Bytes : constant Positive := 16 * 1_024;
+
    --  Raised after client shutdown rejects a request or interrupts pool
    --  admission.
    Client_Closed : exception;
@@ -180,7 +184,7 @@ package Flyology.HTTP.Client is
    --  Replace the origin-form request target. Asterisk-form is retained for
    --  OPTIONS and validated when Execute observes the complete Request.
    --  Absolute-form, authority-form, fragments, non-ASCII bytes, spaces,
-   --  control characters, and targets over 8 KiB are rejected.
+   --  control characters, and targets over 16 KiB are rejected.
    --  @param Item Request to change
    --  @param Value Origin-form target
    --  @exception Constraint_Error Value is not a supported request target
@@ -227,9 +231,10 @@ package Flyology.HTTP.Client is
       Wait_Timeout : Duration := 1.0);
 
    --  Append one request trailer field. The client generates the Trailer
-   --  declaration and sends retained trailer values after an unknown-length
-   --  chunked source finishes. Trailers are rejected for retained or
-   --  known-length bodies. Known fields affecting framing, routing,
+   --  declaration where required and sends retained trailer values after an
+   --  unknown-length source finishes on HTTP/1.1, HTTP/2, or HTTP/3. Trailers
+   --  are rejected for retained or known-length bodies. Known fields
+   --  affecting framing, routing,
    --  authentication, request semantics, or payload interpretation are
    --  prohibited, and repeated names are rejected. The caller must know that
    --  the field definition permits use in trailers.
@@ -523,10 +528,10 @@ package Flyology.HTTP.Client is
    --  is replayed only when it implements Rewindable_Request_Body_Source and
    --  the ordinary idempotent stale-transport retry conditions hold. Its
    --  exceptions propagate after the leased transport is discarded.
-   --  The current HTTP/2 engine accepts retained request bodies but rejects
-   --  borrowed streaming sources. HTTP/3 does the same and currently bounds
-   --  retained request content to 16 KiB. HTTP_1_Only retains the behavior
-   --  described above.
+   --  HTTP/1.1, HTTP/2, and HTTP/3 all pull Source synchronously with bounded
+   --  protocol flow-control storage. Request trailers terminate an
+   --  unknown-length source on every supported protocol. Expect: 100-continue
+   --  remains HTTP/1.1-only.
    --  @param Item Shared configured client that outlives the result
    --  @param Value Request metadata; a retained body is rejected
    --  @param Source Request body producer used only during this call
