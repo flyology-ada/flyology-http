@@ -790,6 +790,8 @@ private
       Body_Accepted    : Boolean := True;
       Continue_Pending : Boolean := False;
       Chunk_CRLF_Pending : Boolean := False;
+      Reading_Trailers : Boolean := False;
+      Trailer_Bytes    : Natural := 0;
       Body_Started     : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
       Body_Timeout     : Duration := 0.0;
       Buffered_Bytes   : Natural := 0;
