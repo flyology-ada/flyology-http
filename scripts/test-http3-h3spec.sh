@@ -72,7 +72,8 @@ fi
 cd "$http_root"
 prepare_qualification_rts
 "$alr" exec -- env -u GPR_CONFIG gprbuild \
-  --RTS="$qualification_rts" -p -P tests/http_tests.gpr \
+  --RTS="$qualification_rts" --subdirs=http3-qualification -p \
+  -P tests/http_tests.gpr \
   http3_h3spec_server.adb
 
 server_log="$http_root/build/oracle/ada-h3-h3spec.log"
@@ -86,7 +87,7 @@ cleanup () {
 }
 trap cleanup EXIT HUP INT TERM
 
-"$http_root/tests/bin/http3_h3spec_server" \
+"$http_root/tests/bin/http3-qualification/http3_h3spec_server" \
   "$port" >"$server_log" 2>&1 &
 server_pid=$!
 ready=false

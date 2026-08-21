@@ -105,6 +105,13 @@ package Flyology.HTTP.Server.Applications is
    --  @return Plain_HTTP or Secure_HTTPS
    function Request_Scheme (Item : Exchange) return Origin_Scheme;
 
+   --  Return the exact authority used for request routing. For HTTP/1 this is
+   --  the absolute-form target authority or Host field value; for HTTP/2 and
+   --  HTTP/3 it is the :authority pseudo-field or Host fallback.
+   --  @param Item Request exchange
+   --  @return Request authority
+   function Request_Authority (Item : Exchange) return String;
+
    --  Return a case-insensitive request header value. Repeated fields retain
    --  the core parser's comma-joined wire order.
    --  @param Item Request exchange
@@ -112,12 +119,82 @@ package Flyology.HTTP.Server.Applications is
    --  @return Header value or an empty string
    function Request_Header (Item : Exchange; Name : String) return String;
 
+   --  Return one physical occurrence of a case-insensitive request field.
+   --  Values preserve their parser whitespace-normalization boundary.
+   --  @param Item Request exchange
+   --  @param Name Header field name
+   --  @param Occurrence One-based physical occurrence
+   --  @return Header value or an empty string
+   function Request_Header
+     (Item : Exchange; Name : String; Occurrence : Positive) return String;
+
+   --  Count all physical request fields.
+   --  @param Item Request exchange
+   --  @return Physical field count
+   function Request_Header_Count (Item : Exchange) return Natural;
+
    --  Count physical occurrences of a case-insensitive request field.
    --  @param Item Request exchange
    --  @param Name Header field name
    --  @return Physical field count before comma joining
    function Request_Header_Count
      (Item : Exchange; Name : String) return Natural;
+
+   --  Return the name of a physical request field in wire order.
+   --  @param Item Request exchange
+   --  @param Index One-based physical field index
+   --  @return Field name
+   function Request_Header_Name
+     (Item : Exchange; Index : Positive) return String
+     with Pre => Index <= Request_Header_Count (Item);
+
+   --  Return the value of a physical request field in wire order.
+   --  @param Item Request exchange
+   --  @param Index One-based physical field index
+   --  @return Field value
+   function Request_Header_Value
+     (Item : Exchange; Index : Positive) return String
+     with Pre => Index <= Request_Header_Count (Item);
+
+   --  Count all physical request trailers. Trailer access before the complete
+   --  request body has arrived raises Program_Error.
+   --  @param Item Request exchange
+   --  @return Physical trailer count
+   function Request_Trailer_Count (Item : Exchange) return Natural;
+
+   --  Count physical occurrences of a case-insensitive request trailer.
+   --  Trailer access before body completion raises Program_Error.
+   --  @param Item Request exchange
+   --  @param Name Trailer field name
+   --  @return Physical occurrence count
+   function Request_Trailer_Count
+     (Item : Exchange; Name : String) return Natural;
+
+   --  Return a request trailer name in physical wire order.
+   --  @param Item Request exchange
+   --  @param Index One-based physical trailer index
+   --  @return Trailer name
+   function Request_Trailer_Name
+     (Item : Exchange; Index : Positive) return String
+     with Pre => Index <= Request_Trailer_Count (Item);
+
+   --  Return a request trailer value in physical wire order.
+   --  @param Item Request exchange
+   --  @param Index One-based physical trailer index
+   --  @return Trailer value
+   function Request_Trailer_Value
+     (Item : Exchange; Index : Positive) return String
+     with Pre => Index <= Request_Trailer_Count (Item);
+
+   --  Return one physical occurrence of a case-insensitive request trailer.
+   --  @param Item Request exchange
+   --  @param Name Trailer field name
+   --  @param Occurrence One-based physical occurrence
+   --  @return Trailer value or an empty string
+   function Request_Trailer
+     (Item       : Exchange;
+      Name       : String;
+      Occurrence : Positive := 1) return String;
 
    --  Report whether the protocol engine has emitted response bytes. This
    --  narrow query supports safe error mapping without exposing the borrowed

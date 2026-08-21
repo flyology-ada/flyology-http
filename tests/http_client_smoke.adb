@@ -593,6 +593,22 @@ begin
       pragma Assert (Headers.Value (Fields, "example", 2) = "two");
    end;
 
+   declare
+      Request : Client.Request;
+      At_Limit : constant String :=
+        "/" & String'(1 .. Client.Max_Request_Target_Bytes - 1 => 'a');
+      Over_Limit : constant String := At_Limit & "b";
+      Rejected : Boolean := False;
+   begin
+      Client.Set_Target (Request, At_Limit);
+      begin
+         Client.Set_Target (Request, Over_Limit);
+      exception
+         when Constraint_Error => Rejected := True;
+      end;
+      pragma Assert (Rejected);
+   end;
+
    Coordination.Wait_Ready (Port, Server_OK);
    pragma Assert (Server_OK and then Port /= Sockets.Any_Port);
    Exercise_Client (Port);

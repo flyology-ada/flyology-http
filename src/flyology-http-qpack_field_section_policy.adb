@@ -9,6 +9,10 @@ is
    use type QPACK_Integer_Policy.Decode_Status;
    use type Header_Huffman_Policy.Decode_Status;
 
+   pragma Compile_Time_Error
+     (Header_Huffman_Policy.Max_Output_Length < Max_Value_Length,
+      "QPACK values exceed the shared Huffman decoder bound");
+
    function Make_Field (Name, Value : String) return Header_Field is
       Result : Header_Field;
    begin

@@ -34,6 +34,42 @@ package Flyology.HTTP.Server.Exchange_Backends is
 
    --  @exclude
    --  @param Item Backend state
+   --  @return Physical trailer count
+   function Trailer_Count (Item : Backend) return Natural is abstract;
+
+   --  @exclude
+   --  @param Item Backend state
+   --  @param Name Trailer field name
+   --  @return Physical occurrence count
+   function Trailer_Count
+     (Item : Backend; Name : String) return Natural is abstract;
+
+   --  @exclude
+   --  @param Item Backend state
+   --  @param Index One-based physical trailer index
+   --  @return Trailer field name
+   function Trailer_Name
+     (Item : Backend; Index : Positive) return String is abstract;
+
+   --  @exclude
+   --  @param Item Backend state
+   --  @param Index One-based physical trailer index
+   --  @return Trailer field value
+   function Trailer_Value
+     (Item : Backend; Index : Positive) return String is abstract;
+
+   --  @exclude
+   --  @param Item Backend state
+   --  @param Name Trailer field name
+   --  @param Occurrence One-based physical occurrence
+   --  @return Trailer field value or an empty string
+   function Trailer
+     (Item       : Backend;
+      Name       : String;
+      Occurrence : Positive) return String is abstract;
+
+   --  @exclude
+   --  @param Item Backend state
    --  @param Maximum New request body limit
    procedure Narrow_Body_Limit
      (Item : in out Backend; Maximum : Body_Size) is abstract;

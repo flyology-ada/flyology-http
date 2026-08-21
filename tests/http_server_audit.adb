@@ -723,6 +723,86 @@ procedure HTTP_Server_Audit is
       end;
    end Check_64_Bit_Body_Bounds;
 
+   procedure Check_SigV4_Request_Fidelity is
+      use type Ada.Streams.Stream_Element_Offset;
+      Wire : aliased Memory_Transport;
+      Early_Trailers_Rejected : Boolean := False;
+      Data : Ada.Streams.Stream_Element_Array (1 .. 16);
+      Last : Ada.Streams.Stream_Element_Offset;
+      Finished : Boolean;
+      Presigned_Target : constant String :=
+        "/examplebucket/test.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256" &
+        "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1" &
+        "%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z" &
+        "&X-Amz-Expires=86400&X-Amz-SignedHeaders=host";
+   begin
+      --  The target and credential values derive from AWS's published S3
+      --  SigV4 presigned-URL example. Exact octets, physical repeated fields,
+      --  internal whitespace, and checksum trailer order are all inputs to
+      --  application canonicalization.
+      Wire.Input := To_Unbounded_String
+        ("PUT " & Presigned_Target & " HTTP/1.1" & CRLF
+         & "Host: examplebucket.s3.amazonaws.com" & CRLF
+         & "x-amz-meta-tag:  first" & Character'Val (9) & "part  " & CRLF
+         & "x-amz-meta-tag: second" & CRLF
+         & "Transfer-Encoding: chunked" & CRLF
+         & "Trailer: x-amz-checksum-sha256, x-amz-trailer-signature" & CRLF
+         & CRLF
+         & "3" & CRLF & "abc" & CRLF
+         & "0" & CRLF
+         & "x-amz-checksum-sha256: checksum-one" & CRLF
+         & "x-amz-trailer-signature: signature" & CRLF
+         & "x-amz-checksum-sha256: checksum-two" & CRLF & CRLF);
+      declare
+         Client  : HTTP_Server.Connection (Wire'Access);
+         Request : HTTP_Server.Request;
+         Closed  : Boolean;
+      begin
+         HTTP_Server.Read_Request_Head (Client, Request, Closed);
+         pragma Assert (not Closed);
+         pragma Assert (HTTP_Server.Target (Request) = Presigned_Target);
+         pragma Assert
+           (HTTP_Server.Authority (Request) =
+              "examplebucket.s3.amazonaws.com");
+         pragma Assert (HTTP_Server.Header_Count (Request) = 5);
+         pragma Assert
+           (HTTP_Server.Header_Count (Request, "x-amz-meta-tag") = 2);
+         pragma Assert
+           (HTTP_Server.Header (Request, "x-amz-meta-tag", 1) =
+              "first" & Character'Val (9) & "part");
+         pragma Assert
+           (HTTP_Server.Header_Name (Request, 3) = "x-amz-meta-tag");
+         pragma Assert
+           (HTTP_Server.Header_Value (Request, 3) = "second");
+         begin
+            declare
+               Ignored : constant Natural := HTTP_Server.Trailer_Count (Client);
+               pragma Unreferenced (Ignored);
+            begin
+               null;
+            end;
+         exception
+            when Program_Error => Early_Trailers_Rejected := True;
+         end;
+         HTTP_Server.Read_Body (Client, Data, Last, Finished);
+         pragma Assert (Finished);
+         pragma Assert (Last = Data'First + 2);
+         pragma Assert (HTTP_Server.Trailer_Count (Client) = 3);
+         pragma Assert
+           (HTTP_Server.Trailer_Count
+              (Client, "x-amz-checksum-sha256") = 2);
+         pragma Assert
+           (HTTP_Server.Trailer_Name (Client, 2) =
+              "x-amz-trailer-signature");
+         pragma Assert
+           (HTTP_Server.Trailer_Value (Client, 2) = "signature");
+         pragma Assert
+           (HTTP_Server.Trailer
+              (Client, "x-amz-checksum-sha256", 2) = "checksum-two");
+      end;
+      pragma Assert (Early_Trailers_Rejected);
+   end Check_SigV4_Request_Fidelity;
+
    --  Finding 34. Close_WebSocket dropped back to the 1 MiB default message
    --  limit once the receive it was draining had finished, so a frame the
    --  application's own limit permits aborted the close handshake it had
@@ -792,5 +872,6 @@ begin
    Check_Query_Control_Bytes;
    Check_Buffered_Ingress_Reservation;
    Check_64_Bit_Body_Bounds;
+   Check_SigV4_Request_Fidelity;
    Check_Close_Handshake_Message_Limit;
 end HTTP_Server_Audit;

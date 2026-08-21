@@ -6,7 +6,6 @@ package body HTTP_3_Internals is
 
    ALPN : constant Stream_Element_Array := Byte_Array ("h3");
    Request_Chunk_Size : constant Positive := 1_024;
-   Maximum_Retained_Request : constant Natural := 16_384;
 
    function Now (Item : Pooled_Connection) return QUIC.Timestamp is
       Elapsed : constant Duration := Ada.Real_Time.To_Duration
@@ -305,6 +304,8 @@ package body HTTP_3_Internals is
       Value           : Request;
       Authority       : String;
       Retained_Length : Natural;
+      Source          : access Request_Body_Source'Class;
+      Length          : Body_Length;
       Token           : access Flyology.Cancellation.Token)
    is
       Headers   : H3.Header_Block;
@@ -312,6 +313,7 @@ package body HTTP_3_Internals is
       Packet    : QUIC.Datagram;
       Status    : H3.Operation_Status;
       Event_Value : HTTP_3_Event_Access;
+      Source_Chunks_Since_Probe : Natural := 0;
 
       procedure Add (Name, Field_Value : String) is
       begin
@@ -326,10 +328,125 @@ package body HTTP_3_Internals is
       begin
          H3.Send_Headers
            (Data.Connection.HTTP_3, Data.Connection.QUIC_Transport, Stream,
-            Headers, Fin => Retained_Length = 0,
+            Headers, Fin => Retained_Length = 0 and then Source = null,
             Now => Now (Data.Connection.all),
             Packet => Output, Status => Result);
       end Send_Head;
+
+      procedure Poll_Final_Response (Ready : out Boolean) is
+         Event : H3.Event renames Event_Value.all;
+      begin
+         Ready := False;
+         loop
+            H3.Poll
+              (Data.Connection.HTTP_3, Data.Connection.QUIC_Transport,
+               Event, Status);
+            if Status = H3.No_Event then
+               return;
+            elsif Status /= H3.Succeeded then
+               raise Protocol_Error with
+                 "HTTP/3 response failed: " &
+                   H3.Operation_Status'Image (Status);
+            elsif Event.Kind = H3.Goaway_Received then
+               Data.Connection.HTTP_3_Goaway := True;
+            elsif Event.Stream = Stream
+              and then Event.Kind = H3.Headers_Received
+            then
+               declare
+                  Code       : Natural := 0;
+                  Has_Status : Boolean := False;
+               begin
+                  for Index in 1 .. H3.Header_Count (Event.Headers) loop
+                     declare
+                        Field : constant H3.Header_Field :=
+                          H3.Field_At (Event.Headers, Index);
+                        Name : constant String := H3.Field_Name (Field);
+                        Field_Value : constant String :=
+                          H3.Field_Value (Field);
+                     begin
+                        if Name = ":status" then
+                           if Field_Value'Length /= 3
+                             or else
+                               (for some Character_Value of Field_Value =>
+                                  Character_Value not in '0' .. '9')
+                           then
+                              raise Protocol_Error with
+                                "invalid HTTP/3 response status";
+                           end if;
+                           Code := Natural'Value (Field_Value);
+                           Has_Status := True;
+                        elsif Name (Name'First) = ':' then
+                           raise Protocol_Error with
+                             "unexpected HTTP/3 response pseudo-field";
+                        else
+                           Flyology.HTTP.Headers.Add
+                             (Data.Fields, Name, Field_Value);
+                        end if;
+                     end;
+                  end loop;
+                  if not Has_Status or else Code not in 100 .. 599 then
+                     raise Protocol_Error with
+                       "missing HTTP/3 response status";
+                  elsif Code < 200 then
+                     Flyology.HTTP.Headers.Clear (Data.Fields);
+                     Data.Informational_Count := Next_Informational_Count
+                       (Data.Informational_Count);
+                  else
+                     Data.Status_Value := Status_Code (Code);
+                     Data.Protocol_Value := HTTP_3_Protocol;
+                     Data.Saw_Response_Bytes := True;
+                     Ready := True;
+                     return;
+                  end if;
+               end;
+            elsif Event.Stream = Stream
+              and then Event.Kind in H3.Data_Received | H3.Stream_Ended
+            then
+               raise Protocol_Error with
+                 "HTTP/3 response body preceded final headers";
+            elsif Event.Stream = Stream and then Event.Kind = H3.Stream_Reset
+            then
+               raise Protocol_Error with "HTTP/3 request stream was reset";
+            end if;
+         end loop;
+      end Poll_Final_Response;
+
+      procedure Await_Request_Send
+        (Send_Operation : not null access procedure
+           (Packet : out QUIC.Datagram; Status : out H3.Operation_Status);
+         Final_Ready : out Boolean) is
+      begin
+         Final_Ready := False;
+         loop
+            Send_Operation (Packet, Status);
+            exit when Status /= H3.Transport_Blocked;
+            Receive_One
+              (Data.Owner, Data.Connection, Data.Started, Data.Timeout,
+               Token);
+            Poll_Final_Response (Final_Ready);
+            exit when Final_Ready;
+         end loop;
+      end Await_Request_Send;
+
+      procedure Poll_Available_Response (Ready : out Boolean) is
+         Available : Sockets.Request_Type (Sockets.N_Bytes_To_Read);
+      begin
+         Ready := False;
+         Source_Chunks_Since_Probe := Source_Chunks_Since_Probe + 1;
+         if Source_Chunks_Since_Probe < 16 then
+            return;
+         end if;
+         Source_Chunks_Since_Probe := 0;
+         loop
+            Sockets.Control_Socket (Data.Connection.UDP, Available);
+            exit when Available.Size = 0;
+            Receive_One
+              (Data.Owner, Data.Connection, Data.Started, Data.Timeout,
+               Token);
+            Poll_Final_Response (Ready);
+            exit when Ready;
+         end loop;
+      end Poll_Available_Response;
    begin
       if Data.Connection.HTTP_3_Event = null then
          Data.Connection.HTTP_3_Event := new H3.Event;
@@ -338,9 +455,6 @@ package body HTTP_3_Internals is
       if Value.Expect_Continue then
          raise Constraint_Error with
            "HTTP/3 Expect: 100-continue is not yet supported";
-      elsif Retained_Length > Maximum_Retained_Request then
-         raise Request_Body_Error with
-           "HTTP/3 retained request exceeds current 16384-byte stream credit";
       end if;
       Add (":method", Image (Value.Method_Value));
       Add (":scheme", "https");
@@ -354,6 +468,8 @@ package body HTTP_3_Internals is
       end loop;
       if Retained_Length > 0 then
          Add ("content-length", Decimal (Retained_Length));
+      elsif Source /= null and then Length.Is_Known then
+         Add ("content-length", Decimal (Length.Bytes));
       end if;
 
       loop
@@ -421,78 +537,173 @@ package body HTTP_3_Internals is
                end;
             end loop;
          end;
+      elsif Source /= null then
+         declare
+            Buffer : Stream_Element_Array
+              (1 .. Stream_Element_Offset (Request_Chunk_Size));
+            Last : Stream_Element_Offset;
+            Finished : Boolean := False;
+            Remaining_Bytes : Body_Size := Length.Bytes;
+            Has_Trailers : constant Boolean :=
+              Flyology.HTTP.Headers.Count (Value.Trailer_Fields) > 0;
+         begin
+            while not Finished loop
+               begin
+                  Read
+                    (Source.all, Buffer, Last, Finished,
+                     Remaining (Data.Started, Data.Timeout), Token);
+               exception
+                  when others =>
+                     Data.Source_Failed := True;
+                     raise;
+               end;
+               if Token /= null and then Token.Requested then
+                  raise Flyology.Cancellation.Operation_Cancelled;
+               elsif Data.Timeout >= 0.0
+                 and then Remaining (Data.Started, Data.Timeout) <= 0.0
+               then
+                  raise Flyology.IO.Timeout_Error;
+               end if;
+               if Last < Buffer'First - 1 or else Last > Buffer'Last then
+                  raise Request_Body_Error with
+                    "request body source returned an invalid last index";
+               end if;
+               declare
+                  Produced : constant Natural :=
+                    (if Last < Buffer'First then 0
+                     else Natural (Last - Buffer'First + 1));
+               begin
+                  if Produced = 0 and then not Finished then
+                     raise Request_Body_Error with
+                       "request body source made no progress";
+                  elsif Length.Is_Known
+                    and then Body_Size (Produced) > Remaining_Bytes
+                  then
+                     raise Request_Body_Error with
+                       "request body source exceeded its declared length";
+                  end if;
+                  if Length.Is_Known then
+                     Remaining_Bytes :=
+                       Remaining_Bytes - Body_Size (Produced);
+                     if Finished and then Remaining_Bytes /= 0 then
+                        raise Request_Body_Error with
+                          "request body source ended before its declared " &
+                          "length";
+                     end if;
+                  end if;
+                  declare
+                     Empty : Stream_Element_Array (1 .. 0);
+                     Final_Data : constant Boolean :=
+                       Finished and then not Has_Trailers;
+                     procedure Send_Chunk
+                       (Output : out QUIC.Datagram;
+                        Result : out H3.Operation_Status) is
+                     begin
+                        if Produced = 0 then
+                           H3.Send_Data
+                             (Data.Connection.HTTP_3,
+                              Data.Connection.QUIC_Transport,
+                              Stream, Empty, Final_Data,
+                              Now (Data.Connection.all), Output, Result);
+                        else
+                           H3.Send_Data
+                             (Data.Connection.HTTP_3,
+                              Data.Connection.QUIC_Transport,
+                              Stream, Buffer (Buffer'First .. Last),
+                              Final_Data, Now (Data.Connection.all),
+                              Output, Result);
+                        end if;
+                     end Send_Chunk;
+                  begin
+                     declare
+                        Final_Ready : Boolean;
+                     begin
+                        Await_Request_Send
+                          (Send_Chunk'Access, Final_Ready);
+                        if Final_Ready then
+                           Data.Request_Incomplete := True;
+                           return;
+                        end if;
+                     end;
+                     if Status /= H3.Succeeded then
+                        raise Protocol_Error with
+                          "HTTP/3 request data failed: " &
+                            H3.Operation_Status'Image (Status);
+                     end if;
+                     Send
+                       (Data.Owner, Data.Connection, Packet, Data.Started,
+                        Data.Timeout, Token);
+                     declare
+                        Final_Ready : Boolean;
+                     begin
+                        Poll_Available_Response (Final_Ready);
+                        if Final_Ready then
+                           Data.Request_Incomplete := True;
+                           return;
+                        end if;
+                     end;
+                  end;
+               end;
+            end loop;
+            if Has_Trailers then
+               declare
+                  Trailer_Headers : H3.Header_Block;
+                  procedure Send_Trailers
+                    (Output : out QUIC.Datagram;
+                     Result : out H3.Operation_Status) is
+                  begin
+                     H3.Send_Headers
+                       (Data.Connection.HTTP_3,
+                        Data.Connection.QUIC_Transport, Stream,
+                        Trailer_Headers, Fin => True,
+                        Now => Now (Data.Connection.all),
+                        Packet => Output, Status => Result);
+                  end Send_Trailers;
+               begin
+                  for Index in 1 .. Flyology.HTTP.Headers.Count
+                    (Value.Trailer_Fields)
+                  loop
+                     H3.Append
+                       (Trailer_Headers,
+                        H3.Make_Field
+                          (Ada.Characters.Handling.To_Lower
+                             (Flyology.HTTP.Headers.Name
+                                (Value.Trailer_Fields, Index)),
+                           Flyology.HTTP.Headers.Value
+                             (Value.Trailer_Fields, Index)));
+                  end loop;
+                  declare
+                     Final_Ready : Boolean;
+                  begin
+                     Await_Request_Send
+                       (Send_Trailers'Access, Final_Ready);
+                     if Final_Ready then
+                        Data.Request_Incomplete := True;
+                        return;
+                     end if;
+                  end;
+                  if Status /= H3.Succeeded then
+                     raise Protocol_Error with
+                       "HTTP/3 request trailers failed: " &
+                         H3.Operation_Status'Image (Status);
+                  end if;
+                  Send
+                    (Data.Owner, Data.Connection, Packet, Data.Started,
+                     Data.Timeout, Token);
+               end;
+            end if;
+         end;
       end if;
 
       loop
          declare
-            Event : H3.Event renames Event_Value.all;
-            Code  : Natural := 0;
-            Has_Status : Boolean := False;
+            Final_Ready : Boolean;
          begin
-            H3.Poll
-              (Data.Connection.HTTP_3, Data.Connection.QUIC_Transport,
-               Event, Status);
-            if Status = H3.No_Event then
-               Receive_One
-                 (Data.Owner, Data.Connection, Data.Started, Data.Timeout,
-                  Token);
-            elsif Status /= H3.Succeeded then
-               raise Protocol_Error with
-                 "HTTP/3 response failed: " &
-                   H3.Operation_Status'Image (Status);
-            elsif Event.Kind = H3.Goaway_Received then
-               Data.Connection.HTTP_3_Goaway := True;
-            elsif Event.Stream = Stream
-              and then Event.Kind = H3.Headers_Received
-            then
-               for Index in 1 .. H3.Header_Count (Event.Headers) loop
-                  declare
-                     Field : constant H3.Header_Field :=
-                       H3.Field_At (Event.Headers, Index);
-                     Name  : constant String := H3.Field_Name (Field);
-                     Field_Value : constant String := H3.Field_Value (Field);
-                  begin
-                     if Name = ":status" then
-                        if Field_Value'Length /= 3
-                          or else
-                            (for some Character_Value of Field_Value =>
-                               Character_Value not in '0' .. '9')
-                        then
-                           raise Protocol_Error with
-                             "invalid HTTP/3 response status";
-                        end if;
-                        Code := Natural'Value (Field_Value);
-                        Has_Status := True;
-                     elsif Name (Name'First) = ':' then
-                        raise Protocol_Error with
-                          "unexpected HTTP/3 response pseudo-field";
-                     else
-                        Flyology.HTTP.Headers.Add
-                          (Data.Fields, Name, Field_Value);
-                     end if;
-                  end;
-               end loop;
-               if not Has_Status or else Code not in 100 .. 599 then
-                  raise Protocol_Error with "missing HTTP/3 response status";
-               elsif Code < 200 then
-                  Flyology.HTTP.Headers.Clear (Data.Fields);
-                  Data.Informational_Count := Next_Informational_Count
-                    (Data.Informational_Count);
-               else
-                  Data.Status_Value := Status_Code (Code);
-                  Data.Protocol_Value := HTTP_3_Protocol;
-                  Data.Saw_Response_Bytes := True;
-                  return;
-               end if;
-            elsif Event.Stream = Stream
-              and then Event.Kind in H3.Data_Received | H3.Stream_Ended
-            then
-               raise Protocol_Error with
-                 "HTTP/3 response body preceded final headers";
-            elsif Event.Stream = Stream and then Event.Kind = H3.Stream_Reset
-            then
-               raise Protocol_Error with "HTTP/3 request stream was reset";
-            end if;
+            Poll_Final_Response (Final_Ready);
+            exit when Final_Ready;
+            Receive_One
+              (Data.Owner, Data.Connection, Data.Started, Data.Timeout,
+               Token);
          end;
       end loop;
    end Execute_Request;
@@ -596,7 +807,9 @@ package body HTTP_3_Internals is
          then
             Item.Data.HTTP_3_Stream_Ended := True;
             Release_Lease
-              (Item.Data.all, Is_Usable (Item.Data.Connection));
+              (Item.Data.all,
+               not Item.Data.Request_Incomplete
+                 and then Is_Usable (Item.Data.Connection));
             Finished := True;
             return;
          elsif Event.Stream = Item.Data.HTTP_3_Stream

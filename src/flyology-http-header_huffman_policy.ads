@@ -9,7 +9,7 @@ private package Flyology.HTTP.Header_Huffman_Policy
   with SPARK_Mode => On
 is
    Max_Encoded_Length : constant := 65_535;
-   Max_Output_Length  : constant := 4_096;
+   Max_Output_Length  : constant := 16 * 1_024;
 
    subtype Output_Length is Natural range 0 .. Max_Output_Length;
 

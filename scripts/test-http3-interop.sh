@@ -67,7 +67,8 @@ prepare_quic_go () {
 cd "$http_root"
 prepare_qualification_rts
 "$alr" exec -- env -u GPR_CONFIG gprbuild \
-  --RTS="$qualification_rts" -p -P tests/http_tests.gpr \
+  --RTS="$qualification_rts" --subdirs=http3-qualification -p \
+  -P tests/http_tests.gpr \
   http3_interop_client.adb http3_interop_server.adb
 
 oracle_pid=
@@ -117,12 +118,13 @@ run_aioquic () {
   oracle_pid=$!
   await_ready "$oracle_pid" "$oracle_log" \
     'aioquic HTTP/3 oracle listening'
-  "$http_root/tests/bin/http3_interop_client" "$aioquic_server_port"
+  "$http_root/tests/bin/http3-qualification/http3_interop_client" \
+    "$aioquic_server_port"
   kill "$oracle_pid" 2>/dev/null || :
   wait "$oracle_pid" 2>/dev/null || :
   oracle_pid=
 
-  "$http_root/tests/bin/http3_interop_server" \
+  "$http_root/tests/bin/http3-qualification/http3_interop_server" \
     "$ada_aioquic_port" >"$server_log" 2>&1 &
   server_pid=$!
   await_ready "$server_pid" "$server_log" \
@@ -152,12 +154,13 @@ run_quic_go () {
   oracle_pid=$!
   await_ready "$oracle_pid" "$oracle_log" \
     'quic-go HTTP/3 oracle listening'
-  "$http_root/tests/bin/http3_interop_client" "$quic_go_server_port"
+  "$http_root/tests/bin/http3-qualification/http3_interop_client" \
+    "$quic_go_server_port"
   kill "$oracle_pid" 2>/dev/null || :
   wait "$oracle_pid" 2>/dev/null || :
   oracle_pid=
 
-  "$http_root/tests/bin/http3_interop_server" \
+  "$http_root/tests/bin/http3-qualification/http3_interop_server" \
     "$ada_quic_go_port" >"$server_log" 2>&1 &
   server_pid=$!
   await_ready "$server_pid" "$server_log" \

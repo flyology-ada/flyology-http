@@ -120,6 +120,41 @@ procedure HTTP2_Server_Audit is
             X.Write_Chunk (String'(1 .. 16_384 => 'f'));
          end loop;
          X.End_Stream;
+      elsif X.Request_Target = "/trailers" then
+         declare
+            Data : Stream_Element_Array (1 .. 16);
+            Last : Stream_Element_Offset;
+            Finished : Boolean := False;
+            Body_Text : Unbounded_String;
+            Accepted : Boolean;
+         begin
+            X.Configure_Route
+              (Name => "trailers", Normalized_Path => "/trailers",
+               Policy => App.Stream_Body,
+               Authentication => App.No_Authentication,
+               CORS_Policy => 0, Concurrency => 0, Rate_Per_Second => 0,
+               Upgrade => App.No_Upgrade);
+            X.Apply_Body_Policy (Accepted);
+            pragma Assert (Accepted);
+            while not Finished loop
+               X.Read_Body (Data, Last, Finished);
+               for Index in Data'First .. Last loop
+                  Append (Body_Text, Character'Val (Data (Index)));
+               end loop;
+            end loop;
+            X.Text
+              (200,
+               "authority=" & X.Request_Authority &
+               " headers=" & Decimal (X.Request_Header_Count) &
+               " repeat=" & X.Request_Header ("x-repeat", 2) &
+               " body=" & To_String (Body_Text) &
+               " trailers=" & Decimal (X.Request_Trailer_Count) &
+               " checksum=" &
+                 X.Request_Trailer ("x-amz-checksum-sha256", 2));
+         exception
+            when Error : others =>
+               X.Text (500, Ada.Exceptions.Exception_Information (Error));
+         end;
       else
          --  Report what the pseudo-headers turned into: the raw target the
          --  log sink would see, and the fields the reconstructed header
@@ -309,7 +344,7 @@ procedure HTTP2_Server_Audit is
    Listener : Sockets.Socket_Type;
    Address  : Sockets.Endpoint;
    State    : Context;
-   Sessions : constant := 13;
+   Sessions : constant := 14;
 
    Router_Manager  : aliased Connections.Server (Capacity => 1);
    Router_Listener : Sockets.Socket_Type;
@@ -449,6 +484,66 @@ begin
          end loop;
       end Server_Task;
    begin
+      ------------------------------------------------------------------------
+      --  Request canonicalization retains the HTTP/2 authority, physical
+      --  regular-field order, and the terminal trailer field section until
+      --  the application has consumed the body.
+      ------------------------------------------------------------------------
+      Ada.Text_IO.Put_Line
+        ("S3 request authority, occurrences, and trailers over HTTP/2");
+      declare
+         Socket   : Sockets.Socket_Type;
+         Info     : Frame_Info;
+         Payload  : Stream_Element_Array (1 .. 16_384) := (others => 0);
+         Response : Unbounded_String;
+         Settled  : Boolean := False;
+         Head : constant Stream_Element_Array :=
+           Request_Block ("POST", "/trailers") &
+             Literal ("x-repeat", "one") &
+             Literal ("x-repeat", "two");
+         Trailer_Fields : constant Stream_Element_Array :=
+           Literal ("x-amz-checksum-sha256", "first") &
+             Literal ("x-amz-trailer-signature", "signature") &
+             Literal ("x-amz-checksum-sha256", "second");
+      begin
+         Connect_Peer (Socket);
+         Send_Frame
+           (Socket, Headers_Frame, End_Headers_Flag, 1, Head);
+         Send_Frame (Socket, Data_Frame, 0, 1, Text_Bytes ("abc"));
+         Send_Frame
+           (Socket, Headers_Frame,
+            End_Headers_Flag or End_Stream_Flag, 1, Trailer_Fields);
+         while not Settled loop
+            Read_Frame_Header (Socket, Info, Wait => 5.0);
+            Read_Payload (Socket, Info, Payload, Wait => 5.0);
+            if Info.Stream_ID = 1 and then Info.Kind = Data_Frame then
+               for Offset in 1 .. Stream_Element_Offset (Info.Length) loop
+                  Append
+                    (Response, Character'Val (Natural (Payload (Offset))));
+               end loop;
+               Settled := (Info.Flags and End_Stream_Flag) /= 0;
+            elsif Info.Stream_ID = 1
+              and then Info.Kind in Headers_Frame | Continuation_Frame
+            then
+               Settled := (Info.Flags and End_Stream_Flag) /= 0;
+            elsif Info.Kind = Goaway_Frame
+              or else
+                (Info.Stream_ID = 1 and then Info.Kind = Reset_Stream_Frame)
+            then
+               Settled := True;
+            end if;
+         end loop;
+         Ada.Text_IO.Put_Line
+           ("  canonicalization response """ & To_String (Response) & """");
+         Check
+           (Index
+              (Response,
+               "authority=localhost headers=2 repeat=two body=abc " &
+               "trailers=3 checksum=second") /= 0,
+            "authority and physical fields survive through trailers");
+         Sockets.Close_Socket (Socket);
+      end;
+
       ------------------------------------------------------------------------
       --  Finding 7: DATA on a closed or half-closed-remote stream must be
       --  charged to, and credited back on, the connection receive window.

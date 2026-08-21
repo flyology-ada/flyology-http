@@ -41,8 +41,12 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
 
    Response_Buffer_Capacity : constant Positive :=
      Positive (Settings.Advertised_Initial_Window_Size);
+   Request_Stream_Buffer_Capacity : constant Positive :=
+     Positive (Settings.Advertised_Initial_Window_Size);
    type Response_Storage is array (Positive range 1 ..
      Response_Buffer_Capacity) of Stream_Element;
+   type Request_Stream_Storage is array (Positive range 1 ..
+     Request_Stream_Buffer_Capacity) of Stream_Element;
 
    type Stream_Phase is (Free, Open, Complete, Failed);
    type Failure_Kind is
@@ -71,6 +75,13 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       Head_Cursor    : Natural := 1;
       Request_Body   : Request_Buffer_Access := null;
       Body_Send_Cursor : Natural := 1;
+      Streaming_Body : Boolean := False;
+      Upload_Buffer  : Request_Stream_Storage;
+      Upload_First   : Positive := 1;
+      Upload_Count   : Natural range 0 .. Request_Stream_Buffer_Capacity := 0;
+      Upload_Finished : Boolean := False;
+      Request_Trailers : Bytes.Unbounded_Bytes;
+      Trailer_Cursor : Natural := 1;
       Local_End      : Boolean := False;
       Send_Window    : Policy.Window_Size := 65_535;
       Receive_Window : Policy.Window_Size :=
@@ -96,9 +107,17 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       procedure Open
         (Header_Block  : Stream_Element_Array;
          Retained_Body : in out Request_Buffer_Access;
+         Streaming     : Boolean;
          Head_Request  : Boolean;
          Handle        : out Stream_Handle;
          Accepted      : out Boolean);
+      procedure Write_Request_Data
+        (Handle        : Stream_Handle;
+         Data          : Stream_Element_Array;
+         Finished      : Boolean;
+         Trailer_Block : Stream_Element_Array;
+         Result        : out Upload_Result;
+         Wake_Pump     : out Boolean);
       procedure Pull_Output
         (Data      : out Stream_Element_Array;
          Last      : out Stream_Element_Offset;
@@ -152,6 +171,11 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Wake_Pump : out Boolean);
       procedure Wait_Source
         (Handle    : Stream_Handle;
+         FD        : out Flyology.IO.Descriptor;
+         Ready_Now : out Boolean);
+      procedure Upload_Wait_Source
+        (Handle    : Stream_Handle;
+         Required  : Natural;
          FD        : out Flyology.IO.Descriptor;
          Ready_Now : out Boolean);
       procedure Cancel_Stream
@@ -290,7 +314,12 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             and then not Streams (Index).Head_Delivered)
            or else Streams (Index).Response_Count > 0
            or else Streams (Index).Remote_End
-           or else Streams (Index).Failure /= No_Failure);
+           or else Streams (Index).Failure /= No_Failure
+           or else
+             (Streams (Index).Streaming_Body
+                and then not Streams (Index).Upload_Finished
+                and then Streams (Index).Upload_Count <
+                  Request_Stream_Buffer_Capacity));
 
       procedure Remember_Closed (Index : Positive) is
       begin
@@ -457,6 +486,12 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             Free_Request_Buffer (Streams (Index).Request_Body);
          end if;
          Streams (Index).Body_Send_Cursor := 1;
+         Streams (Index).Streaming_Body := False;
+         Streams (Index).Upload_First := 1;
+         Streams (Index).Upload_Count := 0;
+         Streams (Index).Upload_Finished := False;
+         Bytes.Clear (Streams (Index).Request_Trailers);
+         Streams (Index).Trailer_Cursor := 1;
          Streams (Index).Local_End := False;
          Streams (Index).Send_Window :=
            Policy.Window_Size (Peer.Initial_Window_Size);
@@ -472,6 +507,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       procedure Open
         (Header_Block  : Stream_Element_Array;
          Retained_Body : in out Request_Buffer_Access;
+         Streaming     : Boolean;
          Head_Request  : Boolean;
          Handle        : out Stream_Handle;
          Accepted      : out Boolean)
@@ -507,12 +543,66 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
            Bytes.To_Unbounded_Bytes (Header_Block);
          Streams (Index).Request_Body := Retained_Body;
          Retained_Body := null;
+         Streams (Index).Streaming_Body := Streaming;
+         Streams (Index).Upload_First := 1;
+         Streams (Index).Upload_Count := 0;
+         Streams (Index).Upload_Finished := False;
+         Bytes.Clear (Streams (Index).Request_Trailers);
+         Streams (Index).Trailer_Cursor := 1;
          Streams (Index).Send_Window :=
            Policy.Window_Size (Peer.Initial_Window_Size);
          Handle := (Slot => Index, ID => Natural (Next_Stream_ID));
          Next_Stream_ID := Next_Stream_ID + 2;
          Accepted := True;
       end Open;
+
+      procedure Write_Request_Data
+        (Handle        : Stream_Handle;
+         Data          : Stream_Element_Array;
+         Finished      : Boolean;
+         Trailer_Block : Stream_Element_Array;
+         Result        : out Upload_Result;
+         Wake_Pump     : out Boolean)
+      is
+      begin
+         Wake_Pump := False;
+         if not Valid (Handle) then
+            Result := Upload_Failed;
+            return;
+         end if;
+         declare
+            Item : Stream_Record renames Streams (Handle.Slot);
+         begin
+            if Item.Phase /= Open or else Item.Failure /= No_Failure
+              or else not Item.Streaming_Body
+              or else Item.Upload_Finished
+            then
+               Result := Upload_Failed;
+            elsif Data'Length >
+              Request_Stream_Buffer_Capacity - Item.Upload_Count
+            then
+               Result := Upload_Would_Block;
+            else
+               if Data'Length > 0 then
+                  for Offset in 0 .. Natural (Data'Length) - 1 loop
+                     Item.Upload_Buffer
+                       (((Item.Upload_First - 1 + Item.Upload_Count + Offset)
+                          mod Request_Stream_Buffer_Capacity) + 1) :=
+                       Data (Data'First + Stream_Element_Offset (Offset));
+                  end loop;
+                  Item.Upload_Count := Item.Upload_Count + Data'Length;
+               end if;
+               if Finished then
+                  Item.Upload_Finished := True;
+                  Item.Request_Trailers :=
+                    Bytes.To_Unbounded_Bytes (Trailer_Block);
+                  Item.Trailer_Cursor := 1;
+               end if;
+               Result := Upload_Accepted;
+               Wake_Pump := True;
+            end if;
+         end;
+      end Write_Request_Data;
 
       procedure Copy_Bytes
         (Value  : Bytes.Unbounded_Bytes;
@@ -623,6 +713,58 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                Item : Stream_Record renames Streams (Index);
             begin
                if Item.Phase = Open
+                 and then Item.Head_Cursor > Bytes.Length (Item.Request_Head)
+                 and then Item.Streaming_Body
+                 and then Item.Upload_Finished
+                 and then Item.Upload_Count = 0
+                 and then Item.Trailer_Cursor <=
+                   Bytes.Length (Item.Request_Trailers)
+               then
+                  declare
+                     Remaining : constant Natural :=
+                       Bytes.Length (Item.Request_Trailers) -
+                         Item.Trailer_Cursor + 1;
+                     Count : constant Natural := Natural'Min
+                       (Remaining, Frames.Default_Maximum_Frame_Size);
+                     First_Fragment : constant Boolean :=
+                       Item.Trailer_Cursor = 1;
+                     Final_Fragment : constant Boolean := Count = Remaining;
+                     Flags : constant Frames.Frame_Flags :=
+                       (if Final_Fragment
+                        then Frames.End_Headers_Flag or Frames.End_Stream_Flag
+                        else 0);
+                     Header : constant Frames.Wire_Header := Frames.Encode
+                       ((Length => Count,
+                         Kind => (if First_Fragment then Frames.Headers_Frame
+                                  else Frames.Continuation_Frame),
+                         Flags => Flags,
+                         Stream_ID => Item.ID));
+                     Cursor : Stream_Element_Offset := Data'First;
+                  begin
+                     for Value of Header loop
+                        Data (Cursor) := Value;
+                        Cursor := Cursor + 1;
+                     end loop;
+                     for Offset in 0 .. Count - 1 loop
+                        Data (Cursor) := Bytes.Element
+                          (Item.Request_Trailers,
+                           Item.Trailer_Cursor + Offset);
+                        Cursor := Cursor + 1;
+                     end loop;
+                     Item.Trailer_Cursor := Item.Trailer_Cursor + Count;
+                     if Final_Fragment then
+                        Continuation_Slot := 0;
+                        Item.Local_End := True;
+                        Bytes.Clear (Item.Request_Trailers);
+                     else
+                        Continuation_Slot := Index;
+                     end if;
+                     Last := Cursor - 1;
+                     Available := True;
+                     Output_Cursor := Index mod Streams'Length + 1;
+                     return;
+                  end;
+               elsif Item.Phase = Open
                  and then Item.Head_Cursor <= Bytes.Length (Item.Request_Head)
                then
                   declare
@@ -639,6 +781,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                   begin
                      if Final_Fragment
                        and then Item.Request_Body = null
+                       and then not Item.Streaming_Body
                      then
                         Flags := Flags or Frames.End_Stream_Flag;
                         Item.Local_End := True;
@@ -717,6 +860,87 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                         Item.Local_End := True;
                         Free_Request_Buffer (Item.Request_Body);
                      end if;
+                     Last := Cursor - 1;
+                     Available := True;
+                     Output_Cursor := Index mod Streams'Length + 1;
+                     return;
+                  end;
+               elsif Item.Phase = Open
+                 and then Item.Head_Cursor > Bytes.Length (Item.Request_Head)
+                 and then Item.Streaming_Body
+                 and then Item.Upload_Count > 0
+                 and then Connection_Send_Window > 0
+                 and then Item.Send_Window > 0
+               then
+                  declare
+                     Count : constant Natural := Natural'Min
+                       (Natural'Min
+                          (Item.Upload_Count,
+                           Frames.Default_Maximum_Frame_Size),
+                        Natural'Min
+                          (Natural (Connection_Send_Window),
+                           Natural (Item.Send_Window)));
+                     Final_Fragment : constant Boolean :=
+                       Count = Item.Upload_Count
+                         and then Item.Upload_Finished
+                         and then
+                           Bytes.Length (Item.Request_Trailers) = 0;
+                     Header : constant Frames.Wire_Header := Frames.Encode
+                       ((Length => Count,
+                         Kind => Frames.Data_Frame,
+                         Flags => (if Final_Fragment
+                                   then Frames.End_Stream_Flag else 0),
+                         Stream_ID => Item.ID));
+                     Cursor : Stream_Element_Offset := Data'First;
+                  begin
+                     for Value of Header loop
+                        Data (Cursor) := Value;
+                        Cursor := Cursor + 1;
+                     end loop;
+                     for Offset in 0 .. Count - 1 loop
+                        Data (Cursor) := Item.Upload_Buffer
+                          (((Item.Upload_First - 1 + Offset) mod
+                             Request_Stream_Buffer_Capacity) + 1);
+                        Cursor := Cursor + 1;
+                     end loop;
+                     Item.Upload_First :=
+                       ((Item.Upload_First - 1 + Count) mod
+                          Request_Stream_Buffer_Capacity) + 1;
+                     Item.Upload_Count := Item.Upload_Count - Count;
+                     Connection_Send_Window := Connection_Send_Window -
+                       Policy.Window_Size (Count);
+                     Item.Send_Window := Item.Send_Window -
+                       Policy.Window_Size (Count);
+                     if Final_Fragment then
+                        Item.Local_End := True;
+                     end if;
+                     Notify (Index);
+                     Last := Cursor - 1;
+                     Available := True;
+                     Output_Cursor := Index mod Streams'Length + 1;
+                     return;
+                  end;
+               elsif Item.Phase = Open
+                 and then Item.Head_Cursor > Bytes.Length (Item.Request_Head)
+                 and then Item.Streaming_Body
+                 and then Item.Upload_Finished
+                 and then Item.Upload_Count = 0
+                 and then Bytes.Length (Item.Request_Trailers) = 0
+                 and then not Item.Local_End
+               then
+                  declare
+                     Header : constant Frames.Wire_Header := Frames.Encode
+                       ((Length => 0,
+                         Kind => Frames.Data_Frame,
+                         Flags => Frames.End_Stream_Flag,
+                         Stream_ID => Item.ID));
+                     Cursor : Stream_Element_Offset := Data'First;
+                  begin
+                     for Value of Header loop
+                        Data (Cursor) := Value;
+                        Cursor := Cursor + 1;
+                     end loop;
+                     Item.Local_End := True;
                      Last := Cursor - 1;
                      Available := True;
                      Output_Cursor := Index mod Streams'Length + 1;
@@ -1215,18 +1439,53 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          end if;
       end Wait_Source;
 
+      procedure Upload_Wait_Source
+        (Handle    : Stream_Handle;
+         Required  : Natural;
+         FD        : out Flyology.IO.Descriptor;
+         Ready_Now : out Boolean) is
+      begin
+         if not Valid (Handle) then
+            FD := Flyology.IO.Invalid_Descriptor;
+            Ready_Now := True;
+            return;
+         end if;
+         Ready_Now := Streams (Handle.Slot).Failure /= No_Failure
+           or else Streams (Handle.Slot).Remote_End
+           or else Required <= Request_Stream_Buffer_Capacity -
+             Streams (Handle.Slot).Upload_Count;
+         if Ready_Now then
+            FD := Flyology.IO.Invalid_Descriptor;
+         else
+            if Streams (Handle.Slot).Wake_Signalled then
+               Flyology.Wake_Sources.Consume (Streams (Handle.Slot).Wake);
+               Streams (Handle.Slot).Wake_Signalled := False;
+            end if;
+            Flyology.Wake_Sources.Ensure (Streams (Handle.Slot).Wake);
+            FD := Flyology.Wake_Sources.Descriptor
+              (Streams (Handle.Slot).Wake);
+         end if;
+      end Upload_Wait_Source;
+
       procedure Cancel_Stream
         (Handle : Stream_Handle; Wake_Pump : out Boolean) is
       begin
          Wake_Pump := False;
          if Valid (Handle) then
-            Queue_Control_Frame
-              (Frames.Reset_Stream_Frame, 0,
-               Streams (Handle.Slot).ID,
-               U31_Payload (Natural (Frames.Cancel)));
+            --  A stream whose request field section has not entered the pump
+            --  is still idle at the peer. Sending RST_STREAM for that stream
+            --  would itself be a connection-level protocol error. Once any
+            --  header bytes have been pulled, continuation ordering ensures
+            --  the reset follows the complete field section on the wire.
+            if Streams (Handle.Slot).Head_Cursor > 1 then
+               Queue_Control_Frame
+                 (Frames.Reset_Stream_Frame, 0,
+                  Streams (Handle.Slot).ID,
+                  U31_Payload (Natural (Frames.Cancel)));
+               Wake_Pump := True;
+            end if;
             Streams (Handle.Slot).Remote_End := True;
             Streams (Handle.Slot).Phase := Complete;
-            Wake_Pump := True;
          end if;
       end Cancel_Stream;
 
@@ -1568,6 +1827,18 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             end if;
 
             if not Progress then
+               if not Have_Output then
+                  --  Observe protocol work one final time immediately before
+                  --  sleeping.  Work can be published while this iteration
+                  --  processes input, and outbound wakeups intentionally
+                  --  coalesce until the driver's wait consumes them.
+                  State.Streams.Pull_Output
+                    (Output, Output_Last, Have_Output);
+                  Output_Cursor := Output'First;
+               end if;
+            end if;
+
+            if not Progress then
                Drivers.Wait
                  (IO, State.Outbound,
                   (if Have_Output then Drivers.Duplex_Interest
@@ -1647,6 +1918,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
      (Item          : in out Session;
       Header_Block  : Stream_Element_Array;
       Retained_Body : Bytes.Unbounded_Bytes;
+      Streaming     : Boolean;
       Head_Request  : Boolean;
       Handle        : out Stream_Handle;
       Accepted      : out Boolean) is
@@ -1655,7 +1927,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          then null else new Bytes.Unbounded_Bytes'(Retained_Body));
    begin
       Item.State.Streams.Open
-        (Header_Block, Owned_Body, Head_Request, Handle, Accepted);
+        (Header_Block, Owned_Body, Streaming, Head_Request, Handle, Accepted);
       if Accepted then
          Drivers.Signal (Item.State.Outbound);
       elsif Owned_Body /= null then
@@ -1668,6 +1940,23 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          end if;
          raise;
    end Open;
+
+   procedure Write_Request_Data
+     (Item          : in out Session;
+      Handle        : Stream_Handle;
+      Data          : Stream_Element_Array;
+      Finished      : Boolean;
+      Trailer_Block : Stream_Element_Array;
+      Result        : out Upload_Result)
+   is
+      Wake_Pump : Boolean;
+   begin
+      Item.State.Streams.Write_Request_Data
+        (Handle, Data, Finished, Trailer_Block, Result, Wake_Pump);
+      if Wake_Pump then
+         Drivers.Signal (Item.State.Outbound);
+      end if;
+   end Write_Request_Data;
 
    procedure Poll_Head
      (Item    : in out Session;
@@ -1707,6 +1996,17 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    begin
       Item.State.Streams.Wait_Source (Handle, FD, Ready_Now);
    end Wait_Source;
+
+   procedure Upload_Wait_Source
+     (Item      : in out Session;
+      Handle    : Stream_Handle;
+      Required  : Natural;
+      FD        : out Flyology.IO.Descriptor;
+      Ready_Now : out Boolean) is
+   begin
+      Item.State.Streams.Upload_Wait_Source
+        (Handle, Required, FD, Ready_Now);
+   end Upload_Wait_Source;
 
    procedure Cancel_Stream (Item : in out Session; Handle : Stream_Handle) is
       Wake_Pump : Boolean;

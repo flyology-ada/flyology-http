@@ -74,10 +74,12 @@ fi
 cd "$http_root"
 prepare_stress_rts
 "$alr" exec -- env -u GPR_CONFIG gprbuild \
-  --RTS="$stress_rts" -p -P tests/http_tests.gpr \
+  --RTS="$stress_rts" --subdirs=http3-stress -p \
+  -P tests/http_tests.gpr \
   http3_stress_runtime_probe.adb http3_h3spec_server.adb \
   http3_client_stress_probe.adb
-"$http_root/tests/bin/http3_stress_runtime_probe" "$loop_pool_size"
+"$http_root/tests/bin/http3-stress/http3_stress_runtime_probe" \
+  "$loop_pool_size"
 
 server_pid=
 cleanup () {
@@ -108,7 +110,7 @@ await_ready () {
 }
 
 server_log="$http_root/build/oracle/ada-h3-stress.log"
-"$http_root/tests/bin/http3_h3spec_server" \
+"$http_root/tests/bin/http3-stress/http3_h3spec_server" \
   "$port" "$peak_concurrency" "$loop_pool_size" 2.0 \
   >"$server_log" 2>&1 &
 server_pid=$!
@@ -124,7 +126,7 @@ oracle_log="$http_root/build/oracle/aioquic-h3-stress-server.log"
   --port "$oracle_port" >"$oracle_log" 2>&1 &
 server_pid=$!
 await_ready "$server_pid" "$oracle_log" 'aioquic HTTP/3 oracle listening'
-"$http_root/tests/bin/http3_client_stress_probe" \
+"$http_root/tests/bin/http3-stress/http3_client_stress_probe" \
   "$client_workers" "$client_requests" "$oracle_port" "$loop_pool_size"
 
 printf '%s\n' 'HTTP/3 stress: PASS hostile input, server churn, and client concurrency'
