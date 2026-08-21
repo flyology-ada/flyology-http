@@ -47,8 +47,8 @@ package Flyology.HTTP.Server.Metrics is
       Route          : String;
       Status         : Natural;
       Elapsed        : Duration;
-      Request_Bytes  : Natural;
-      Response_Bytes : Natural) is abstract;
+      Request_Bytes  : Body_Size;
+      Response_Bytes : Body_Size) is abstract;
 
    --  Increment one bounded failure or lifecycle event.
    --  @param Item Metric sink
@@ -68,8 +68,8 @@ package Flyology.HTTP.Server.Metrics is
    type Snapshot is record
       Active         : Natural;
       Requests       : Natural;
-      Request_Bytes  : Natural;
-      Response_Bytes : Natural;
+      Request_Bytes  : Body_Size;
+      Response_Bytes : Body_Size;
       Latency_Total  : Duration;
       Latency_Max    : Duration;
       Series         : Natural;
@@ -100,8 +100,8 @@ package Flyology.HTTP.Server.Metrics is
       Route          : String;
       Status         : Natural;
       Elapsed        : Duration;
-      Request_Bytes  : Natural;
-      Response_Bytes : Natural);
+      Request_Bytes  : Body_Size;
+      Response_Bytes : Body_Size);
 
    --  Increment one bounded in-memory event counter.
    --  @param Item In-memory sink
@@ -137,8 +137,8 @@ private
          Route          : String;
          Status         : Natural;
          Elapsed        : Duration;
-         Request_Bytes  : Natural;
-         Response_Bytes : Natural);
+         Request_Bytes  : Body_Size;
+         Response_Bytes : Body_Size);
       procedure Count (Kind : Event_Kind);
       function Read return Snapshot;
    private

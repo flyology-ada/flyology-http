@@ -243,7 +243,7 @@ package Flyology.HTTP.Server.Applications is
    --  Return decoded request-body bytes observed so far.
    --  @param Item Request exchange
    --  @return Decoded request bytes
-   function Request_Body_Bytes (Item : Exchange) return Natural;
+   function Request_Body_Bytes (Item : Exchange) return Body_Size;
 
    --  Stream decoded request bytes under the current absolute deadline.
    --  @param Item Request exchange configured for Stream_Body
@@ -497,7 +497,7 @@ package Flyology.HTTP.Server.Applications is
    --  Return response payload bytes written, excluding suppressed HEAD data.
    --  @param Item Request exchange
    --  @return Observed payload bytes
-   function Response_Bytes (Item : Exchange) return Natural;
+   function Response_Bytes (Item : Exchange) return Body_Size;
 
    --  Mark response framing unsafe and require connection close. Error
    --  middleware uses this after a failure once response bytes may exist.
@@ -519,7 +519,7 @@ package Flyology.HTTP.Server.Applications is
    --  @param Item Active request exchange
    --  @param Maximum New decoded-body maximum
    procedure Narrow_Body_Limit
-     (Item : in out Exchange; Maximum : Natural);
+     (Item : in out Exchange; Maximum : Body_Size);
 
    --  Configure routing metadata before invoking application components.
    --  This integration operation is intended for Flyology router packages.
@@ -615,7 +615,7 @@ private
       Extra_Headers     : Unbounded_String;
       Response_Value    : Response_State := Not_Started;
       Status_Value      : Natural := 0;
-      Response_Length   : Natural := 0;
+      Response_Length   : Body_Size := 0;
    end record;
 
 end Flyology.HTTP.Server.Applications;

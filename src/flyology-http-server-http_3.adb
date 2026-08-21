@@ -36,6 +36,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
    ALPN : constant Stream_Element_Array :=
      (1 => Character'Pos ('h'), 2 => Character'Pos ('3'));
    Maximum_Request_Streams : constant Positive := 8;
+   Maximum_Buffered_Request_Body : constant Body_Size := 1_024 * 1_024;
    Response_Chunk_Size : constant Positive := 1_024;
 
    type Received_Datagram is record
@@ -553,7 +554,7 @@ package body Flyology.HTTP.Server.HTTP_3 is
       Stream           : QUIC.Stream_ID := 0;
       Payload_Bytes    : Bytes.Unbounded_Bytes;
       Body_Cursor      : Natural := 1;
-      Body_Limit       : Natural := Max_Request_Body;
+      Body_Limit       : Body_Size := Max_Request_Body;
       Deadline         : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
       Head_Request     : Boolean := False;
       Response_Begun   : Boolean := False;
@@ -567,9 +568,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
      (Item : in out Stream_Backend; Deadline : Ada.Real_Time.Time);
    overriding function Body_Complete
      (Item : Stream_Backend) return Boolean;
-   overriding function Body_Bytes (Item : Stream_Backend) return Natural;
+   overriding function Body_Bytes (Item : Stream_Backend) return Body_Size;
    overriding procedure Narrow_Body_Limit
-     (Item : in out Stream_Backend; Maximum : Natural);
+     (Item : in out Stream_Backend; Maximum : Body_Size);
    overriding procedure Read_Body
      (Item     : in out Stream_Backend;
       Data     : out Stream_Element_Array;
@@ -641,15 +642,15 @@ package body Flyology.HTTP.Server.HTTP_3 is
      (Item : Stream_Backend) return Boolean is
      (Item.Body_Cursor > Bytes.Length (Item.Payload_Bytes));
 
-   overriding function Body_Bytes (Item : Stream_Backend) return Natural is
-     (Bytes.Length (Item.Payload_Bytes));
+   overriding function Body_Bytes (Item : Stream_Backend) return Body_Size is
+     (Body_Size (Bytes.Length (Item.Payload_Bytes)));
 
    overriding procedure Narrow_Body_Limit
-     (Item : in out Stream_Backend; Maximum : Natural) is
+     (Item : in out Stream_Backend; Maximum : Body_Size) is
    begin
       if Maximum > Item.Body_Limit then
          raise Protocol_Error with "request body limit cannot be widened";
-      elsif Bytes.Length (Item.Payload_Bytes) > Maximum then
+      elsif Body_Size (Bytes.Length (Item.Payload_Bytes)) > Maximum then
          raise Payload_Too_Large;
       end if;
       Item.Body_Limit := Maximum;
@@ -1558,9 +1559,9 @@ package body Flyology.HTTP.Server.HTTP_3 is
                if Slot = 0 or else not Requests (Slot).Saw_Headers then
                   raise Protocol_Error with
                     "HTTP/3 DATA preceded request HEADERS";
-               elsif Bytes.Length (Requests (Slot).Payload_Bytes)
-                 + Value.Data_Length >
-                 Max_Request_Body
+               elsif Body_Size (Value.Data_Length) >
+                 Maximum_Buffered_Request_Body -
+                   Body_Size (Bytes.Length (Requests (Slot).Payload_Bytes))
                then
                   raise Payload_Too_Large;
                elsif Value.Data_Length > 0 then

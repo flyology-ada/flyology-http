@@ -8,7 +8,7 @@ package body Flyology.HTTP.Server.Connection_Handlers is
    procedure Serve
      (Item               : in out Flyology.HTTP.Server.Connection;
       Timeout            : Duration := 30.0;
-      Max_Body           : Natural := Max_Request_Body;
+      Max_Body           : Body_Size := Max_Request_Body;
       Buffer_Body        : Boolean := True;
       Max_Requests       : Natural := 1_000;
       Max_Connection_Age : Duration := 300.0;

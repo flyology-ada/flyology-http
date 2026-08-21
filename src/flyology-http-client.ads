@@ -255,7 +255,7 @@ package Flyology.HTTP.Client is
      (Item : in out Request; Value : Ada.Streams.Stream_Element_Array);
 
    --  Maximum representable request body byte count.
-   subtype Body_Size is Long_Long_Integer range 0 .. Long_Long_Integer'Last;
+   subtype Body_Size is Flyology.HTTP.Body_Size;
 
    --  Known or unknown streaming request body length. Unknown bodies use the
    --  active protocol's streaming framing; HTTP/1.1 uses chunked coding.

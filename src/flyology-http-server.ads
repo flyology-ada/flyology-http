@@ -13,8 +13,10 @@ package Flyology.HTTP.Server is
 
    --  Maximum bytes before the terminating empty request-header line.
    Max_Header_Bytes : constant := 16 * 1_024;
-   --  Maximum decoded request representation.
-   Max_Request_Body : constant := 1_024 * 1_024;
+   --  Maximum decoded streaming request representation. The 50 TB bound
+   --  admits the current Amazon S3 object ceiling while remaining explicit.
+   --  Buffered operations remain independently bounded by Ingress_Budget.
+   Max_Request_Body : constant Body_Size := 50_000_000_000_000;
    --  Default maximum retained or reassembled inbound WebSocket message.
    Default_Max_WebSocket_Message : constant := 1_024 * 1_024;
    --  Maximum supported inbound or generated WebSocket frame payload. Callers
@@ -211,7 +213,7 @@ package Flyology.HTTP.Server is
       Value       : out Request;
       Peer_Closed : out Boolean;
       Timeout     : Duration := 30.0;
-      Max_Body    : Natural := Max_Request_Body;
+      Max_Body    : Body_Size := Max_Request_Body;
       Token       : access Flyology.Cancellation.Token := null);
 
    --  Read and validate a request head with distinct absolute budgets for the
@@ -232,7 +234,7 @@ package Flyology.HTTP.Server is
       Peer_Closed     : out Boolean;
       Header_Timeout  : Duration;
       Request_Timeout : Duration;
-      Max_Body        : Natural := Max_Request_Body;
+      Max_Body        : Body_Size := Max_Request_Body;
       Token           : access Flyology.Cancellation.Token := null);
 
    --  Accept the current request body, sending 100 Continue when requested.
@@ -293,7 +295,7 @@ package Flyology.HTTP.Server is
    --  @param Maximum New decoded-body maximum
    procedure Narrow_Body_Limit
      (Item    : in out Connection;
-      Maximum : Natural);
+      Maximum : Body_Size);
 
    --  Buffer the current decoded body into Value under the configured shared
    --  ingress budget. This is the routed equivalent of Read_Request's body
@@ -332,7 +334,7 @@ package Flyology.HTTP.Server is
       Value       : out Request;
       Peer_Closed : out Boolean;
       Timeout     : Duration := 30.0;
-      Max_Body    : Natural := Max_Request_Body;
+      Max_Body    : Body_Size := Max_Request_Body;
       Token       : access Flyology.Cancellation.Token := null);
 
    --  Send one complete fixed-length response. Reason is derived from Status.
@@ -674,9 +676,9 @@ private
       Current_Is_Head  : Boolean := False;
       Current_Version  : HTTP_Version := HTTP_1_1;
       Body_Mode        : Request_Body_Mode := No_Body;
-      Body_Remaining   : Natural := 0;
-      Body_Total       : Natural := 0;
-      Body_Limit       : Natural := 0;
+      Body_Remaining   : Body_Size := 0;
+      Body_Total       : Body_Size := 0;
+      Body_Limit       : Body_Size := 0;
       Body_Done        : Boolean := True;
       Body_Accepted    : Boolean := True;
       Continue_Pending : Boolean := False;

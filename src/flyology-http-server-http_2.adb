@@ -76,10 +76,10 @@ package body Flyology.HTTP.Server.HTTP_2 is
       Discarding     : Boolean := False;
       Handler_Done   : Boolean := False;
       Failure        : Failure_Kind := No_Failure;
-      Body_Limit     : Natural := Max_Request_Body;
-      Body_Bytes     : Natural := 0;
+      Body_Limit     : Body_Size := Max_Request_Body;
+      Body_Bytes     : Body_Size := 0;
       Has_Length     : Boolean := False;
-      Expected_Length : Long_Long_Integer := 0;
+      Expected_Length : Body_Size := 0;
       Input          : Byte_Storage;
       Input_First    : Positive := 1;
       Input_Count    : Natural range 0 .. Stream_Buffer_Capacity := 0;
@@ -106,7 +106,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
         (Stream_ID       : Frames.Stream_Identifier;
          End_Stream      : Boolean;
          Has_Length      : Boolean;
-         Expected_Length : Long_Long_Integer;
+         Expected_Length : Body_Size;
          Slot            : out Natural;
          Accepted        : out Boolean);
       function Find (Stream_ID : Frames.Stream_Identifier) return Natural;
@@ -127,7 +127,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          End_Stream : Boolean;
          Accepted   : out Boolean);
       procedure Narrow_Body_Limit
-        (Slot : Positive; Maximum : Natural; Accepted : out Boolean);
+        (Slot : Positive; Maximum : Body_Size; Accepted : out Boolean);
       procedure Read_Body
         (Slot     : Positive;
          Data     : out Stream_Element_Array;
@@ -137,7 +137,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
       procedure Start_Discard
         (Slot : Positive; Finished : out Boolean; Failed : out Boolean);
       function Body_Complete (Slot : Positive) return Boolean;
-      function Body_Bytes (Slot : Positive) return Natural;
+      function Body_Bytes (Slot : Positive) return Body_Size;
       procedure Queue_Response_Head
         (Slot   : Positive;
          Block  : Stream_Element_Array;
@@ -225,9 +225,9 @@ package body Flyology.HTTP.Server.HTTP_2 is
      (Item : in out Stream_Backend; Deadline : Ada.Real_Time.Time);
    overriding function Body_Complete
      (Item : Stream_Backend) return Boolean;
-   overriding function Body_Bytes (Item : Stream_Backend) return Natural;
+   overriding function Body_Bytes (Item : Stream_Backend) return Body_Size;
    overriding procedure Narrow_Body_Limit
-     (Item : in out Stream_Backend; Maximum : Natural);
+     (Item : in out Stream_Backend; Maximum : Body_Size);
    overriding procedure Read_Body
      (Item     : in out Stream_Backend;
       Data     : out Stream_Element_Array;
@@ -481,7 +481,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
         (Stream_ID       : Frames.Stream_Identifier;
          End_Stream      : Boolean;
          Has_Length      : Boolean;
-         Expected_Length : Long_Long_Integer;
+         Expected_Length : Body_Size;
          Slot            : out Natural;
          Accepted        : out Boolean)
       is
@@ -601,11 +601,17 @@ package body Flyology.HTTP.Server.HTTP_2 is
          end if;
          Connection_Receive_Window := Connection_Result.Window;
          Streams (Index).Receive_Window := Stream_Result.Window;
-         Streams (Index).Body_Bytes := Streams (Index).Body_Bytes +
-           Natural (Data'Length);
-         if Streams (Index).Body_Bytes > Streams (Index).Body_Limit then
+         if Streams (Index).Failure = Body_Limit_Failure then
+            null;
+         elsif Body_Size (Data'Length) >
+           Streams (Index).Body_Limit - Streams (Index).Body_Bytes
+         then
+            Streams (Index).Body_Bytes := Streams (Index).Body_Limit + 1;
             Streams (Index).Failure := Body_Limit_Failure;
             Streams (Index).Discarding := True;
+         else
+            Streams (Index).Body_Bytes := Streams (Index).Body_Bytes +
+              Body_Size (Data'Length);
          end if;
          if Streams (Index).Discarding then
             Immediate_Credit := Immediate_Credit + Natural (Data'Length);
@@ -633,8 +639,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          if End_Stream then
             Streams (Index).Remote_End := True;
             if Streams (Index).Has_Length and then
-              Long_Long_Integer (Streams (Index).Body_Bytes) /=
-                Streams (Index).Expected_Length
+              Streams (Index).Body_Bytes /= Streams (Index).Expected_Length
             then
                declare
                   Ignored : Natural;
@@ -665,8 +670,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          end if;
          Streams (Index).Remote_End := True;
          if Streams (Index).Has_Length and then
-           Long_Long_Integer (Streams (Index).Body_Bytes) /=
-             Streams (Index).Expected_Length
+           Streams (Index).Body_Bytes /= Streams (Index).Expected_Length
          then
             declare
                Ignored : Natural;
@@ -681,7 +685,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
       end Publish_Trailers;
 
       procedure Narrow_Body_Limit
-        (Slot : Positive; Maximum : Natural; Accepted : out Boolean) is
+        (Slot : Positive; Maximum : Body_Size; Accepted : out Boolean) is
       begin
          Accepted := Streams (Slot).Phase = Open
            and then Maximum <= Streams (Slot).Body_Limit
@@ -760,7 +764,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
         (Streams (Slot).Phase /= Free and then Streams (Slot).Remote_End
          and then Streams (Slot).Input_Count = 0);
 
-      function Body_Bytes (Slot : Positive) return Natural is
+      function Body_Bytes (Slot : Positive) return Body_Size is
         (Streams (Slot).Body_Bytes);
 
       procedure Queue_Response_Head
@@ -1371,11 +1375,11 @@ package body Flyology.HTTP.Server.HTTP_2 is
      (Item : Stream_Backend) return Boolean is
      (Item.State.Streams.Body_Complete (Item.Slot));
 
-   overriding function Body_Bytes (Item : Stream_Backend) return Natural is
+   overriding function Body_Bytes (Item : Stream_Backend) return Body_Size is
      (Item.State.Streams.Body_Bytes (Item.Slot));
 
    overriding procedure Narrow_Body_Limit
-     (Item : in out Stream_Backend; Maximum : Natural)
+     (Item : in out Stream_Backend; Maximum : Body_Size)
    is
       Accepted : Boolean;
    begin
@@ -2059,7 +2063,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
       procedure Parse_Content_Length
         (Fields  : Flyology.HTTP.Headers.List;
          Present : out Boolean;
-         Value   : out Long_Long_Integer)
+         Value   : out Body_Size)
       is
          Text : Unbounded_String;
       begin
@@ -2080,14 +2084,14 @@ package body Flyology.HTTP.Server.HTTP_2 is
          for Character_Value of To_String (Text) loop
             if Character_Value not in '0' .. '9'
               or else Value >
-                (Long_Long_Integer'Last - Long_Long_Integer
+                (Body_Size'Last - Body_Size
                    (Character'Pos (Character_Value) -
                       Character'Pos ('0'))) / 10
             then
                raise Request_Message_Error with
                  "invalid HTTP/2 content-length";
             end if;
-            Value := Value * 10 + Long_Long_Integer
+            Value := Value * 10 + Body_Size
               (Character'Pos (Character_Value) - Character'Pos ('0'));
          end loop;
       end Parse_Content_Length;
@@ -2126,7 +2130,7 @@ package body Flyology.HTTP.Server.HTTP_2 is
          Accepted : Boolean;
          Slot : Natural;
          Has_Length : Boolean;
-         Length_Value : Long_Long_Integer;
+         Length_Value : Body_Size;
       begin
          HPACK.Decode_Request
            (Decoder, Bytes.To_Array (Header_Block), Trailers, Fields,
