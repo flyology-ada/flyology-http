@@ -7,20 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-21
+
 ### Added
 
 - Added exact 64-bit fixed-length server response streams through the raw and
   application APIs across HTTP/1.1, HTTP/2, and HTTP/3. Known-length streams
   emit `Content-Length` without retaining the whole response, while the
-  existing unknown-length API remains available.
+  existing unknown-length API remains available. ([PR #28])
 
 ### Fixed
 
 - Reject fixed-response overruns before transport writes, fail underruns at
   stream completion, isolate failed HTTP/2 and HTTP/3 streams, and preserve the
   declared representation length while suppressing `HEAD` response bodies.
+  ([PR #28])
 - Accept legal HTTP/2 `HEAD` responses that complete with an empty DATA frame
-  after advertising the representation's nonzero `Content-Length`.
+  after advertising the representation's nonzero `Content-Length`. ([PR #29])
 
 ## [0.1.1] - 2026-08-21
 
@@ -82,7 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release.
 
-[Unreleased]: https://github.com/flyology-ada/flyology-http/compare/flyology_http/v0.1.1...HEAD
+[Unreleased]: https://github.com/flyology-ada/flyology-http/compare/flyology_http/v0.1.2...HEAD
+[0.1.2]: https://github.com/flyology-ada/flyology-http/compare/flyology_http/v0.1.1...flyology_http/v0.1.2
 [0.1.1]: https://github.com/flyology-ada/flyology-http/compare/flyology_http/v0.1.0...flyology_http/v0.1.1
 [0.1.0]: https://github.com/flyology-ada/flyology-http/commit/398153b0cdaed1897124376682fcfba2845a3615
 [PR #9]: https://github.com/flyology-ada/flyology-http/pull/9
@@ -98,6 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [PR #24]: https://github.com/flyology-ada/flyology-http/pull/24
 [PR #25]: https://github.com/flyology-ada/flyology-http/pull/25
 [PR #27]: https://github.com/flyology-ada/flyology-http/pull/27
+[PR #28]: https://github.com/flyology-ada/flyology-http/pull/28
+[PR #29]: https://github.com/flyology-ada/flyology-http/pull/29
 [commit 83db8c4]: https://github.com/flyology-ada/flyology-http/commit/83db8c4d1da3303697c0c68d64682187bf71d93a
 [commit a3866c5]: https://github.com/flyology-ada/flyology-http/commit/a3866c57b7aa89ea2adade894c216efe83ad65a3
 [commit 7a4ec6c]: https://github.com/flyology-ada/flyology-http/commit/7a4ec6c326634ae06ad1efd94a01152bede68fba
