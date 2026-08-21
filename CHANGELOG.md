@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject fixed-response overruns before transport writes, fail underruns at
   stream completion, isolate failed HTTP/2 and HTTP/3 streams, and preserve the
   declared representation length while suppressing `HEAD` response bodies.
+- Accept legal HTTP/2 `HEAD` responses that complete with an empty DATA frame
+  after advertising the representation's nonzero `Content-Length`.
 
 ## [0.1.1] - 2026-08-21
 

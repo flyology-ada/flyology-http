@@ -232,6 +232,9 @@ procedure HTTP2_Server_Integration is
       X.Begin_Stream
         (200, "application/octet-stream",
          Content_Length => 5 * 1_024 * 1_024 * 1_024 + 9);
+      --  Let the server emit HEADERS before End_Stream. This deterministically
+      --  exercises the legal empty DATA END_STREAM completion path for HEAD.
+      delay 0.01;
       X.End_Stream;
    end Fixed_Head;
 

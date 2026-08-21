@@ -207,6 +207,14 @@ def serve_connection(
                     )
                 if state.scenario == "early-final":
                     pass
+                elif state.scenario == "head-empty-data":
+                    connection.send_headers(
+                        stream_id,
+                        [(":status", "200"), ("content-length", "5368709129")],
+                        end_stream=False,
+                    )
+                    connection.send_data(stream_id, b"", end_stream=True)
+                    state.record("head-empty-data", stream=stream_id)
                 elif state.scenario == "informational-end":
                     # Literal :status 103, carried in an invalid final
                     # informational HEADERS frame.
@@ -244,6 +252,7 @@ def serve_connection(
                     return True
                 if state.scenario in {
                     "early-final",
+                    "head-empty-data",
                     "informational-end",
                     "flood",
                     "shutdown-race",
@@ -345,6 +354,7 @@ def main() -> None:
             "upload",
             "refused-post",
             "early-final",
+            "head-empty-data",
             "reset-race",
             "zero-read",
             "bad-preface",
