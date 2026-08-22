@@ -214,5 +214,102 @@ The benchmark exercises the preserved synchronous server path. The additive
 scoped operations therefore add no per-request allocation or dispatch to this
 steady-state workload. The only shared synchronous changes are bounded parser
 transition helpers and unconditional initialization of the peer-closure
-status. A final campaign must repeat after the Flyology PR pin advances; this
-current comparison is evidence for `1810fc6`, not for the eventual PR head.
+status. This comparison is intermediate evidence for `1810fc6`; the final
+foundation campaign follows.
+
+## Final foundation campaign
+
+The final campaign used Flyology PR #60 at exact commit
+`195b2289cb436a404ea67a7784799be6daa55d6a` from
+`codex/composable-operations`. Before validation, the resolved `build`, `obj`,
+`tests/obj`, and `tests/bin` products were moved aside so the runtime and test
+programs were regenerated and rebuilt from the final pin. The final commands
+were:
+
+```sh
+env ALR=/tmp/codex-flyology-http-alr ./scripts/test.sh
+env ALR=/tmp/codex-flyology-http-alr ./scripts/docs.sh
+env ALR=/tmp/codex-flyology-http-alr \
+  ./showcases/run_http_benchmark.sh \
+  100000 128 128 18080 16 3 10000 release 20 128
+```
+
+The fresh authoritative suite passed the `flyology_iri` tests, the Flyology
+QUIC suite, all 61 HTTP behavioral programs, and all three connection-hook
+programs. The operation regressions passed on native and lightweight tasks,
+including plain and upgraded-TLS composition. GNATdoc and the HTTP, QUIC, and
+IRI search indexes generated without error; the output retained existing
+dependency documentation warnings.
+
+The parent validation serialized the consumer benchmarks. Eight unrelated
+`gnat1` processes from abandoned eight-day Flyology probe builds were paused
+before the final campaign. Start load averages were 8.36 / 13.73 / 28.39 and
+end load averages were 13.86 / 14.02 / 24.25 on the 16-logical-CPU host. The
+entire build and benchmark wrapper took 281.65 seconds and reported 14,058
+voluntary and 11,064,007 involuntary context switches. Its maximum resident
+set size was 620,150,784 bytes; that figure covers the wrapper's complete build
+and multi-process benchmark campaign, not one server process.
+
+### Final throughput
+
+Each cell lists the three requests/second samples in execution order. Median,
+minimum, and maximum are rounded to the nearest request/second.
+
+| Lane | Workload | Samples (requests/s) | Median | Min | Max |
+| --- | --- | --- | ---: | ---: | ---: |
+| Lightweight | Routed GET | 131,112.63 / 132,001.16 / 127,901.82 | 131,113 | 127,902 | 132,001 |
+| Lightweight | Middleware | 140,927.42 / 132,318.40 / 148,567.23 | 140,927 | 132,318 | 148,567 |
+| Lightweight | Buffered POST | 130,218.35 / 130,064.34 / 134,159.91 | 130,218 | 130,064 | 134,160 |
+| Lightweight | Streamed upload | 83,660.73 / 83,501.09 / 78,332.48 | 83,501 | 78,332 | 83,661 |
+| Lightweight | Admission | 125,274.73 / 130,981.25 / 131,120.35 | 130,981 | 125,275 | 131,120 |
+| Native | Routed GET | 65,198.25 / 63,707.59 / 63,863.08 | 63,863 | 63,708 | 65,198 |
+| Native | Middleware | 62,126.09 / 64,716.78 / 65,206.19 | 64,717 | 62,126 | 65,206 |
+| Native | Buffered POST | 65,184.34 / 63,206.31 / 66,177.11 | 65,184 | 63,206 | 66,177 |
+| Native | Streamed upload | 47,805.69 / 50,487.81 / 49,528.84 | 49,529 | 47,806 | 50,488 |
+| Native | Admission | 64,900.03 / 66,324.17 / 65,462.96 | 65,463 | 64,900 | 66,324 |
+
+All 3,000,000 measured final responses were status 200. No timeout or
+non-success response entered the table.
+
+### Final latency
+
+The table reports the median of the three final trial values in milliseconds.
+
+| Lane | Workload | Average (ms) | p50 (ms) | p90 (ms) | p99 (ms) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Lightweight | Routed GET | 1.0 | 1.0 | 1.1 | 1.4 |
+| Lightweight | Middleware | 0.9 | 0.9 | 1.1 | 2.3 |
+| Lightweight | Buffered POST | 1.0 | 1.0 | 1.1 | 1.2 |
+| Lightweight | Streamed upload | 1.5 | 1.4 | 2.3 | 4.1 |
+| Lightweight | Admission | 1.0 | 1.0 | 1.1 | 1.3 |
+| Native | Routed GET | 2.0 | 0.3 | 4.5 | 30.9 |
+| Native | Middleware | 2.0 | 0.3 | 5.1 | 25.4 |
+| Native | Buffered POST | 2.0 | 0.3 | 4.1 | 29.1 |
+| Native | Streamed upload | 2.6 | 0.6 | 6.1 | 33.7 |
+| Native | Admission | 1.9 | 0.3 | 4.1 | 29.3 |
+
+### Final baseline comparison
+
+| Lane | Workload | Baseline median | Final median | Change |
+| --- | --- | ---: | ---: | ---: |
+| Lightweight | Routed GET | 92,631 | 131,113 | +41.54% |
+| Lightweight | Middleware | 73,921 | 140,927 | +90.65% |
+| Lightweight | Buffered POST | 77,709 | 130,218 | +67.57% |
+| Lightweight | Streamed upload | 32,979 | 83,501 | +153.19% |
+| Lightweight | Admission | 90,836 | 130,981 | +44.20% |
+| Native | Routed GET | 61,626 | 63,863 | +3.63% |
+| Native | Middleware | 51,476 | 64,717 | +25.72% |
+| Native | Buffered POST | 57,601 | 65,184 | +13.16% |
+| Native | Streamed upload | 31,185 | 49,529 | +58.82% |
+| Native | Admission | 62,419 | 65,463 | +4.88% |
+
+Every final median is above its baseline median. The lightweight medians are
+also well above the earlier sample ranges, while native routed GET and
+admission remain close to baseline and the other native workloads improve.
+This rules out a material synchronous-path regression in the final consumer
+candidate. It does not establish that the operation changes caused the large
+throughput gains: the baseline and intermediate campaign ran while the stale
+compiler probes were active, whereas the final serialized campaign paused
+them. The valid conclusion is that the bounded parser factoring and additive
+operation APIs preserve the established performance profile under the final
+pin; absolute throughput remains local, load-sensitive evidence.
