@@ -7,6 +7,7 @@ with Flyology.HTTP_Chunk_Encoding;
 with Flyology.HTTP.Expect_Policy;
 with Flyology.HTTP.Server.WebSocket_Deflate;
 with Flyology.IO;
+with Flyology.Operations.Drivers;
 with Flyology.WebSocket_Deflate_Policy;
 with GNAT.Sockets;
 
@@ -19,14 +20,21 @@ package body Flyology.HTTP.Server is
    use type Flyology.WebSocket_Policy.Cursor_Phase;
    use type Flyology.HTTP.Fixed_Response_Policy.Write_Result;
    use type Flyology.HTTP.Fixed_Response_Policy.Finish_Result;
+   use type Flyology.IO.Connections.Drivers.Acquisition_Result;
+   use type Flyology.IO.Connections.Drivers.Step_Result;
+   use type Flyology.Operations.Driver_Event;
+   use type Flyology.Operations.Terminal_Outcome;
 
    package Chunk_Encoding renames Flyology.HTTP_Chunk_Encoding;
+   package Connection_Drivers renames
+     Flyology.IO.Connections.Drivers;
    package Expect_Policy renames Flyology.HTTP.Expect_Policy;
    package Fixed_Response_Policy renames
      Flyology.HTTP.Fixed_Response_Policy;
    package WebSocket_Deflate_Policy renames
      Flyology.WebSocket_Deflate_Policy;
    package WebSocket_Policy renames Flyology.WebSocket_Policy;
+   package Operation_Drivers renames Flyology.Operations.Drivers;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
    pragma Compile_Time_Error
@@ -277,6 +285,9 @@ package body Flyology.HTTP.Server is
       end loop;
       return Result;
    end Text;
+
+   Continue_Response : constant Ada.Streams.Stream_Element_Array :=
+     Bytes ("HTTP/1.1 100 Continue" & CRLF & CRLF);
 
    function Lower (Value : String) return String is
      (Ada.Characters.Handling.To_Lower (Value));
@@ -858,47 +869,6 @@ package body Flyology.HTTP.Server is
       Timeout : Duration;
       Token   : access Flyology.Cancellation.Token);
 
-   procedure Read_Line
-     (Item       : in out Connection;
-      Value      : out Unbounded_String;
-      Started    : Ada.Real_Time.Time;
-      Timeout    : Duration;
-      Token      : access Flyology.Cancellation.Token;
-      Maximum    : Natural)
-   is
-      Marker : Natural;
-      Closed : Boolean;
-   begin
-      loop
-         declare
-            Available : constant String := To_String (Item.Pending);
-         begin
-            Marker := Ada.Strings.Fixed.Index (Available, CRLF);
-            exit when Marker /= 0;
-            if Available'Length > Maximum then
-               raise Protocol_Error with "HTTP line is too large";
-            end if;
-         end;
-         Receive_More
-           (Item, Closed, Started, Timeout, Token, Maximum => Maximum + 2);
-         if Closed then
-            raise Protocol_Error with "peer closed inside HTTP line";
-         end if;
-      end loop;
-      declare
-         Available : constant String := To_String (Item.Pending);
-      begin
-         if Marker - 1 > Maximum then
-            raise Protocol_Error with "HTTP line is too large";
-         end if;
-         Value :=
-           (if Marker = Available'First then Null_Unbounded_String
-            else To_Unbounded_String
-              (Available (Available'First .. Marker - 1)));
-      end;
-      Consume (Item, Marker + 1);
-   end Read_Line;
-
    function Parse_Chunk_Size
      (Line : String; Maximum_Body : Body_Size) return Body_Size
    is
@@ -1029,6 +999,75 @@ package body Flyology.HTTP.Server is
       return Result;
    end Parse_Chunk_Size;
 
+   type Request_Head_Input_Status is
+     (Request_Input_Needed, Request_Input_Ready, Request_Peer_Closed);
+
+   procedure Initialize_Request_Head
+     (Item            : in out Connection;
+      Value           : out Request;
+      Peer_Closed     : out Boolean;
+      Started         : Ada.Real_Time.Time;
+      Request_Timeout : Duration;
+      Body_Limit      : Body_Size)
+   is
+   begin
+      if Item.State /= Reading_HTTP then
+         raise Program_Error with "HTTP connection is not reading requests";
+      elsif not Item.Body_Done then
+         raise Program_Error with
+           "previous HTTP request body has not been consumed";
+      end if;
+      Release_Buffered (Item);
+      Item.Response_Begun := False;
+      Item.Current_Is_Head := False;
+      Item.Current_Version := HTTP_1_1;
+      Peer_Closed := False;
+      Value.Method_Value := Null_Unbounded_String;
+      Value.Target_Value := Null_Unbounded_String;
+      Value.Body_Value := Null_Unbounded_String;
+      Value.Authority_Value := Null_Unbounded_String;
+      Value.Version_Value := HTTP_1_1;
+      Value.Protocol_Value := HTTP_1_1_Protocol;
+      Value.Header_Block := Null_Unbounded_String;
+      Value.Physical_Header_Block := Null_Unbounded_String;
+      Value.Keep_Alive := False;
+      Item.Trailer_Block := Null_Unbounded_String;
+      Item.Body_Mode := No_Body;
+      Item.Body_Remaining := 0;
+      Item.Body_Total := 0;
+      Item.Body_Limit := Body_Limit;
+      Item.Body_Done := True;
+      Item.Body_Accepted := True;
+      Item.Continue_Pending := False;
+      Item.Chunk_CRLF_Pending := False;
+      Item.Reading_Trailers := False;
+      Item.Trailer_Bytes := 0;
+      Item.Body_Started := Started;
+      Item.Body_Timeout := Request_Timeout;
+   end Initialize_Request_Head;
+
+   function Inspect_Request_Head_Input
+     (Item         : in out Connection;
+      Input_Closed : Boolean;
+      Header_End   : out Natural) return Request_Head_Input_Status
+   is
+      Available : constant String := To_String (Item.Pending);
+   begin
+      Header_End := Ada.Strings.Fixed.Index (Available, CRLF & CRLF);
+      if Header_End /= 0 then
+         return Request_Input_Ready;
+      elsif Available'Length > Max_Header_Bytes then
+         raise Protocol_Error with "HTTP request headers are too large";
+      elsif not Input_Closed then
+         return Request_Input_Needed;
+      elsif Available'Length = 0 then
+         Item.State := Terminal;
+         return Request_Peer_Closed;
+      else
+         raise Protocol_Error with "peer closed inside HTTP headers";
+      end if;
+   end Inspect_Request_Head_Input;
+
    procedure Read_Request_Head
      (Item        : in out Connection;
       Value       : out Request;
@@ -1046,75 +1085,51 @@ package body Flyology.HTTP.Server is
          Token           => Token);
    end Read_Request_Head;
 
-   procedure Read_Request_Head
+   function Effective_Header_Timeout
+     (Header_Timeout, Request_Timeout : Duration) return Duration is
+     (if Header_Timeout < 0.0
+      then Request_Timeout
+      elsif Request_Timeout < 0.0
+      then Header_Timeout
+      else Duration'Min (Header_Timeout, Request_Timeout));
+
+   procedure Read_Request_Head_Impl
      (Item            : in out Connection;
       Value           : out Request;
       Peer_Closed     : out Boolean;
       Header_Timeout  : Duration;
       Request_Timeout : Duration;
       Max_Body        : Body_Size := Max_Request_Body;
-      Token           : access Flyology.Cancellation.Token := null)
+      Token           : access Flyology.Cancellation.Token;
+      Started         : Ada.Real_Time.Time;
+      Initialize_State : Boolean)
    is
-      Header_End : Natural := 0;
-      Closed     : Boolean;
+      Header_End        : Natural := 0;
+      Closed            : Boolean := False;
+      Input_Status      : Request_Head_Input_Status;
       Declared_Body_Size : Body_Size := 0;
       Chunked    : Boolean := False;
       Body_Limit : constant Body_Size := Body_Size'Min
         (Max_Body, Max_Request_Body);
-      Started    : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
-      Effective_Header_Timeout : constant Duration :=
-        (if Header_Timeout < 0.0
-         then Request_Timeout
-         elsif Request_Timeout < 0.0
-         then Header_Timeout
-         else Duration'Min (Header_Timeout, Request_Timeout));
    begin
-      if Item.State /= Reading_HTTP then
-         raise Program_Error with "HTTP connection is not reading requests";
-      elsif not Item.Body_Done then
-         raise Program_Error with
-           "previous HTTP request body has not been consumed";
-      end if;
-      Release_Buffered (Item);
-      Item.Response_Begun := False;
-      Item.Current_Is_Head := False;
-      Item.Current_Version := HTTP_1_1;
       Peer_Closed := False;
-      Value.Body_Value := Null_Unbounded_String;
-      Value.Authority_Value := Null_Unbounded_String;
-      Item.Trailer_Block := Null_Unbounded_String;
-      Item.Body_Mode := No_Body;
-      Item.Body_Remaining := 0;
-      Item.Body_Total := 0;
-      Item.Body_Limit := Body_Limit;
-      Item.Body_Done := True;
-      Item.Body_Accepted := True;
-      Item.Continue_Pending := False;
-      Item.Chunk_CRLF_Pending := False;
-      Item.Body_Started := Started;
-      Item.Body_Timeout := Request_Timeout;
+      if Initialize_State then
+         Initialize_Request_Head
+           (Item, Value, Peer_Closed, Started, Request_Timeout, Body_Limit);
+      end if;
 
       loop
-         declare
-            Available : constant String := To_String (Item.Pending);
-         begin
-            Header_End := Ada.Strings.Fixed.Index (Available, CRLF & CRLF);
-            exit when Header_End /= 0;
-            if Available'Length > Max_Header_Bytes then
-               raise Protocol_Error with "HTTP request headers are too large";
-            end if;
-         end;
-         Receive_More
-           (Item, Closed, Started, Effective_Header_Timeout, Token,
-            Maximum => Max_Header_Bytes + 4);
-         if Closed then
-            if Length (Item.Pending) = 0 then
-               Peer_Closed := True;
-               Item.State := Terminal;
-               return;
-            end if;
-            raise Protocol_Error with "peer closed inside HTTP headers";
+         Input_Status :=
+           Inspect_Request_Head_Input (Item, Closed, Header_End);
+         exit when Input_Status = Request_Input_Ready;
+         if Input_Status = Request_Peer_Closed then
+            Peer_Closed := True;
+            return;
          end if;
+         Receive_More
+           (Item, Closed, Started,
+            Effective_Header_Timeout (Header_Timeout, Request_Timeout), Token,
+            Maximum => Max_Header_Bytes + 4);
       end loop;
 
       if Header_End - 1 > Max_Header_Bytes then
@@ -1328,6 +1343,284 @@ package body Flyology.HTTP.Server is
          else Header_Has_Token (Value, "Connection", "keep-alive")
            and then not Header_Has_Token (Value, "Connection", "close"));
       Item.Request_Close := not Value.Keep_Alive;
+   end Read_Request_Head_Impl;
+
+   procedure Record_Timeout
+     (Failure : in out Ada.Exceptions.Exception_Occurrence) is
+   begin
+      raise Flyology.IO.Timeout_Error with
+        "HTTP request deadline expired";
+   exception
+      when Error : others =>
+         Ada.Exceptions.Save_Occurrence (Failure, Error);
+   end Record_Timeout;
+
+   procedure Complete_Head
+     (Item   : in out Read_Request_Head_Operation;
+      Result : Flyology.Operations.Terminal_Outcome)
+   is
+      Final_Result : Flyology.Operations.Terminal_Outcome := Result;
+   begin
+      if Item.IO_Started then
+         begin
+            Release_IO
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all));
+            Item.IO_Started := False;
+         exception
+            when Error : others =>
+               if Final_Result /= Flyology.Operations.Failed then
+                  Ada.Exceptions.Save_Occurrence (Item.Failure, Error);
+               end if;
+               Final_Result := Flyology.Operations.Failed;
+         end;
+      end if;
+      Operation_Drivers.Complete (Item, Final_Result);
+   end Complete_Head;
+
+   procedure Receive_Head_Step
+     (Item : in out Read_Request_Head_Operation)
+   is
+      Current : constant Natural := Length (Item.Item_Handle.Pending);
+      Room    : constant Natural := Max_Header_Bytes + 4 - Current;
+      Count   : constant Natural := Natural'Min (Item.Buffer'Length, Room);
+      Last    : Ada.Streams.Stream_Element_Offset;
+      Result  : Connection_Drivers.Step_Result;
+   begin
+      if Count = 0 then
+         raise Protocol_Error with "HTTP request headers are too large";
+      end if;
+      Receive_IO
+        (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+         Item.Buffer
+           (Item.Buffer'First ..
+            Item.Buffer'First
+              + Ada.Streams.Stream_Element_Offset (Count - 1)),
+         Last, Result);
+      case Result is
+         when Connection_Drivers.Made_Progress =>
+            if Last >= Item.Buffer'First then
+               Append
+                 (Item.Item_Handle.Pending,
+                  Text (Item.Buffer (Item.Buffer'First .. Last)));
+            end if;
+            Operation_Drivers.Reschedule (Item);
+         when Connection_Drivers.Need_Read |
+              Connection_Drivers.Need_Write =>
+            Arm_IO_Transport
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+               Item, Result);
+         when Connection_Drivers.Peer_Closed =>
+            declare
+               Header_End : Natural;
+               Status     : constant Request_Head_Input_Status :=
+                 Inspect_Request_Head_Input
+                   (Connection (Item.Item_Handle.all), Input_Closed => True,
+                    Header_End => Header_End);
+            begin
+               if Status /= Request_Peer_Closed then
+                  raise Program_Error with
+                    "closed HTTP head did not terminalize";
+               end if;
+               Item.Peer_Closed := True;
+               Complete_Head (Item, Flyology.Operations.Succeeded);
+            end;
+      end case;
+   end Receive_Head_Step;
+
+   procedure Advance_Head
+     (Item : in out Read_Request_Head_Operation)
+   is
+      Header_End : Natural;
+      Status     : constant Request_Head_Input_Status :=
+        Inspect_Request_Head_Input
+          (Connection (Item.Item_Handle.all), Input_Closed => False,
+           Header_End => Header_End);
+      Acquisition : Connection_Drivers.Acquisition_Result;
+   begin
+      case Status is
+         when Request_Input_Ready =>
+            Read_Request_Head_Impl
+              (Connection (Item.Item_Handle.all), Item.Value_Result,
+               Item.Peer_Closed,
+               Item.Header_Timeout, Item.Request_Timeout, Item.Max_Body,
+               Item.Token_Handle, Item.Started, Initialize_State => False);
+            Complete_Head (Item, Flyology.Operations.Succeeded);
+         when Request_Peer_Closed =>
+            Item.Peer_Closed := True;
+            Complete_Head (Item, Flyology.Operations.Succeeded);
+         when Request_Input_Needed =>
+            if not Item.IO_Started then
+               Item.IO_Started := True;
+               Start_IO
+                 (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+                  Item,
+                  Effective_Header_Timeout
+                    (Item.Header_Timeout, Item.Request_Timeout),
+                  Item.Token_Handle, Acquisition);
+               Item.Acquiring :=
+                 Acquisition = Connection_Drivers.Need_Acquire_Readiness;
+               if Item.Acquiring then
+                  Arm_IO_Acquisition
+                    (Operation_Transport'Class
+                       (Item.Item_Handle.Channel.all), Item);
+                  return;
+               end if;
+            end if;
+            Receive_Head_Step (Item);
+      end case;
+   end Advance_Head;
+
+   overriding procedure Drive
+     (Item  : in out Read_Request_Head_Operation;
+      Event : Flyology.Operations.Driver_Event)
+   is
+      Acquisition : Connection_Drivers.Acquisition_Result;
+   begin
+      if Event = Flyology.Operations.Deadline_Reached then
+         Record_Timeout (Item.Failure);
+         Complete_Head (Item, Flyology.Operations.Failed);
+      elsif Event = Flyology.Operations.Start_Operation then
+         Initialize_Request_Head
+           (Connection (Item.Item_Handle.all), Item.Value_Result,
+            Item.Peer_Closed,
+            Item.Started,
+            Item.Request_Timeout,
+            Body_Size'Min (Item.Max_Body, Max_Request_Body));
+         Advance_Head (Item);
+      elsif Item.Acquiring then
+         Poll_IO
+           (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+            Acquisition);
+         if Acquisition = Connection_Drivers.Need_Acquire_Readiness then
+            Arm_IO_Acquisition
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all), Item);
+         else
+            Item.Acquiring := False;
+            Receive_Head_Step (Item);
+         end if;
+      else
+         Advance_Head (Item);
+      end if;
+   exception
+      when Flyology.Operations.Operation_Cancelled =>
+         Complete_Head (Item, Flyology.Operations.Cancelled);
+      when Error : others =>
+         Ada.Exceptions.Save_Occurrence (Item.Failure, Error);
+         Complete_Head (Item, Flyology.Operations.Failed);
+   end Drive;
+
+   overriding procedure Request_Cancellation
+     (Item : in out Read_Request_Head_Operation) is
+   begin
+      Complete_Head (Item, Flyology.Operations.Cancelled);
+   exception
+      when others =>
+         null;
+   end Request_Cancellation;
+
+   procedure Start_Head
+     (Item : in out Read_Request_Head_Operation) is
+   begin
+      if Item.Item_Handle.Channel.all not in Operation_Transport'Class then
+         raise Program_Error with
+           "HTTP transport does not support scoped operations";
+      end if;
+      Item.Started := Ada.Real_Time.Clock;
+      Operation_Drivers.Start (Item);
+      Flyology.Operations.Drive
+        (Flyology.Operations.Operation'Class (Item),
+         Flyology.Operations.Start_Operation);
+   exception
+      when others =>
+         if Flyology.Operations.Is_Active (Item) then
+            Flyology.Operations.Cancel (Item);
+         end if;
+         if Flyology.Operations.Is_Terminal (Item) then
+            Flyology.Operations.Consume (Item);
+         end if;
+         raise;
+   end Start_Head;
+
+   function Create_Read_Request_Head
+     (Set      : not null access Flyology.Operations.Completion_Set'Class;
+      Item     : not null access Connection;
+      Timeout  : Duration := 30.0;
+      Max_Body : Body_Size := Max_Request_Body;
+      Token    : access Flyology.Cancellation.Token := null)
+      return Read_Request_Head_Operation
+   is
+   begin
+      return Result : Read_Request_Head_Operation (Set) do
+         Result.Item_Handle := Item.all'Unchecked_Access;
+         Result.Token_Handle :=
+           (if Token = null then null else Token.all'Unchecked_Access);
+         Result.Header_Timeout := Timeout;
+         Result.Request_Timeout := Timeout;
+         Result.Max_Body := Max_Body;
+         Start_Head (Result);
+      end return;
+   end Create_Read_Request_Head;
+
+   function Create_Read_Request_Head
+     (Set             : not null access
+        Flyology.Operations.Completion_Set'Class;
+      Item            : not null access Connection;
+      Header_Timeout  : Duration;
+      Request_Timeout : Duration;
+      Max_Body        : Body_Size := Max_Request_Body;
+      Token           : access Flyology.Cancellation.Token := null)
+      return Read_Request_Head_Operation
+   is
+   begin
+      return Result : Read_Request_Head_Operation (Set) do
+         Result.Item_Handle := Item.all'Unchecked_Access;
+         Result.Token_Handle :=
+           (if Token = null then null else Token.all'Unchecked_Access);
+         Result.Header_Timeout := Header_Timeout;
+         Result.Request_Timeout := Request_Timeout;
+         Result.Max_Body := Max_Body;
+         Start_Head (Result);
+      end return;
+   end Create_Read_Request_Head;
+
+   procedure Finish_Head
+     (Operation   : in out Read_Request_Head_Operation;
+      Value       : out Request;
+      Peer_Closed : out Boolean)
+   is
+      Outcome : constant Flyology.Operations.Terminal_Outcome :=
+        Flyology.Operations.Outcome (Operation);
+   begin
+      Flyology.Operations.Consume (Operation);
+      case Outcome is
+         when Flyology.Operations.Succeeded =>
+            pragma Assert
+              (not Operation.Peer_Closed
+               or else Target (Operation.Value_Result) = "",
+               "parsed request retained peer closure");
+            Value := Operation.Value_Result;
+            Peer_Closed := Operation.Peer_Closed;
+         when Flyology.Operations.Cancelled =>
+            raise Flyology.Operations.Operation_Cancelled with
+              "HTTP request-head operation cancelled";
+         when Flyology.Operations.Failed =>
+            Ada.Exceptions.Reraise_Occurrence (Operation.Failure);
+      end case;
+   end Finish_Head;
+
+   procedure Read_Request_Head
+     (Item            : in out Connection;
+      Value           : out Request;
+      Peer_Closed     : out Boolean;
+      Header_Timeout  : Duration;
+      Request_Timeout : Duration;
+      Max_Body        : Body_Size := Max_Request_Body;
+      Token           : access Flyology.Cancellation.Token := null)
+   is
+   begin
+      Read_Request_Head_Impl
+        (Item, Value, Peer_Closed, Header_Timeout, Request_Timeout,
+         Max_Body, Token, Ada.Real_Time.Clock, Initialize_State => True);
    end Read_Request_Head;
 
    function Body_Time_Left (Item : Connection) return Duration is
@@ -1343,45 +1636,252 @@ package body Flyology.HTTP.Server is
       end if;
    end Body_Time_Left;
 
+   procedure Prepare_Accept_Body
+     (Item          : Connection;
+      Time_Left     : out Duration;
+      Send_Continue : out Boolean)
+   is
+   begin
+      if Item.State /= Reading_HTTP or else Item.Body_Done then
+         Time_Left := -1.0;
+         Send_Continue := False;
+         return;
+      elsif Item.Body_Accepted then
+         Time_Left := -1.0;
+         Send_Continue := False;
+         return;
+      end if;
+      Time_Left := Body_Time_Left (Item);
+      if Item.Body_Timeout >= 0.0 and then Time_Left <= 0.0 then
+         raise Flyology.IO.Timeout_Error with
+           "HTTP request deadline expired";
+      end if;
+      Send_Continue := True;
+   end Prepare_Accept_Body;
+
+   procedure Complete_Accept_Body (Item : in out Connection) is
+   begin
+      Item.Continue_Pending := False;
+      Item.Body_Accepted := True;
+   end Complete_Accept_Body;
+
+   procedure Complete_Accept
+     (Item   : in out Accept_Body_Operation;
+      Result : Flyology.Operations.Terminal_Outcome)
+   is
+      Final_Result : Flyology.Operations.Terminal_Outcome := Result;
+   begin
+      if Item.IO_Started then
+         begin
+            Release_IO
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all));
+            Item.IO_Started := False;
+         exception
+            when Error : others =>
+               if Final_Result /= Flyology.Operations.Failed then
+                  Ada.Exceptions.Save_Occurrence (Item.Failure, Error);
+               end if;
+               Final_Result := Flyology.Operations.Failed;
+         end;
+      end if;
+      Operation_Drivers.Complete (Item, Final_Result);
+   end Complete_Accept;
+
+   procedure Send_Accept_Step (Item : in out Accept_Body_Operation) is
+      Last   : Ada.Streams.Stream_Element_Offset;
+      Result : Connection_Drivers.Step_Result;
+   begin
+      Send_IO
+        (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+         Continue_Response (Item.Cursor .. Continue_Response'Last),
+         Last, Result);
+      case Result is
+         when Connection_Drivers.Made_Progress =>
+            if Last >= Item.Cursor then
+               Item.Cursor := Last + 1;
+            end if;
+            if Item.Cursor > Continue_Response'Last then
+               Complete_Accept_Body (Connection (Item.Item_Handle.all));
+               Complete_Accept (Item, Flyology.Operations.Succeeded);
+            else
+               Operation_Drivers.Reschedule (Item);
+            end if;
+         when Connection_Drivers.Need_Read |
+              Connection_Drivers.Need_Write =>
+            Arm_IO_Transport
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+               Item, Result);
+         when Connection_Drivers.Peer_Closed =>
+            raise Flyology.IO.Device_Error with
+              "connection closed while sending";
+      end case;
+   end Send_Accept_Step;
+
+   overriding procedure Drive
+     (Item  : in out Accept_Body_Operation;
+      Event : Flyology.Operations.Driver_Event)
+   is
+      Send_Continue : Boolean;
+      Acquisition   : Connection_Drivers.Acquisition_Result;
+   begin
+      if Event = Flyology.Operations.Deadline_Reached then
+         Record_Timeout (Item.Failure);
+         Complete_Accept (Item, Flyology.Operations.Failed);
+      elsif Event = Flyology.Operations.Start_Operation then
+         Prepare_Accept_Body
+           (Item.Item_Handle.all, Item.Time_Left, Send_Continue);
+         if not Send_Continue then
+            Complete_Accept (Item, Flyology.Operations.Succeeded);
+            return;
+         end if;
+         Item.IO_Started := True;
+         Start_IO
+           (Operation_Transport'Class (Item.Item_Handle.Channel.all), Item,
+            Item.Time_Left, Item.Token_Handle, Acquisition);
+         Item.Acquiring :=
+           Acquisition = Connection_Drivers.Need_Acquire_Readiness;
+         if Item.Acquiring then
+            Arm_IO_Acquisition
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all), Item);
+         else
+            Send_Accept_Step (Item);
+         end if;
+      elsif Item.Acquiring then
+         Poll_IO
+           (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+            Acquisition);
+         if Acquisition = Connection_Drivers.Need_Acquire_Readiness then
+            Arm_IO_Acquisition
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all), Item);
+         else
+            Item.Acquiring := False;
+            Send_Accept_Step (Item);
+         end if;
+      else
+         Send_Accept_Step (Item);
+      end if;
+   exception
+      when Flyology.Operations.Operation_Cancelled =>
+         Complete_Accept (Item, Flyology.Operations.Cancelled);
+      when Error : others =>
+         Ada.Exceptions.Save_Occurrence (Item.Failure, Error);
+         Complete_Accept (Item, Flyology.Operations.Failed);
+   end Drive;
+
+   overriding procedure Request_Cancellation
+     (Item : in out Accept_Body_Operation) is
+   begin
+      Complete_Accept (Item, Flyology.Operations.Cancelled);
+   exception
+      when others =>
+         null;
+   end Request_Cancellation;
+
+   function Create_Accept_Body
+     (Set   : not null access Flyology.Operations.Completion_Set'Class;
+      Item  : not null access Connection;
+      Token : access Flyology.Cancellation.Token := null)
+      return Accept_Body_Operation
+   is
+   begin
+      if Item.Channel.all not in Operation_Transport'Class then
+         raise Program_Error with
+           "HTTP transport does not support scoped operations";
+      end if;
+      return Result : Accept_Body_Operation (Set) do
+         Result.Item_Handle := Item.all'Unchecked_Access;
+         Result.Token_Handle :=
+           (if Token = null then null else Token.all'Unchecked_Access);
+         Operation_Drivers.Start (Result);
+         Flyology.Operations.Drive
+           (Flyology.Operations.Operation'Class (Result),
+            Flyology.Operations.Start_Operation);
+      exception
+         when others =>
+            if Flyology.Operations.Is_Active (Result) then
+               Flyology.Operations.Cancel (Result);
+            end if;
+            if Flyology.Operations.Is_Terminal (Result) then
+               Flyology.Operations.Consume (Result);
+            end if;
+            raise;
+      end return;
+   end Create_Accept_Body;
+
+   procedure Finish_Accept (Operation : in out Accept_Body_Operation) is
+      Result : constant Flyology.Operations.Terminal_Outcome :=
+        Flyology.Operations.Outcome (Operation);
+   begin
+      Flyology.Operations.Consume (Operation);
+      case Result is
+         when Flyology.Operations.Succeeded =>
+            null;
+         when Flyology.Operations.Cancelled =>
+            raise Flyology.Operations.Operation_Cancelled with
+              "HTTP body-accept operation cancelled";
+         when Flyology.Operations.Failed =>
+            Ada.Exceptions.Reraise_Occurrence (Operation.Failure);
+      end case;
+   end Finish_Accept;
+
    procedure Accept_Body
      (Item  : in out Connection;
       Token : access Flyology.Cancellation.Token := null)
    is
-      Left : Duration;
+      Left          : Duration;
+      Send_Continue : Boolean;
    begin
-      if Item.State /= Reading_HTTP or else Item.Body_Done then
+      Prepare_Accept_Body (Item, Left, Send_Continue);
+      if not Send_Continue then
          return;
-      elsif Item.Body_Accepted then
-         return;
-      end if;
-      Left := Body_Time_Left (Item);
-      if Item.Body_Timeout >= 0.0 and then Left <= 0.0 then
-         raise Flyology.IO.Timeout_Error with
-           "HTTP request deadline expired";
       end if;
       Write
         (Item, "HTTP/1.1 100 Continue" & CRLF & CRLF,
          Left, Token);
-      Item.Continue_Pending := False;
-      Item.Body_Accepted := True;
+      Complete_Accept_Body (Item);
    end Accept_Body;
 
-   procedure Read_Body
-     (Item     : in out Connection;
-      Data     : out Ada.Streams.Stream_Element_Array;
-      Last     : out Ada.Streams.Stream_Element_Offset;
-      Finished : out Boolean;
-      Token    : access Flyology.Cancellation.Token := null)
-   is
-      Written : Natural := 0;
-      Closed  : Boolean;
+   type Body_Step_Status is
+     (Body_Input_Needed, Body_Progressed, Body_Output_Full, Body_Complete);
 
+   function Take_Buffered_Line
+     (Item    : in out Connection;
+      Value   : out Unbounded_String;
+      Maximum : Natural) return Boolean
+   is
+      Available : constant String := To_String (Item.Pending);
+      Marker    : constant Natural :=
+        Ada.Strings.Fixed.Index (Available, CRLF);
+   begin
+      if Marker = 0 then
+         if Available'Length > Maximum then
+            raise Protocol_Error with "HTTP line is too large";
+         end if;
+         Value := Null_Unbounded_String;
+         return False;
+      elsif Marker - 1 > Maximum then
+         raise Protocol_Error with "HTTP line is too large";
+      end if;
+      Value :=
+        (if Marker = Available'First then Null_Unbounded_String
+         else To_Unbounded_String
+           (Available (Available'First .. Marker - 1)));
+      Consume (Item, Marker + 1);
+      return True;
+   end Take_Buffered_Line;
+
+   procedure Read_Body_Buffered_Step
+     (Item    : in out Connection;
+      Data    : in out Ada.Streams.Stream_Element_Array;
+      Written : in out Natural;
+      Status  : out Body_Step_Status)
+   is
       procedure Copy_Pending (Maximum : Body_Size) is
          Available : constant String := To_String (Item.Pending);
          Bounded_Maximum : constant Natural :=
            (if Maximum > Body_Size (Natural'Last)
             then Natural'Last else Natural (Maximum));
-         Count     : constant Natural := Natural'Min
+         Count : constant Natural := Natural'Min
            (Bounded_Maximum,
             Natural'Min
               (Available'Length, Natural (Data'Length) - Written));
@@ -1398,23 +1898,30 @@ package body Flyology.HTTP.Server is
          Item.Body_Remaining := Item.Body_Remaining - Body_Size (Count);
          Item.Body_Total := Item.Body_Total + Body_Size (Count);
       end Copy_Pending;
-
-      procedure Need (Count : Natural; Description : String) is
-      begin
-         while Length (Item.Pending) < Count loop
-            Receive_More
-              (Item, Closed, Item.Body_Started, Item.Body_Timeout, Token,
-               Maximum => Count);
-            if Closed then
-               raise Protocol_Error with
-                 "peer closed inside HTTP " & Description;
-            end if;
-         end loop;
-      end Need;
-
-      procedure Finish_Chunk is
-      begin
-         Need (2, "chunk terminator");
+   begin
+      if Item.Body_Mode = No_Body then
+         Item.Body_Done := True;
+         Status := Body_Complete;
+      elsif Item.Body_Mode = Fixed_Body then
+         if Length (Item.Pending) = 0 then
+            Status := Body_Input_Needed;
+            return;
+         end if;
+         Copy_Pending (Item.Body_Remaining);
+         if Item.Body_Remaining = 0 then
+            Item.Body_Mode := No_Body;
+            Item.Body_Done := True;
+            Status := Body_Complete;
+         elsif Written = Natural (Data'Length) then
+            Status := Body_Output_Full;
+         else
+            Status := Body_Input_Needed;
+         end if;
+      elsif Item.Chunk_CRLF_Pending then
+         if Length (Item.Pending) < 2 then
+            Status := Body_Input_Needed;
+            return;
+         end if;
          declare
             Available : constant String := To_String (Item.Pending);
          begin
@@ -1424,21 +1931,27 @@ package body Flyology.HTTP.Server is
          end;
          Consume (Item, 2);
          Item.Chunk_CRLF_Pending := False;
-      end Finish_Chunk;
-
-      procedure Finish_Trailers is
-         Line          : Unbounded_String;
-         Trailer_Bytes : Natural := 0;
-      begin
-         loop
-            if Trailer_Bytes > Max_Header_Bytes - 2 then
-               raise Protocol_Error with "HTTP trailers are too large";
+         Status := Body_Progressed;
+      elsif Item.Reading_Trailers then
+         if Item.Trailer_Bytes > Max_Header_Bytes - 2 then
+            raise Protocol_Error with "HTTP trailers are too large";
+         end if;
+         declare
+            Line : Unbounded_String;
+         begin
+            if not Take_Buffered_Line
+              (Item, Line, Max_Header_Bytes - Item.Trailer_Bytes - 2)
+            then
+               Status := Body_Input_Needed;
+               return;
+            elsif Length (Line) = 0 then
+               Item.Reading_Trailers := False;
+               Item.Body_Mode := No_Body;
+               Item.Body_Done := True;
+               Status := Body_Complete;
+               return;
             end if;
-            Read_Line
-              (Item, Line, Item.Body_Started, Item.Body_Timeout, Token,
-               Maximum => Max_Header_Bytes - Trailer_Bytes - 2);
-            exit when Length (Line) = 0;
-            Trailer_Bytes := Trailer_Bytes + Length (Line) + 2;
+            Item.Trailer_Bytes := Item.Trailer_Bytes + Length (Line) + 2;
             Validate_Header_Block (To_String (Line));
             declare
                Value : constant String := To_String (Line);
@@ -1454,10 +1967,72 @@ package body Flyology.HTTP.Server is
                end if;
                Append (Item.Trailer_Block, Value & CRLF);
             end;
-         end loop;
-         Item.Body_Mode := No_Body;
-         Item.Body_Done := True;
-      end Finish_Trailers;
+         end;
+         Status := Body_Progressed;
+      elsif Item.Body_Remaining = 0 then
+         declare
+            Line       : Unbounded_String;
+            Chunk_Size : Body_Size;
+         begin
+            if not Take_Buffered_Line (Item, Line, 1_024) then
+               Status := Body_Input_Needed;
+               return;
+            end if;
+            Chunk_Size :=
+              Parse_Chunk_Size (To_String (Line), Item.Body_Limit);
+            if Chunk_Size = 0 then
+               Item.Reading_Trailers := True;
+            elsif Item.Body_Total > Item.Body_Limit - Chunk_Size then
+               raise Payload_Too_Large with
+                 "HTTP request body is too large";
+            else
+               Item.Body_Remaining := Chunk_Size;
+            end if;
+         end;
+         Status := Body_Progressed;
+      elsif Length (Item.Pending) = 0 then
+         Status := Body_Input_Needed;
+      else
+         Copy_Pending (Item.Body_Remaining);
+         if Item.Body_Remaining = 0 then
+            Item.Chunk_CRLF_Pending := True;
+         end if;
+         Status :=
+           (if Written = Natural (Data'Length)
+            then Body_Output_Full else Body_Progressed);
+      end if;
+   end Read_Body_Buffered_Step;
+
+   function Body_Input_Maximum
+     (Item : Connection; Output_Room : Positive) return Natural
+   is
+   begin
+      if Item.Body_Mode = Fixed_Body or else Item.Body_Remaining > 0 then
+         return Natural'Min
+           ((if Item.Body_Remaining > Body_Size (Natural'Last)
+             then Natural'Last else Natural (Item.Body_Remaining)),
+            Output_Room);
+      elsif Item.Chunk_CRLF_Pending then
+         return 2;
+      elsif Item.Reading_Trailers then
+         return Max_Header_Bytes - Item.Trailer_Bytes;
+      else
+         return 1_026;
+      end if;
+   end Body_Input_Maximum;
+
+   function Body_Close_Description (Item : Connection) return String is
+     (if Item.Body_Mode = Fixed_Body then "request body"
+      elsif Item.Chunk_CRLF_Pending then "chunk terminator"
+      elsif Item.Reading_Trailers or else Item.Body_Remaining = 0 then "line"
+      else "chunk");
+
+   procedure Initialize_Body_Read
+     (Item     : in out Connection;
+      Data     : out Ada.Streams.Stream_Element_Array;
+      Last     : out Ada.Streams.Stream_Element_Offset;
+      Finished : out Boolean)
+   is
    begin
       Data := (others => 0);
       Last := Data'First - 1;
@@ -1477,77 +2052,333 @@ package body Flyology.HTTP.Server is
          raise Flyology.IO.Timeout_Error with
            "HTTP request deadline expired";
       end if;
+   end Initialize_Body_Read;
 
-      while Written < Natural (Data'Length) and then not Item.Body_Done loop
-         case Item.Body_Mode is
-            when No_Body =>
-               Item.Body_Done := True;
+   procedure Complete_Body
+     (Item   : in out Read_Body_Operation;
+      Result : Flyology.Operations.Terminal_Outcome)
+   is
+      Final_Result : Flyology.Operations.Terminal_Outcome := Result;
+   begin
+      if Item.IO_Started then
+         begin
+            Release_IO
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all));
+            Item.IO_Started := False;
+         exception
+            when Error : others =>
+               if Final_Result /= Flyology.Operations.Failed then
+                  Ada.Exceptions.Save_Occurrence (Item.Failure, Error);
+               end if;
+               Final_Result := Flyology.Operations.Failed;
+         end;
+      end if;
+      Operation_Drivers.Complete (Item, Final_Result);
+   end Complete_Body;
 
-            when Fixed_Body =>
-               if Length (Item.Pending) = 0 then
-                  Receive_More
-                    (Item, Closed, Item.Body_Started, Item.Body_Timeout, Token,
-                     Maximum => Natural'Min
-                       ((if Item.Body_Remaining > Body_Size (Natural'Last)
-                         then Natural'Last
-                         else Natural (Item.Body_Remaining)),
-                        Natural (Data'Length) - Written));
-                  if Closed then
-                     raise Protocol_Error with
-                       "peer closed inside HTTP request body";
-                  end if;
-               end if;
-               Copy_Pending (Item.Body_Remaining);
-               if Item.Body_Remaining = 0 then
-                  Item.Body_Mode := No_Body;
-                  Item.Body_Done := True;
-               end if;
+   procedure Receive_Body_Step (Item : in out Read_Body_Operation) is
+      Data_Length : constant Natural :=
+        Natural (Item.Data_Last - Item.Data_First + 1);
+      Maximum : constant Natural := Body_Input_Maximum
+        (Item.Item_Handle.all, Positive (Data_Length - Item.Written));
+      Current : constant Natural := Length (Item.Item_Handle.Pending);
+      Room    : constant Natural :=
+        (if Current >= Maximum then 0 else Maximum - Current);
+      Count   : constant Natural := Natural'Min (Item.Buffer'Length, Room);
+      Last    : Ada.Streams.Stream_Element_Offset;
+      Result  : Connection_Drivers.Step_Result;
+   begin
+      if Count = 0 then
+         raise Protocol_Error with "HTTP protocol buffer limit exceeded";
+      end if;
+      Receive_IO
+        (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+         Item.Buffer
+           (Item.Buffer'First ..
+            Item.Buffer'First
+              + Ada.Streams.Stream_Element_Offset (Count - 1)),
+         Last, Result);
+      case Result is
+         when Connection_Drivers.Made_Progress =>
+            if Last >= Item.Buffer'First then
+               Append
+                 (Item.Item_Handle.Pending,
+                  Text (Item.Buffer (Item.Buffer'First .. Last)));
+            end if;
+            Operation_Drivers.Reschedule (Item);
+         when Connection_Drivers.Need_Read |
+              Connection_Drivers.Need_Write =>
+            Arm_IO_Transport
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+               Item, Result);
+         when Connection_Drivers.Peer_Closed =>
+            raise Protocol_Error with
+              "peer closed inside HTTP " &
+              Body_Close_Description (Item.Item_Handle.all);
+      end case;
+   end Receive_Body_Step;
 
-            when Chunked_Body =>
-               if Item.Chunk_CRLF_Pending then
-                  Finish_Chunk;
+   procedure Advance_Body (Item : in out Read_Body_Operation) is
+      Status      : Body_Step_Status;
+      Acquisition : Connection_Drivers.Acquisition_Result;
+      Data        : Ada.Streams.Stream_Element_Array
+        (Item.Data_First .. Item.Data_Last)
+        with Import, Address => Item.Data_Address;
+   begin
+      Read_Body_Buffered_Step
+        (Connection (Item.Item_Handle.all), Data, Item.Written, Status);
+      case Status is
+         when Body_Output_Full | Body_Complete =>
+            if Item.Written > 0 then
+               Item.Last_Result :=
+                 Item.Data_First
+                   + Ada.Streams.Stream_Element_Offset (Item.Written - 1);
+            end if;
+            Item.Finished := Item.Item_Handle.Body_Done;
+            Complete_Body (Item, Flyology.Operations.Succeeded);
+         when Body_Progressed =>
+            Operation_Drivers.Reschedule (Item);
+         when Body_Input_Needed =>
+            if not Item.IO_Started then
+               Item.IO_Started := True;
+               Start_IO
+                 (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+                  Item,
+                  Body_Time_Left (Item.Item_Handle.all),
+                  Item.Token_Handle, Acquisition);
+               Item.Acquiring :=
+                 Acquisition = Connection_Drivers.Need_Acquire_Readiness;
+               if Item.Acquiring then
+                  Arm_IO_Acquisition
+                    (Operation_Transport'Class
+                       (Item.Item_Handle.Channel.all), Item);
+                  return;
                end if;
-               if Item.Body_Remaining = 0 then
-                  declare
-                     Line       : Unbounded_String;
-                     Chunk_Size : Body_Size;
-                  begin
-                     Read_Line
-                       (Item, Line, Item.Body_Started, Item.Body_Timeout,
-                        Token, Maximum => 1_024);
-                     Chunk_Size :=
-                       Parse_Chunk_Size (To_String (Line), Item.Body_Limit);
-                     if Chunk_Size = 0 then
-                        Finish_Trailers;
-                     elsif Item.Body_Total > Item.Body_Limit - Chunk_Size then
-                        raise Payload_Too_Large with
-                          "HTTP request body is too large";
-                     else
-                        Item.Body_Remaining := Chunk_Size;
-                     end if;
-                  end;
-               end if;
-               if not Item.Body_Done and then Item.Body_Remaining > 0 then
-                  if Length (Item.Pending) = 0 then
-                     Receive_More
-                       (Item, Closed, Item.Body_Started, Item.Body_Timeout,
-                        Token,
-                        Maximum => Natural'Min
-                          ((if Item.Body_Remaining > Body_Size (Natural'Last)
-                            then Natural'Last
-                            else Natural (Item.Body_Remaining)),
-                           Natural (Data'Length) - Written));
-                     if Closed then
-                        raise Protocol_Error with
-                          "peer closed inside HTTP chunk";
-                     end if;
-                  end if;
-                  Copy_Pending (Item.Body_Remaining);
-                  if Item.Body_Remaining = 0 then
-                     Item.Chunk_CRLF_Pending := True;
-                  end if;
-               end if;
-         end case;
+            end if;
+            Receive_Body_Step (Item);
+      end case;
+   end Advance_Body;
+
+   overriding procedure Drive
+     (Item  : in out Read_Body_Operation;
+      Event : Flyology.Operations.Driver_Event)
+   is
+      Acquisition : Connection_Drivers.Acquisition_Result;
+      Data : Ada.Streams.Stream_Element_Array
+        (Item.Data_First .. Item.Data_Last)
+        with Import, Address => Item.Data_Address;
+   begin
+      if Event = Flyology.Operations.Deadline_Reached then
+         Record_Timeout (Item.Failure);
+         Complete_Body (Item, Flyology.Operations.Failed);
+      elsif Event = Flyology.Operations.Start_Operation then
+         Initialize_Body_Read
+           (Connection (Item.Item_Handle.all), Data, Item.Last_Result,
+            Item.Finished);
+         if Item.Finished then
+            Complete_Body (Item, Flyology.Operations.Succeeded);
+         else
+            Advance_Body (Item);
+         end if;
+      elsif Item.Acquiring then
+         Poll_IO
+           (Operation_Transport'Class (Item.Item_Handle.Channel.all),
+            Acquisition);
+         if Acquisition = Connection_Drivers.Need_Acquire_Readiness then
+            Arm_IO_Acquisition
+              (Operation_Transport'Class (Item.Item_Handle.Channel.all), Item);
+         else
+            Item.Acquiring := False;
+            Receive_Body_Step (Item);
+         end if;
+      else
+         Advance_Body (Item);
+      end if;
+   exception
+      when Flyology.Operations.Operation_Cancelled =>
+         Complete_Body (Item, Flyology.Operations.Cancelled);
+      when Error : others =>
+         Ada.Exceptions.Save_Occurrence (Item.Failure, Error);
+         Complete_Body (Item, Flyology.Operations.Failed);
+   end Drive;
+
+   overriding procedure Request_Cancellation
+     (Item : in out Read_Body_Operation) is
+   begin
+      Complete_Body (Item, Flyology.Operations.Cancelled);
+   exception
+      when others =>
+         null;
+   end Request_Cancellation;
+
+   procedure Start_Body
+     (Operation    : in out Read_Body_Operation;
+      Item         : not null access Connection;
+      Data_Address : System.Address;
+      Data_First   : Ada.Streams.Stream_Element_Offset;
+      Data_Last    : Ada.Streams.Stream_Element_Offset;
+      Token        : access Flyology.Cancellation.Token)
+   is
+   begin
+      if Item.Channel.all not in Operation_Transport'Class then
+         raise Program_Error with
+           "HTTP transport does not support scoped operations";
+      end if;
+      Operation.Item_Handle := Item.all'Unchecked_Access;
+      Operation.Token_Handle :=
+        (if Token = null then null else Token.all'Unchecked_Access);
+      Operation.Data_Address := Data_Address;
+      Operation.Data_First := Data_First;
+      Operation.Data_Last := Data_Last;
+      Operation.Last_Result := Data_First - 1;
+      Operation_Drivers.Start (Operation);
+      Flyology.Operations.Drive
+        (Flyology.Operations.Operation'Class (Operation),
+         Flyology.Operations.Start_Operation);
+   exception
+      when others =>
+         if Flyology.Operations.Is_Active (Operation) then
+            Flyology.Operations.Cancel (Operation);
+         end if;
+         if Flyology.Operations.Is_Terminal (Operation) then
+            Flyology.Operations.Consume (Operation);
+         end if;
+         raise;
+   end Start_Body;
+
+   function Create_Read_Body
+     (Set   : not null access Flyology.Operations.Completion_Set'Class;
+      Item  : not null access Connection;
+      Data  : not null access Ada.Streams.Stream_Element_Array;
+      Token : access Flyology.Cancellation.Token := null)
+      return Read_Body_Operation
+   is
+   begin
+      return Result : Read_Body_Operation (Set) do
+         Start_Body
+           (Result, Item, Data.all'Address, Data'First, Data'Last, Token);
+      end return;
+   end Create_Read_Body;
+
+   procedure Finish_Body
+     (Operation : in out Read_Body_Operation;
+      Last      : out Ada.Streams.Stream_Element_Offset;
+      Finished  : out Boolean);
+
+   package body Scoped is
+      function Read_Request_Head
+        (Set      : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item     : not null access Connection;
+         Timeout  : Duration := 30.0;
+         Max_Body : Body_Size := Max_Request_Body;
+         Token    : access Flyology.Cancellation.Token := null)
+         return Read_Request_Head_Operation is
+        (Create_Read_Request_Head
+           (Set, Item, Timeout, Max_Body, Token));
+
+      function Read_Request_Head
+        (Set             : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item            : not null access Connection;
+         Header_Timeout  : Duration;
+         Request_Timeout : Duration;
+         Max_Body        : Body_Size := Max_Request_Body;
+         Token           : access Flyology.Cancellation.Token := null)
+         return Read_Request_Head_Operation is
+        (Create_Read_Request_Head
+           (Set, Item, Header_Timeout, Request_Timeout, Max_Body, Token));
+
+      function Accept_Body
+        (Set   : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item  : not null access Connection;
+         Token : access Flyology.Cancellation.Token := null)
+         return Accept_Body_Operation is
+        (Create_Accept_Body (Set, Item, Token));
+
+      function Read_Body
+        (Set   : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item  : not null access Connection;
+         Data  : not null access Ada.Streams.Stream_Element_Array;
+         Token : access Flyology.Cancellation.Token := null)
+         return Read_Body_Operation is
+        (Create_Read_Body (Set, Item, Data, Token));
+
+      procedure Finish
+        (Operation   : in out Read_Request_Head_Operation;
+         Value       : out Request;
+         Peer_Closed : out Boolean)
+      is
+      begin
+         Finish_Head (Operation, Value, Peer_Closed);
+      end Finish;
+
+      procedure Finish (Operation : in out Accept_Body_Operation) is
+      begin
+         Finish_Accept (Operation);
+      end Finish;
+
+      procedure Finish
+        (Operation : in out Read_Body_Operation;
+         Last      : out Ada.Streams.Stream_Element_Offset;
+         Finished  : out Boolean)
+      is
+      begin
+         Finish_Body (Operation, Last, Finished);
+      end Finish;
+   end Scoped;
+
+   procedure Finish_Body
+     (Operation : in out Read_Body_Operation;
+      Last      : out Ada.Streams.Stream_Element_Offset;
+      Finished  : out Boolean)
+   is
+      Outcome : constant Flyology.Operations.Terminal_Outcome :=
+        Flyology.Operations.Outcome (Operation);
+   begin
+      Flyology.Operations.Consume (Operation);
+      case Outcome is
+         when Flyology.Operations.Succeeded =>
+            Last := Operation.Last_Result;
+            Finished := Operation.Finished;
+         when Flyology.Operations.Cancelled =>
+            raise Flyology.Operations.Operation_Cancelled with
+              "HTTP body-read operation cancelled";
+         when Flyology.Operations.Failed =>
+            Ada.Exceptions.Reraise_Occurrence (Operation.Failure);
+      end case;
+   end Finish_Body;
+
+   procedure Read_Body
+     (Item     : in out Connection;
+      Data     : out Ada.Streams.Stream_Element_Array;
+      Last     : out Ada.Streams.Stream_Element_Offset;
+      Finished : out Boolean;
+      Token    : access Flyology.Cancellation.Token := null)
+   is
+      Written : Natural := 0;
+      Closed  : Boolean;
+      Status  : Body_Step_Status := Body_Progressed;
+   begin
+      Initialize_Body_Read (Item, Data, Last, Finished);
+      if Finished then
+         return;
+      end if;
+
+      while Status not in Body_Output_Full | Body_Complete loop
+         Read_Body_Buffered_Step (Item, Data, Written, Status);
+         if Status = Body_Input_Needed then
+            Receive_More
+              (Item, Closed, Item.Body_Started, Item.Body_Timeout, Token,
+               Maximum => Body_Input_Maximum
+                 (Item, Natural (Data'Length) - Written));
+            if Closed then
+               raise Protocol_Error with
+                 "peer closed inside HTTP " & Body_Close_Description (Item);
+            end if;
+         end if;
       end loop;
 
       if Written > 0 then

@@ -2,8 +2,11 @@
 set -eu
 
 http_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$http_root/scripts/alire-test-context.sh"
 alr=$("$http_root/scripts/find-alr.sh")
 test_rts="$http_root/build/rts"
+
+"$http_root/tests/alire_action_context.sh"
 
 if [ -z "${FLYOLOGY_ROOT:-}" ] \
   && [ ! -f "$http_root/../scripts/prepare-rts.sh" ] \
@@ -68,7 +71,8 @@ compile_and_link () {
 }
 
 cd "$http_root"
-"$http_root/flyology_iri/scripts/test.sh"
+flyology_http_run_nested_alire_test \
+  "$http_root/flyology_iri/scripts/test.sh"
 "$http_root/scripts/prepare-test-tls.sh"
 if [ -z "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
   "$alr" build
@@ -131,6 +135,7 @@ flyology-websocket_deflate_policy_smoke
 buffers_smoke
 tls_smoke
 http_smoke
+http_operations_smoke
 http_client_smoke
 http_client_addressing
 http_client_authentication

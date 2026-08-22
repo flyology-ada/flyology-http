@@ -2,7 +2,7 @@
 
 > Experimental HTTP/1.1, HTTP/2, and HTTP/3 client and application-server library for native and lightweight Flyology tasks.
 
-Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an origin-bound HTTP client with bounded connection pools, multiplexed HTTP/2, direct or Alt-Svc-discovered HTTP/3, and streaming response bodies; a single-session origin-bound WebSocket client; and routed HTTP/1.1, HTTP/2, and HTTP/3 application servers. The unified server can own a distinct cleartext HTTP/1.x endpoint beside TLS/TCP HTTP/1.1 and HTTP/2 plus QUIC/UDP HTTP/3, routing or redirecting cleartext requests to a configured HTTPS origin. All three versions share `Applications.Exchange`, routes, middleware, and explicit scheme metadata, while the raw connection API remains HTTP/1.x-specific. HTTP/2 supports TLS ALPN and cleartext prior knowledge. The current HTTP/3 profile uses static-table QPACK and bounded sequential client reuse. The library makes no production-qualification claim.
+Flyology HTTP exposes synchronous Ada APIs in both task lanes. Its low-level HTTP/1.x server API also provides additive request-head and body operations that compose through Flyology completion sets. It provides an origin-bound HTTP client with bounded connection pools, multiplexed HTTP/2, direct or Alt-Svc-discovered HTTP/3, and streaming response bodies; a single-session origin-bound WebSocket client; and routed HTTP/1.1, HTTP/2, and HTTP/3 application servers. The unified server can own a distinct cleartext HTTP/1.x endpoint beside TLS/TCP HTTP/1.1 and HTTP/2 plus QUIC/UDP HTTP/3, routing or redirecting cleartext requests to a configured HTTPS origin. All three versions share `Applications.Exchange`, routes, middleware, and explicit scheme metadata, while the raw connection API remains HTTP/1.x-specific. HTTP/2 supports TLS ALPN and cleartext prior knowledge. The current HTTP/3 profile uses static-table QPACK and bounded sequential client reuse. The library makes no production-qualification claim.
 
 ## Primary documentation
 
@@ -12,6 +12,7 @@ Flyology HTTP exposes synchronous Ada APIs in both task lanes. It provides an or
 - Client guide: https://http.flyology.org/guide/client/
 - HTTP/2 guide: https://http.flyology.org/guide/http2/
 - Server guide: https://http.flyology.org/guide/server/
+- Composable operations guide: https://http.flyology.org/guide/operations/
 - Architecture: https://http.flyology.org/architecture/
 - Generated API reference: https://http.flyology.org/api/
 - Source README: https://github.com/flyology-ada/flyology-http#readme

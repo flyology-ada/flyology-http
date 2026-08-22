@@ -552,6 +552,9 @@ procedure HTTP_Smoke is
          & "0" & CRLF & "X-Trace: ok" & CRLF & CRLF
          & "GET /next HTTP/1.1" & CRLF
          & "Host: localhost" & CRLF & "Connection: close" & CRLF & CRLF);
+      --  Force every request-head, chunk, terminator, and trailer transition
+      --  across a separate transport step.
+      Wire.Receive_Max := 1;
       declare
          Client   : HTTP_Server.Connection (Wire'Access);
          Request  : HTTP_Server.Request;
