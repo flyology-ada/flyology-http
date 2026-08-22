@@ -131,6 +131,7 @@ flyology-websocket_deflate_policy_smoke
 buffers_smoke
 tls_smoke
 http_smoke
+http_operations_smoke
 http_client_smoke
 http_client_addressing
 http_client_authentication
