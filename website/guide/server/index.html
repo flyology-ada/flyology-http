@@ -128,6 +128,7 @@ end Route;
 package Handler is new
   Flyology.HTTP.Server.Connection_Handlers (Route);</code></pre></figure>
             <p>The connection is sole-writer state. It must not be retained past the handler, shared among producer tasks, or closed by a borrowed transport.</p>
+            <p>When one low-level task must wait for HTTP with other Flyology operations, use the <a href="../../api/628a4be254734940edc2b1fe8b91b080945c3fa511fbf469b9a7bf82cb3d1040.html"><code>Server.Scoped</code></a> constructors. These constructors produce bounded request-head and body operations. The <a href="../operations/">composable operations guide</a> explains transport support, slot sizing, typed <code>Finish</code>, cancellation, and borrowed lifetimes.</p>
           </section>
 
           <section id="exchange"><span class="step-label">HTTP 03</span><h2>Introduce a borrowed Exchange.</h2>

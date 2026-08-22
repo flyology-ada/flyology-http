@@ -4,6 +4,10 @@ with Ada.Real_Time;
 with Ada.Strings.Unbounded;
 with Flyology.Bytes;
 with Flyology.Cancellation;
+with Flyology.IO.Connections.Drivers;
+with Flyology.Operations;
+private with Ada.Exceptions;
+private with System;
 private with Flyology.WebSocket_Policy;
 private with Flyology.HTTP.Fixed_Response_Policy;
 
@@ -140,6 +144,77 @@ package Flyology.HTTP.Server is
       Timeout : Duration;
       Token   : access Flyology.Cancellation.Token) is abstract;
 
+   --  Additive transport capability used by scoped HTTP operations. Concrete
+   --  adapters retain one definite, set-independent I/O capability; the
+   --  visible HTTP operation owns the only Flyology completion-set slot.
+   type Operation_Transport is limited interface and Transport;
+
+   --  Begin a set-independent transport borrow and arm its shared deadline.
+   --  @param Item Operation-capable transport
+   --  @param Operation Visible HTTP operation that owns readiness
+   --  @param Timeout Shared acquisition and transport deadline
+   --  @param Token Optional cancellation source that outlives the operation
+   --  @param Result Immediate acquisition result
+   procedure Start_IO
+     (Item      : in out Operation_Transport;
+      Operation : in out Flyology.Operations.Operation'Class;
+      Timeout   : Duration;
+      Token     : access Flyology.Cancellation.Token;
+      Result    : out
+        Flyology.IO.Connections.Drivers.Acquisition_Result) is abstract;
+
+   --  Poll a previously armed transport acquisition.
+   --  @param Item Operation-capable transport
+   --  @param Result Immediate acquisition result
+   procedure Poll_IO
+     (Item   : in out Operation_Transport;
+      Result : out Flyology.IO.Connections.Drivers.Acquisition_Result)
+   is abstract;
+
+   --  Arm the visible HTTP operation for connection-lease readiness.
+   --  @param Item Operation-capable transport
+   --  @param Operation Visible HTTP operation
+   procedure Arm_IO_Acquisition
+     (Item      : in out Operation_Transport;
+      Operation : in out Flyology.Operations.Operation'Class) is abstract;
+
+   --  Perform one immediate bounded receive step.
+   --  @param Item Operation-capable transport
+   --  @param Data Destination buffer
+   --  @param Last Last received byte, or Data'First - 1 without progress
+   --  @param Result Progress, required readiness, or peer closure
+   procedure Receive_IO
+     (Item   : in out Operation_Transport;
+      Data   : out Ada.Streams.Stream_Element_Array;
+      Last   : out Ada.Streams.Stream_Element_Offset;
+      Result : out Flyology.IO.Connections.Drivers.Step_Result) is abstract;
+
+   --  Perform one immediate bounded send step.
+   --  @param Item Operation-capable transport
+   --  @param Data Source buffer
+   --  @param Last Last sent byte, or Data'First - 1 without progress
+   --  @param Result Progress, required readiness, or peer closure
+   procedure Send_IO
+     (Item   : in out Operation_Transport;
+      Data   : Ada.Streams.Stream_Element_Array;
+      Last   : out Ada.Streams.Stream_Element_Offset;
+      Result : out Flyology.IO.Connections.Drivers.Step_Result) is abstract;
+
+   --  Arm the visible HTTP operation for the readiness requested by one I/O
+   --  step, including connection lifecycle and cancellation sources.
+   --  @param Item Operation-capable transport
+   --  @param Operation Visible HTTP operation
+   --  @param Required Need_Read or Need_Write from the preceding step
+   procedure Arm_IO_Transport
+     (Item      : in out Operation_Transport;
+      Operation : in out Flyology.Operations.Operation'Class;
+      Required  : Flyology.IO.Connections.Drivers.Step_Result) is abstract;
+
+   --  Release every connection, token, and descriptor borrow before the
+   --  visible HTTP operation publishes a terminal result.
+   --  @param Item Operation-capable transport
+   procedure Release_IO (Item : in out Operation_Transport) is abstract;
+
    --  One parsed request. Values are replaced by Read_Request.
    type Request is private;
 
@@ -222,6 +297,109 @@ package Flyology.HTTP.Server is
    --  @field Channel Borrowed transport kept alive for this object
    type Connection (Channel : not null access Transport'Class) is limited
      private;
+
+   --  Scoped request-head read. Item and Token must outlive the operation.
+   --  The operation retains its parsed result until typed Finish.
+   type HTTP_Operation is
+     abstract new Flyology.Operations.Operation with private;
+
+   --  Scoped request-head read with a retained Request result.
+   type Read_Request_Head_Operation is new HTTP_Operation with private;
+
+   --  Scoped request-body acceptance, including a required 100 Continue send.
+   type Accept_Body_Operation is new HTTP_Operation with private;
+
+   --  Scoped decoded request-body read. Data remains borrowed until Finish.
+   type Read_Body_Operation is new HTTP_Operation with private;
+
+   --  Constructors for bounded HTTP operations. Keeping constructors in a
+   --  nested namespace preserves Connection's familiar non-dispatching public
+   --  view while the returned operations remain interchangeable with every
+   --  Flyology operation.
+   package Scoped is
+
+      --  Start a request-head read with one header/request deadline.
+      --  @param Set Completion set that owns the operation
+      --  @param Item HTTP connection using Operation_Transport
+      --  @param Timeout Header and complete-request deadline
+      --  @param Max_Body Application body limit
+      --  @param Token Optional cancellation source
+      --  @return Started limited request-head operation
+      function Read_Request_Head
+        (Set      : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item     : not null access Connection;
+         Timeout  : Duration := 30.0;
+         Max_Body : Body_Size := Max_Request_Body;
+         Token    : access Flyology.Cancellation.Token := null)
+         return Read_Request_Head_Operation;
+
+      --  Start a request-head read with distinct absolute budgets.
+      --  @param Set Completion set that owns the operation
+      --  @param Item HTTP connection using Operation_Transport
+      --  @param Header_Timeout Request-head deadline
+      --  @param Request_Timeout Complete streamed-request deadline
+      --  @param Max_Body Application body limit
+      --  @param Token Optional cancellation source
+      --  @return Started limited request-head operation
+      function Read_Request_Head
+        (Set             : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item            : not null access Connection;
+         Header_Timeout  : Duration;
+         Request_Timeout : Duration;
+         Max_Body        : Body_Size := Max_Request_Body;
+         Token           : access Flyology.Cancellation.Token := null)
+         return Read_Request_Head_Operation;
+
+      --  Start scoped request-body acceptance.
+      --  @param Set Completion set that owns the operation
+      --  @param Item HTTP connection using Operation_Transport
+      --  @param Token Optional cancellation source
+      --  @return Started limited acceptance operation
+      function Accept_Body
+        (Set   : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item  : not null access Connection;
+         Token : access Flyology.Cancellation.Token := null)
+         return Accept_Body_Operation;
+
+      --  Start one scoped decoded body read into caller-owned storage.
+      --  @param Set Completion set that owns the operation
+      --  @param Item HTTP connection using Operation_Transport
+      --  @param Data Destination borrowed until typed Finish
+      --  @param Token Optional cancellation source
+      --  @return Started limited body-read operation
+      function Read_Body
+        (Set   : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item  : not null access Connection;
+         Data  : not null access Ada.Streams.Stream_Element_Array;
+         Token : access Flyology.Cancellation.Token := null)
+         return Read_Body_Operation;
+
+      --  Consume a terminal request-head operation and publish its result.
+      --  @param Operation Terminal request-head operation
+      --  @param Value Parsed request head on success
+      --  @param Peer_Closed True only for closure between requests
+      procedure Finish
+        (Operation   : in out Read_Request_Head_Operation;
+         Value       : out Request;
+         Peer_Closed : out Boolean);
+
+      --  Consume a terminal acceptance operation.
+      --  @param Operation Terminal acceptance operation
+      procedure Finish (Operation : in out Accept_Body_Operation);
+
+      --  Consume a terminal body-read operation and publish its results.
+      --  @param Operation Terminal body-read operation
+      --  @param Last Last decoded byte, or Data'First - 1 when none
+      --  @param Finished True after complete body framing and trailers
+      procedure Finish
+        (Operation : in out Read_Body_Operation;
+         Last      : out Ada.Streams.Stream_Element_Offset;
+         Finished  : out Boolean);
+   end Scoped;
 
    --  Attach one shared ingress budget before the first request is read.
    --  The budget must outlive Item and cannot be replaced while bytes are
@@ -790,6 +968,8 @@ private
       Body_Accepted    : Boolean := True;
       Continue_Pending : Boolean := False;
       Chunk_CRLF_Pending : Boolean := False;
+      Reading_Trailers : Boolean := False;
+      Trailer_Bytes    : Natural := 0;
       Body_Started     : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
       Body_Timeout     : Duration := 0.0;
       Buffered_Bytes   : Natural := 0;
@@ -812,6 +992,80 @@ private
       WebSocket_Deflate_Enabled : Boolean := False;
       WebSocket_Message_Compressed : Boolean := False;
    end record;
+
+   subtype HTTP_Operation_Buffer is
+     Ada.Streams.Stream_Element_Array
+       (1 .. Ada.Streams.Stream_Element_Offset (8 * 1_024));
+
+   type Connection_Access is access all Connection;
+   type Cancellation_Token_Access is access all Flyology.Cancellation.Token;
+
+   type HTTP_Operation is
+     abstract new Flyology.Operations.Operation with record
+      Item_Handle  : Connection_Access := null;
+      Token_Handle : Cancellation_Token_Access := null;
+      IO_Started   : Boolean := False;
+      Acquiring    : Boolean := False;
+      Failure      : Ada.Exceptions.Exception_Occurrence;
+   end record;
+
+   type Read_Request_Head_Operation is new HTTP_Operation with record
+      Buffer          : HTTP_Operation_Buffer := (others => 0);
+      Value_Result    : Request;
+      Peer_Closed     : Boolean := False;
+      Started         : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
+      Header_Timeout  : Duration := 0.0;
+      Request_Timeout : Duration := 0.0;
+      Max_Body        : Body_Size := Max_Request_Body;
+   end record;
+
+   --  @exclude
+   --  @param Item Request-head operation to drive
+   --  @param Event Runtime event to process
+   overriding procedure Drive
+     (Item  : in out Read_Request_Head_Operation;
+      Event : Flyology.Operations.Driver_Event);
+   --  @exclude
+   --  @param Item Request-head operation to cancel
+   overriding procedure Request_Cancellation
+     (Item : in out Read_Request_Head_Operation);
+
+   type Accept_Body_Operation is new HTTP_Operation with record
+      Cursor     : Ada.Streams.Stream_Element_Offset := 1;
+      Time_Left  : Duration := -1.0;
+   end record;
+
+   --  @exclude
+   --  @param Item Body-acceptance operation to drive
+   --  @param Event Runtime event to process
+   overriding procedure Drive
+     (Item  : in out Accept_Body_Operation;
+      Event : Flyology.Operations.Driver_Event);
+   --  @exclude
+   --  @param Item Body-acceptance operation to cancel
+   overriding procedure Request_Cancellation
+     (Item : in out Accept_Body_Operation);
+
+   type Read_Body_Operation is new HTTP_Operation with record
+      Data_Address : System.Address := System.Null_Address;
+      Data_First   : Ada.Streams.Stream_Element_Offset := 1;
+      Data_Last    : Ada.Streams.Stream_Element_Offset := 0;
+      Buffer      : HTTP_Operation_Buffer := (others => 0);
+      Written     : Natural := 0;
+      Last_Result : Ada.Streams.Stream_Element_Offset := 0;
+      Finished    : Boolean := False;
+   end record;
+
+   --  @exclude
+   --  @param Item Body-read operation to drive
+   --  @param Event Runtime event to process
+   overriding procedure Drive
+     (Item  : in out Read_Body_Operation;
+      Event : Flyology.Operations.Driver_Event);
+   --  @exclude
+   --  @param Item Body-read operation to cancel
+   overriding procedure Request_Cancellation
+     (Item : in out Read_Body_Operation);
 
    --  Release any active buffered reservation.
    --  @param Item HTTP connection being finalized

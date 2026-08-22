@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Compose low-level Flyology HTTP request-head and body operations with timers, gates, cancellation, and other Flyology operations.">
+    <meta name="theme-color" content="#17213d">
+    <title>Composable operations guide · Flyology HTTP</title>
+    <link rel="canonical" href="https://http.flyology.org/guide/operations/">
+    <link rel="icon" href="../../assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles/site.css">
+    <script src="../../assets/scripts/ada-highlight.js"></script>
+    <script src="../../assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="../../" aria-label="Flyology HTTP home"><img src="../../assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology HTTP</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="../../">Overview</a></li>
+          <li><a href="../" aria-current="page">Guide</a></li>
+          <li><a href="../../architecture/">Architecture</a></li>
+          <li><a href="../../journal/">Journal</a></li>
+          <li><a href="../../api/">HTTP API</a></li>
+          <li><a href="../../iri-api/">IRI API</a></li>
+          <li>
+            <details class="nav-dropdown" data-nav-dropdown>
+              <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
+              <ul class="nav-dropdown-menu">
+                <li><a href="https://postgres.flyology.org/">Postgres</a></li>
+              </ul>
+            </details>
+          </li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li>
+          <li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
+        </ul>
+        <div class="nav-tools">
+          <button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button>
+          <button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main" class="page-shell">
+      <header class="doc-hero">
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Composable operations</li></ol><h1>Compose HTTP reads with Flyology operations.</h1></div>
+        <p class="doc-hero-copy">Start bounded request-head and body operations before the owner task waits. Use one Flyology completion set to wait for HTTP, timers, gates, connection work, and cancellation sources.</p>
+      </header>
+
+      <div class="docs-layout">
+        <nav class="toc" aria-label="On this page">
+          <p class="toc-title">On this page</p>
+          <ol>
+            <li><a href="#choose">Choose synchronous or composable calls</a></li>
+            <li><a href="#transport">Prepare the transport</a></li>
+            <li><a href="#compose">Start, wait, and finish</a></li>
+            <li><a href="#body">Read a request body</a></li>
+            <li><a href="#waits">Choose a wait</a></li>
+            <li><a href="#cancel">Cancel and retain failures</a></li>
+            <li><a href="#ownership">Keep borrowed values alive</a></li>
+            <li><a href="#limits">Use operations only for supported work</a></li>
+          </ol>
+        </nav>
+
+        <article class="prose">
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>These operations belong to the low-level HTTP/1.x server connection API. The familiar synchronous procedures remain available in native and lightweight task lanes. The examples follow the compile-checked <a href="https://github.com/flyology-ada/flyology-http/blob/main/tests/http_operations_smoke.adb"><code>http_operations_smoke</code></a> patterns. If completion sets, typed <code>Finish</code> calls, or gates are unfamiliar, read the <a href="https://flyology.org/guide/#scoped-operations">Flyology scoped-operations guide</a> first.</p></aside>
+
+          <section id="choose"><span class="step-label">OPERATIONS 01</span><h2>Choose synchronous or composable calls.</h2>
+            <p>When one task can wait for each protocol step in sequence, use the ordinary synchronous procedures. When one owner task must wait for an HTTP read and other Flyology operations, use <a href="../../api/628a4be254734940edc2b1fe8b91b080945c3fa511fbf469b9a7bf82cb3d1040.html"><code>Flyology.HTTP.Server.Scoped</code></a>.</p>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt>Synchronous</dt><dd>Call <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#2663bf184b31b6810a371f532e24c2530e5561ad52fc8fb6b22fb1607dab2df0"><code>Read_Request_Head</code></a>, <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#1670007eea1057c8a8785dc6406400af12d261b8cc1f2019c274c26895ec32fe"><code>Accept_Body</code></a>, or <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#3a5f44e71ea04553ba068e0a4dd0368838ca977064529fda3a782d5b37c78030"><code>Read_Body</code></a> as a normal procedure. The call returns its result or raises its error directly.</dd></div>
+                <div class="decision-row"><dt>Composable</dt><dd>Supply a completion set to the corresponding scoped constructor. The constructor starts immediately and returns a typed limited operation.</dd></div>
+              </dl>
+            </div>
+            <p>A composable call does not create a helper task, callback thread, or task stack. The HTTP state machine advances in bounded steps when the completion-set owner drives it.</p>
+          </section>
+
+          <section id="transport"><span class="step-label">OPERATIONS 02</span><h2>Use an operation-capable connection adapter.</h2>
+            <p>An HTTP operation requires a transport that implements <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#2a36a9bfbdad84d7e51c4f2c256b22686e1e63244051e69340969e22d97ed56f"><code>Operation_Transport</code></a>. The supplied <a href="../../api/827f72dfe1e478d1c44a48d16ad40a8bffc3f32ad6c0cc32c63b9e18a974d6bb.html"><code>Flyology.HTTP.Server.Connections</code></a> adapter provides that capability for a high-level Flyology connection.</p>
+            <figure class="code-panel"><figcaption>borrow an established Flyology connection</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">package HTTP renames Flyology.HTTP.Server;
+package HTTP_Connections renames Flyology.HTTP.Server.Connections;
+
+--  Channel is an established, caller-owned Flyology.IO.Connections.Connection.
+Transport : aliased HTTP_Connections.Connection_Transport (Channel'Access);
+Client    : aliased HTTP.Connection (Transport'Access);</code></pre></figure>
+            <p><a href="../../api/827f72dfe1e478d1c44a48d16ad40a8bffc3f32ad6c0cc32c63b9e18a974d6bb.html#0b8cfc7a7a289b3d6a3cc1d7dac75163c690ff0edd61a56deabedbdbd0f40788"><code>Connections.Connection_Transport</code></a> borrows the Flyology connection. The Flyology connection must outlive the adapter. The adapter must outlive the <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#8a72bc8fbfb54e3505dbac95f648b21580d26da7a3464d687b128e004581d873"><code>Server.Connection</code></a> and its operations.</p>
+            <p>The adapter continues to work after you upgrade the high-level Flyology connection to TLS. Before you start the first HTTP operation, finish the <code>Flyology.IO.Connections.TLS.Upgrade</code> operation. The HTTP operation then uses the current plaintext or TLS transport through the same connection capability.</p>
+          </section>
+
+          <section id="compose"><span class="step-label">OPERATIONS 03</span><h2>Start, wait, and finish every operation.</h2>
+            <p>The <a href="../../api/628a4be254734940edc2b1fe8b91b080945c3fa511fbf469b9a7bf82cb3d1040.html#34675ad8aa84d8c342e92b5980093c2920566365d9967fb0adee01cbd8827800"><code>Scoped.Read_Request_Head</code></a> constructor starts one <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#10584ca66503974ea39a1a3291810789e4bd68d72617b0c4a9769fedfe9c7a3e"><code>Read_Request_Head_Operation</code></a>. The example also starts a timer and adds a gate that observes both root operations.</p>
+            <figure class="code-panel"><figcaption>compose one request head with a timer</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">declare
+   --  Two root operations plus one gate require three slots.
+   Set : aliased Flyology.Operations.Completion_Set (3);
+
+   Head : aliased HTTP.Read_Request_Head_Operation :=
+     HTTP.Scoped.Read_Request_Head
+       (Set      =&gt; Set'Access,
+        Item     =&gt; Client'Access,
+        Timeout  =&gt; 5.0,
+        Max_Body =&gt; 8 * 1_024 * 1_024);
+
+   Alarm : aliased Flyology.IO.Timers.Timer_Operation :=
+     Flyology.IO.Timers.Sleep_For (Set'Access, 0.050);
+
+   Both : Flyology.Operations.Gate_Operation :=
+     Flyology.Operations.Wait_All
+       (Set'Access,
+        [Flyology.Operations.Reference (Head),
+         Flyology.Operations.Reference (Alarm)]);
+
+   Matched : Flyology.Operations.Completion_Batch (Set.Capacity);
+   Request : HTTP.Request;
+   Closed  : Boolean;
+begin
+   Flyology.Operations.Wait_All (Set);
+   Flyology.Operations.Finish (Both, Matched);
+   Flyology.IO.Timers.Finish (Alarm);
+   HTTP.Scoped.Finish (Head, Request, Closed);
+
+   if not Closed then
+      Put_Line (HTTP.Target (Request));
+   end if;
+end;</code></pre></figure>
+            <p>Each root operation uses one completion-set slot. A gate uses another slot. The HTTP operation uses only one slot. Its transport capability does not use a completion-set slot.</p>
+            <p>Call the request-head overload of <a href="../../api/628a4be254734940edc2b1fe8b91b080945c3fa511fbf469b9a7bf82cb3d1040.html#03db26f77f9f486df03e9b6b28d084057219718754adfcc7a39568351c1a15da"><code>Scoped.Finish</code></a> to consume the terminal result and get a <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#e157bacaa4c3830cb0a04fc2d59ca8e61912cbbba8dae3cbec54ce69a07fe3bd"><code>Request</code></a>. A clean close between requests sets <code>Closed</code> and returns an empty request. After <code>Finish</code> returns with <code>Closed = False</code>, the <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#a524444cd18298a6411831c600a8ec7356df5f05b7a1fd70de4818895cf08d71"><code>Target</code></a> accessor is valid.</p>
+          </section>
+
+          <section id="body"><span class="step-label">OPERATIONS 04</span><h2>Accept and stream the request body in order.</h2>
+            <p>After the head finishes, call <a href="../../api/628a4be254734940edc2b1fe8b91b080945c3fa511fbf469b9a7bf82cb3d1040.html#9a48fc72f97015ea9c3d4bcf02b9ee8914ba5aa2818da441c5957d488cc5fc65"><code>Scoped.Accept_Body</code></a>. Its <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#f4efb393137944364a1157dc4db15458aa3f0632eaaee4363060201444edf113"><code>Accept_Body_Operation</code></a> sends <code>100 Continue</code> when the parsed request requires it. Otherwise, the operation can complete immediately.</p>
+            <p>Then start <a href="../../api/628a4be254734940edc2b1fe8b91b080945c3fa511fbf469b9a7bf82cb3d1040.html#24e1c9810f75a4182237300aaf8d126730f91619437e7c2fddfdef9106438ea4"><code>Scoped.Read_Body</code></a> repeatedly. Each <a href="../../api/6d98af9ca1573e8b918c41895226c62a50c1c19ce55ac1253d8637e890f75db7.html#baf520a46f809c7fd04f78373697a94e95b058a83a5a8756e7c796f6b011ad50"><code>Read_Body_Operation</code></a> fills one caller-owned buffer and reports whether framing and trailers are complete.</p>
+            <figure class="code-panel"><figcaption>accept and stream one body</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">declare
+   Set      : aliased Flyology.Operations.Completion_Set (1);
+   Data     : aliased Ada.Streams.Stream_Element_Array (1 .. 4_096);
+   Last     : Ada.Streams.Stream_Element_Offset;
+   Finished : Boolean := False;
+begin
+   declare
+      Acceptance : HTTP.Accept_Body_Operation :=
+        HTTP.Scoped.Accept_Body (Set'Access, Client'Access);
+   begin
+      Flyology.Operations.Wait_All (Set);
+      HTTP.Scoped.Finish (Acceptance);
+   end;
+
+   while not Finished loop
+      declare
+         Read : HTTP.Read_Body_Operation :=
+           HTTP.Scoped.Read_Body (Set'Access, Client'Access, Data'Access);
+      begin
+         Flyology.Operations.Wait_All (Set);
+         HTTP.Scoped.Finish (Read, Last, Finished);
+         if Last &gt;= Data'First then
+            Consume (Data (Data'First .. Last));
+         end if;
+      end;
+   end loop;
+end;</code></pre></figure>
+            <p>The complete-request deadline starts with the request head. Repeated body reads do not restart it. When the header and complete request need different absolute budgets, use the distinct-timeout request-head overload.</p>
+          </section>
+
+          <section id="waits"><span class="step-label">OPERATIONS 05</span><h2>Choose the completion rule explicitly.</h2>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt><code>Wait_Some</code></dt><dd>Returns a new terminal batch after at least one operation completes.</dd></div>
+                <div class="decision-row"><dt><code>Wait_At_Least</code></dt><dd>Returns after a requested number of new terminal results, or when the set first becomes quiescent.</dd></div>
+                <div class="decision-row"><dt><code>Wait_All</code></dt><dd>Waits until no operation remains pending. Failures and cancellations also count as terminal results.</dd></div>
+                <div class="decision-row"><dt><code>Wait_For_Success</code></dt><dd>Returns after one new success, or when success becomes impossible.</dd></div>
+                <div class="decision-row"><dt><code>Wait_For_Successes</code></dt><dd>Returns after the requested success count, or when that count becomes impossible.</dd></div>
+              </dl>
+            </div>
+            <p>Function overloads of these waits construct first-class gates from fixed references to operations in one set. A gate observes its members. If you cancel the gate, Flyology does not cancel its members. See the Flyology guide for counted waits, completion batches, outcome inspection, and nested gate examples.</p>
+          </section>
+
+          <section id="cancel"><span class="step-label">OPERATIONS 06</span><h2>Cancel, drain, and finish.</h2>
+            <p>Cancellation makes an active operation terminal only after the transport releases its borrowed state. After cancellation, call the typed HTTP <code>Finish</code>. This call consumes the terminal result and raises <code>Flyology.Operations.Operation_Cancelled</code>.</p>
+            <figure class="code-panel"><figcaption>consume an explicitly cancelled request head</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">if Flyology.Operations.Is_Active (Head) then
+   Flyology.Operations.Cancel (Head);
+end if;
+
+begin
+   HTTP.Scoped.Finish (Head, Request, Closed);
+exception
+   when Flyology.Operations.Operation_Cancelled =&gt;
+      null;
+end;</code></pre></figure>
+            <p>The operation also retains timeout, malformed-input, body-limit, and transport failures until typed <code>Finish</code>. A wait reports terminal completion. It does not consume the provider-specific result. Only when scheduling policy must distinguish success, failure, and cancellation, inspect the generic outcome before <code>Finish</code>.</p>
+            <p>At scope finalization, Flyology cancels unfinished operations and releases their transport capabilities. When the application must observe a result or error, cancel the operation and call its typed <code>Finish</code> explicitly.</p>
+          </section>
+
+          <section id="ownership"><span class="step-label">OPERATIONS 07</span><h2>Keep every borrowed value alive until Finish.</h2>
+            <ul>
+              <li>The completion set must outlive all operations and gates that use it.</li>
+              <li>The HTTP connection, its connection adapter, and the underlying Flyology connection must outlive each HTTP operation.</li>
+              <li>A cancellation token supplied to a constructor must outlive that operation.</li>
+              <li>A body-read buffer remains borrowed until typed <code>Finish</code>, even after the operation becomes terminal.</li>
+              <li>Use one owner task for a completion set and its operations.</li>
+              <li>Keep protocol steps sequential on one HTTP connection. Use distinct HTTP connections for simultaneous request-head operations.</li>
+            </ul>
+            <p>A terminal operation releases its connection lease before <code>Finish</code>. Queued high-level connection work can then continue while the operation retains the result. The operation retains the parsed request or body status until typed <code>Finish</code> consumes it.</p>
+          </section>
+
+          <section id="limits"><span class="step-label">OPERATIONS 08</span><h2>Use operations only for supported work.</h2>
+            <ul>
+              <li>Scoped constructors support low-level HTTP/1.x request heads, body acceptance, and decoded body reads.</li>
+              <li>Response writes remain synchronous.</li>
+              <li>The pooled client, routed exchanges, HTTP/2 streams, HTTP/3 streams, SSE, and WebSocket APIs do not currently expose these HTTP operation types.</li>
+              <li>The direct <a href="../../api/4650e50af84622287699954f0dd4a595c1fb2675812ebb50129b90a3a85f315a.html#af22b549ef9cd2aa18a4645a8850901334df6b4c427cef4c15abbc1c71f02a2c"><code>Server.TLS.Connection_Transport</code></a> implements the synchronous transport interface only. A scoped constructor rejects it with <code>Program_Error</code>.</li>
+              <li>For TLS composition, upgrade a high-level Flyology connection and retain the operation-capable <code>Server.Connections.Connection_Transport</code> adapter.</li>
+            </ul>
+            <p>The scoped API does not replace the synchronous API. Existing synchronous procedures keep their signatures and exception behavior.</p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology HTTP is experimental. Composable operations cover a limited low-level HTTP/1.x surface.</span><div class="footer-links"><a href="../server/">Server</a><a href="https://flyology.org/guide/#scoped-operations">Flyology operations</a><a href="../../api/628a4be254734940edc2b1fe8b91b080945c3fa511fbf469b9a7bf82cb3d1040.html">Scoped API</a><a href="../../architecture/">Architecture</a></div></div></footer>
+  </body>
+</html>

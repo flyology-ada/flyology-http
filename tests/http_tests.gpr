@@ -60,6 +60,7 @@ project HTTP_Tests is
       "flyology-http-route_parameter_policy-smoke.adb",
       "flyology-websocket_deflate_policy_smoke.adb",
       "http_smoke.adb",
+      "http_operations_smoke.adb",
       "http_client_smoke.adb",
       "http_client_addressing.adb",
       "http_client_authentication.adb",
