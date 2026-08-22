@@ -11,13 +11,10 @@ tags = ["ada", "http", "client", "server", "websocket", "sse"]
 project-files = ["flyology_http.gpr"]
 
 [[depends-on]]
-flyology = "=0.1.0"
+flyology = "=0.1.1-dev"
 flyology_cachelines = "=0.1.0"
 flyology_quic = "=0.1.1"
 
 [[actions]]
 type = "test"
 command = ["./scripts/test.sh"]
-
-[[pins]]
-flyology = { url = "https://github.com/flyology-ada/flyology.git", branch = "codex/composable-operations" }
