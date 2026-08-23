@@ -6714,6 +6714,25 @@ package body Flyology.HTTP.Client is
          end if;
       end Wait_For_Progress;
 
+      procedure Wait_For_HTTP_2_Closing_Drain
+        (IO   : in out Connection_Drivers.Capability;
+         Step : H2_Connections.Pump_Step) is
+         Waited : Connection_Drivers.Wait_Result;
+         Interest : constant Connection_Drivers.Readiness_Interest :=
+           (if Step.Outbound_Pending then
+              Connection_Drivers.Duplex_Interest
+            elsif Step.Result = H2_Connections.Pump_Need_Write then
+              Connection_Drivers.Write_Interest
+            else Connection_Drivers.Read_Interest);
+      begin
+         Connection_Drivers.Wait
+           (IO,
+            H2_Connections.Outbound
+              (Item.Data.Connection.HTTP_2.all).all,
+            Interest, Timeout => Step.Drain_Remaining,
+            Result => Waited);
+      end Wait_For_HTTP_2_Closing_Drain;
+
       procedure Drive_HTTP_2_Until_Ready is
          Claimed : Boolean;
 
@@ -6728,35 +6747,47 @@ package body Flyology.HTTP.Client is
                H2_Connections.Drive_Pump
                  (Item.Data.Connection.HTTP_2.all,
                   Item.Data.HTTP_2_Stream, IO, Step);
-               H2_Connections.Wait_Source
-                 (Item.Data.Connection.HTTP_2.all,
-                  Item.Data.HTTP_2_Stream, FD, Ready);
-               case Step.Result is
-                  when H2_Connections.Pump_Progress =>
-                     --  Keep draining the already-readable transport burst
-                     --  after this stream becomes ready. Otherwise a native
-                     --  synchronous body reader can consume the descriptor's
-                     --  edge, hand the shared pump to a lightweight sibling,
-                     --  and strand frames that are still buffered for it.
-                     null;
-                  when H2_Connections.Pump_Need_Read |
-                       H2_Connections.Pump_Need_Write =>
-                     exit when Ready;
-                     Interest :=
-                       (if Step.Outbound_Pending
-                        then Connection_Drivers.Duplex_Interest
-                        elsif Step.Result = H2_Connections.Pump_Need_Write
-                        then Connection_Drivers.Write_Interest
-                        else Connection_Drivers.Read_Interest);
-                     Connection_Drivers.Wait
-                       (IO,
-                        H2_Connections.Outbound
-                          (Item.Data.Connection.HTTP_2.all).all,
-                        Interest, Result => Waited);
-                  when H2_Connections.Pump_Peer_Closed |
-                       H2_Connections.Pump_Protocol_Failed =>
-                     exit;
-               end case;
+               if Step.Closing_Drain then
+                  case Step.Result is
+                     when H2_Connections.Pump_Progress => null;
+                     when H2_Connections.Pump_Need_Read |
+                          H2_Connections.Pump_Need_Write =>
+                        Wait_For_HTTP_2_Closing_Drain (IO, Step);
+                     when H2_Connections.Pump_Peer_Closed |
+                          H2_Connections.Pump_Protocol_Failed =>
+                        exit;
+                  end case;
+               else
+                  H2_Connections.Wait_Source
+                    (Item.Data.Connection.HTTP_2.all,
+                     Item.Data.HTTP_2_Stream, FD, Ready);
+                  case Step.Result is
+                     when H2_Connections.Pump_Progress =>
+                        --  Keep draining the already-readable transport burst
+                        --  after this stream becomes ready. Otherwise a
+                        --  synchronous body reader can consume the
+                        --  descriptor's edge, hand the shared pump to a
+                        --  lightweight sibling, and strand buffered frames.
+                        null;
+                     when H2_Connections.Pump_Need_Read |
+                          H2_Connections.Pump_Need_Write =>
+                        exit when Ready;
+                        Interest :=
+                          (if Step.Outbound_Pending
+                           then Connection_Drivers.Duplex_Interest
+                           elsif Step.Result = H2_Connections.Pump_Need_Write
+                           then Connection_Drivers.Write_Interest
+                           else Connection_Drivers.Read_Interest);
+                        Connection_Drivers.Wait
+                          (IO,
+                           H2_Connections.Outbound
+                             (Item.Data.Connection.HTTP_2.all).all,
+                           Interest, Result => Waited);
+                     when H2_Connections.Pump_Peer_Closed |
+                          H2_Connections.Pump_Protocol_Failed =>
+                        exit;
+                  end case;
+               end if;
             end loop;
          end Pump;
       begin
@@ -6794,31 +6825,43 @@ package body Flyology.HTTP.Client is
                H2_Connections.Drive_Pump
                  (Item.Data.Connection.HTTP_2.all,
                   Item.Data.HTTP_2_Stream, IO, Step);
-               case Step.Result is
-                  when H2_Connections.Pump_Progress =>
-                     null;
-                  when H2_Connections.Pump_Need_Read =>
-                     exit when not Step.Outbound_Pending;
-                     Connection_Drivers.Wait
-                       (IO,
-                        H2_Connections.Outbound
-                          (Item.Data.Connection.HTTP_2.all).all,
-                        Connection_Drivers.Duplex_Interest,
-                        Result => Waited);
-                  when H2_Connections.Pump_Need_Write =>
-                     Interest :=
-                       (if Step.Outbound_Pending
-                        then Connection_Drivers.Duplex_Interest
-                        else Connection_Drivers.Write_Interest);
-                     Connection_Drivers.Wait
-                       (IO,
-                        H2_Connections.Outbound
-                          (Item.Data.Connection.HTTP_2.all).all,
-                        Interest, Result => Waited);
-                  when H2_Connections.Pump_Peer_Closed |
-                       H2_Connections.Pump_Protocol_Failed =>
-                     exit;
-               end case;
+               if Step.Closing_Drain then
+                  case Step.Result is
+                     when H2_Connections.Pump_Progress => null;
+                     when H2_Connections.Pump_Need_Read |
+                          H2_Connections.Pump_Need_Write =>
+                        Wait_For_HTTP_2_Closing_Drain (IO, Step);
+                     when H2_Connections.Pump_Peer_Closed |
+                          H2_Connections.Pump_Protocol_Failed =>
+                        exit;
+                  end case;
+               else
+                  case Step.Result is
+                     when H2_Connections.Pump_Progress =>
+                        null;
+                     when H2_Connections.Pump_Need_Read =>
+                        exit when not Step.Outbound_Pending;
+                        Connection_Drivers.Wait
+                          (IO,
+                           H2_Connections.Outbound
+                             (Item.Data.Connection.HTTP_2.all).all,
+                           Connection_Drivers.Duplex_Interest,
+                           Result => Waited);
+                     when H2_Connections.Pump_Need_Write =>
+                        Interest :=
+                          (if Step.Outbound_Pending
+                           then Connection_Drivers.Duplex_Interest
+                           else Connection_Drivers.Write_Interest);
+                        Connection_Drivers.Wait
+                          (IO,
+                           H2_Connections.Outbound
+                             (Item.Data.Connection.HTTP_2.all).all,
+                           Interest, Result => Waited);
+                     when H2_Connections.Pump_Peer_Closed |
+                          H2_Connections.Pump_Protocol_Failed =>
+                        exit;
+                  end case;
+               end if;
             end loop;
          end Pump;
       begin
@@ -6865,6 +6908,11 @@ package body Flyology.HTTP.Client is
          end if;
          return;
       elsif Item.Data.Complete then
+         --  END_STREAM can share the transport read with a following
+         --  connection-control or invalid frame. Match the composable
+         --  full-exchange settlement before returning an already-complete
+         --  synchronous body; the pass exits at the first would-block.
+         Settle_HTTP_2_Control;
          Last := Data'First - 1;
          Finished := True;
          return;
