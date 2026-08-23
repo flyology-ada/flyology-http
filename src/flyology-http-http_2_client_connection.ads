@@ -51,6 +51,8 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
       Sent_Bytes     : Boolean := False;
       Received_Bytes : Boolean := False;
       Outbound_Pending : Boolean := False;
+      Closing_Drain    : Boolean := False;
+      Drain_Remaining  : Duration := 0.0;
    end record;
 
    --  Claim the shared session pump for Handle. Exactly one stream operation

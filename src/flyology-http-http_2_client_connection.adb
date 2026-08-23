@@ -1,3 +1,4 @@
+with Ada.Real_Time;
 with Ada.Unchecked_Deallocation;
 with Flyology.HTTP.HTTP_2_Frames;
 with Flyology.HTTP.HTTP_2_HPACK;
@@ -9,6 +10,7 @@ with Interfaces;
 
 package body Flyology.HTTP.HTTP_2_Client_Connection is
    use Ada.Streams;
+   use type Ada.Real_Time.Time;
    use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_32;
    use type Flyology.IO.Descriptor;
@@ -32,6 +34,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    Maximum_Buffered_Data : constant Positive := 65_535;
    Maximum_Control_Backlog : constant Positive := 32 * 1_024;
    Window_Update_Threshold : constant Positive := 8 * 1_024;
+   Protocol_Close_Grace : constant Duration := 1.0;
 
    type Request_Buffer_Access is access Bytes.Unbounded_Bytes;
    procedure Free_Request_Buffer is new Ada.Unchecked_Deallocation
@@ -253,6 +256,9 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       Peer_Preface_Seen   : Boolean := False;
       Broken              : Boolean := False;
       Closing             : Boolean := False;
+      Closing_Drain_Started : Boolean := False;
+      Closing_Drain_Deadline : Ada.Real_Time.Time :=
+        Ada.Real_Time.Time_Last;
    end record;
 
    type Session_State is limited record
@@ -1740,6 +1746,18 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          raise Stop;
       end Protocol_Failure;
 
+      function Closing_Drain_Remaining return Duration is
+         Now : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+      begin
+         if not State.Driver.Closing_Drain_Started
+           or else Now >= State.Driver.Closing_Drain_Deadline
+         then
+            return 0.0;
+         end if;
+         return Ada.Real_Time.To_Duration
+           (State.Driver.Closing_Drain_Deadline - Now);
+      end Closing_Drain_Remaining;
+
       procedure Process_Header_Block is
          Fields     : Flyology.HTTP.Headers.List;
          Status     : Status_Code := 200;
@@ -2044,15 +2062,49 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             when Drivers.Need_Write =>
                Step.Result := Pump_Need_Write;
             when Drivers.Peer_Closed =>
-               Step.Result := Pump_Peer_Closed;
+               Step.Result :=
+                 (if State.Driver.Closing
+                  then Pump_Protocol_Failed else Pump_Peer_Closed);
          end case;
          Step.Outbound_Pending := State.Driver.Have_Output;
+         Step.Closing_Drain := State.Driver.Closing;
+         Step.Drain_Remaining :=
+           (if State.Driver.Closing then Protocol_Close_Grace else 0.0);
          return;
       end if;
 
       if State.Driver.Closing then
-         State.Driver.Broken := True;
-         Step.Result := Pump_Protocol_Failed;
+         if not State.Driver.Closing_Drain_Started then
+            State.Driver.Closing_Drain_Started := True;
+            State.Driver.Closing_Drain_Deadline :=
+              Ada.Real_Time.Clock
+                + Ada.Real_Time.To_Time_Span (Protocol_Close_Grace);
+         end if;
+         Step.Closing_Drain := True;
+         Step.Drain_Remaining := Closing_Drain_Remaining;
+         if Step.Drain_Remaining <= 0.0 then
+            State.Driver.Broken := True;
+            Step.Result := Pump_Protocol_Failed;
+            return;
+         end if;
+         --  Keep the lease until the peer observes GOAWAY and closes, while
+         --  discarding at most one bounded transport chunk per owner-stack
+         --  drive. The grace deadline prevents a silent peer from retaining
+         --  the connection indefinitely and never extends the request budget.
+         Drivers.Receive
+           (IO, State.Driver.Input, Last, IO_Result);
+         case IO_Result is
+            when Drivers.Made_Progress =>
+               Step.Received_Bytes := Last >= State.Driver.Input'First;
+               Step.Result := Pump_Progress;
+            when Drivers.Need_Read =>
+               Step.Result := Pump_Need_Read;
+            when Drivers.Need_Write =>
+               Step.Result := Pump_Need_Write;
+            when Drivers.Peer_Closed =>
+               State.Driver.Broken := True;
+               Step.Result := Pump_Protocol_Failed;
+         end case;
          return;
       end if;
 
@@ -2092,12 +2144,19 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       when Stop =>
          Step :=
            (Result => Pump_Progress,
+            Sent_Bytes => False,
+            Received_Bytes => False,
             Outbound_Pending => True,
-            others => False);
+            Closing_Drain => State.Driver.Closing,
+            Drain_Remaining => 0.0);
       when others =>
          State.Driver.Broken := True;
          State.Streams.Fail_All;
-         Step := (Result => Pump_Protocol_Failed, others => False);
+         Step :=
+           (Result => Pump_Protocol_Failed,
+            Sent_Bytes | Received_Bytes | Outbound_Pending |
+              Closing_Drain => False,
+            Drain_Remaining => 0.0);
    end Drive_Owner_Pump;
 
    procedure Free_State is new Ada.Unchecked_Deallocation

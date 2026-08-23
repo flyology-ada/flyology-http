@@ -4394,6 +4394,20 @@ package body Flyology.HTTP.Client is
             State.HTTP_2_Settling := False;
             Finish_Success (Item);
          end Finish_Settlement;
+
+         procedure Arm_Closing_Drain
+           (Required : Connection_Drivers.Step_Result) is
+            Wait : Duration := Step.Drain_Remaining;
+         begin
+            Connection_Drivers.Arm_Transport
+              (State.IO, Item, Required,
+               H2_Connections.Outbound
+                 (State.Connection.HTTP_2.all).all);
+            if State.Deadline.Is_Limited then
+               Wait := Duration'Min (Wait, Remaining (State.Deadline));
+            end if;
+            Flyology.Operations.Drivers.Arm_Deadline (Item, Wait);
+         end Arm_Closing_Drain;
       begin
          H2_Connections.Drive_Pump
            (State.Connection.HTTP_2.all,
@@ -4407,18 +4421,24 @@ package body Flyology.HTTP.Client is
          case Step.Result is
             when H2_Connections.Pump_Progress =>
                State.HTTP_2_Flush_Pending := Step.Outbound_Pending;
-               Release_HTTP_2_Pump;
-               State.Driver_State :=
-                 (if Step.Outbound_Pending
-                  then HTTP_2_Waiting_For_Pump
-                  elsif State.HTTP_2_Cancelling
-                  then HTTP_2_Waiting_For_Pump
-                  elsif State.HTTP_2_Settling
-                  then HTTP_2_Waiting_For_Pump
-                  else HTTP_2_Protocol_Step);
+               if Step.Closing_Drain then
+                  State.Driver_State := HTTP_2_Driving_Pump;
+               else
+                  Release_HTTP_2_Pump;
+                  State.Driver_State :=
+                    (if Step.Outbound_Pending
+                     then HTTP_2_Waiting_For_Pump
+                     elsif State.HTTP_2_Cancelling
+                     then HTTP_2_Waiting_For_Pump
+                     elsif State.HTTP_2_Settling
+                     then HTTP_2_Waiting_For_Pump
+                     else HTTP_2_Protocol_Step);
+               end if;
                Reschedule;
             when H2_Connections.Pump_Need_Read =>
-               if State.HTTP_2_Cancelling
+               if Step.Closing_Drain then
+                  Arm_Closing_Drain (Connection_Drivers.Need_Read);
+               elsif State.HTTP_2_Cancelling
                  and then not Step.Outbound_Pending
                then
                   Finish_Cancellation;
@@ -4443,7 +4463,9 @@ package body Flyology.HTTP.Client is
                   Connection_Drivers.Arm_Deadline (State.IO, Item);
                end if;
             when H2_Connections.Pump_Need_Write =>
-               if State.HTTP_2_Cancelling
+               if Step.Closing_Drain then
+                  Arm_Closing_Drain (Connection_Drivers.Need_Write);
+               elsif State.HTTP_2_Cancelling
                  and then Expired (State.Deadline)
                then
                   Fail_Exchange (Item, Transport_Failed);
