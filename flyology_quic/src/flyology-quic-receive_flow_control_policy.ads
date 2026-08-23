@@ -84,6 +84,16 @@ is
       Limit : Value_Type)
    with Global => null;
 
+   function Stream_Window
+     (Item : State; ID : Stream_ID_Policy.Stream_ID) return Value_Type
+   with Global => null;
+
+   procedure Raise_Stream_Data_Limit
+     (Item  : in out State;
+      ID    : Stream_ID_Policy.Stream_ID;
+      Limit : Value_Type)
+   with Global => null;
+
    procedure Reserve_Stream
      (Item               : in out State;
       ID                 : Stream_ID_Policy.Stream_ID;
@@ -135,6 +145,7 @@ private
       Occupied  : Boolean := False;
       ID        : Stream_ID_Policy.Stream_ID := 0;
       Highest   : Value_Type := 0;
+      Limit     : Value_Type := 0;
       Final_Set : Boolean := False;
       Final     : Value_Type := 0;
    end record;

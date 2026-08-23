@@ -64,4 +64,31 @@ begin
      (Status = Exceeds_Capacity
       and then Contiguous_Length (Item) = 0
       and then Highest_Offset (Item) = 0);
+
+   declare
+      Window : Ada.Streams.Stream_Element_Array
+        (1 .. Ada.Streams.Stream_Element_Offset (Max_Stream_Data)) :=
+          (others => Character'Pos ('w'));
+   begin
+      Reset (Item);
+      Insert (Item, 0, False, Window, Status);
+      pragma Assert
+        (Status = Accepted
+         and then Available_Length (Item) = Max_Stream_Data);
+      Consume (Item, Max_Stream_Data);
+      pragma Assert
+        (Available_Length (Item) = 0
+         and then Consumed_Offset (Item) = Max_Stream_Data);
+      Insert
+        (Item, 0, False, Window (Window'First .. Window'First + 7), Status);
+      pragma Assert (Status = Duplicate);
+      Insert
+        (Item, Varint_Policy.Value_Type (Max_Stream_Data), True,
+         (1 => Character'Pos ('x')), Status);
+      pragma Assert
+        (Status = Accepted
+         and then Available_Length (Item) = 1
+         and then Element (Item, 0) = Character'Pos ('x')
+         and then Is_Complete (Item));
+   end;
 end Flyology.QUIC.Stream_Reassembly_Policy.Smoke;

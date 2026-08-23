@@ -11,6 +11,7 @@ private package Flyology.QUIC.Stream_Reassembly_Policy
        SPARK_Mode => On
 is
    use type Ada.Streams.Stream_Element_Offset;
+   use type Varint_Policy.Value_Type;
 
    --  Match the default per-stream transport credit without making every
    --  tracked application stream carry the larger TLS CRYPTO buffer.
@@ -19,6 +20,7 @@ is
    subtype Stream_Offset is
      Ada.Streams.Stream_Element_Offset range 0 .. Max_Stream_Data;
    subtype Stream_Index is Stream_Offset range 0 .. Max_Stream_Data - 1;
+   subtype Absolute_Offset is Varint_Policy.Value_Type;
 
    type Reassembly_State is private;
    type Insert_Status is
@@ -28,10 +30,13 @@ is
       Final_Size_Error,
       Exceeds_Capacity);
 
-   function Contiguous_Length (Item : Reassembly_State) return Stream_Offset
+   function Contiguous_Length (Item : Reassembly_State) return Absolute_Offset
    with Global => null;
 
-   function Highest_Offset (Item : Reassembly_State) return Stream_Offset
+   function Highest_Offset (Item : Reassembly_State) return Absolute_Offset
+   with Global => null;
+
+   function Consumed_Offset (Item : Reassembly_State) return Absolute_Offset
    with Global => null;
 
    function Available_Length (Item : Reassembly_State) return Stream_Offset
@@ -40,7 +45,7 @@ is
    function Has_Final_Size (Item : Reassembly_State) return Boolean
    with Global => null;
 
-   function Final_Size (Item : Reassembly_State) return Stream_Offset
+   function Final_Size (Item : Reassembly_State) return Absolute_Offset
    with Global => null,
         Pre => Has_Final_Size (Item);
 
@@ -73,7 +78,8 @@ is
      Pre => Data'Length <= Max_Stream_Data,
      Post =>
        Contiguous_Length (Item) <= Highest_Offset (Item)
-       and then Available_Length (Item) <= Contiguous_Length (Item)
+       and then Absolute_Offset (Available_Length (Item)) <=
+         Contiguous_Length (Item)
        and then
          (if Status not in Accepted | Duplicate then
              Contiguous_Length (Item) = Contiguous_Length (Item'Old)
@@ -96,15 +102,17 @@ private
    type Reassembly_State is record
       Bytes       : Byte_Buffer := (others => 0);
       Present     : Presence_Map := (others => False);
-      Contiguous  : Stream_Offset := 0;
-      Highest     : Stream_Offset := 0;
-      Delivered   : Stream_Offset := 0;
+      Base        : Absolute_Offset := 0;
+      Contiguous  : Absolute_Offset := 0;
+      Highest     : Absolute_Offset := 0;
       Final_Known : Boolean := False;
-      Final       : Stream_Offset := 0;
+      Final       : Absolute_Offset := 0;
    end record
    with Type_Invariant =>
-     Reassembly_State.Delivered <= Reassembly_State.Contiguous
+     Reassembly_State.Base <= Reassembly_State.Contiguous
      and then Reassembly_State.Contiguous <= Reassembly_State.Highest
+     and then Reassembly_State.Highest - Reassembly_State.Base <=
+       Absolute_Offset (Max_Stream_Data)
      and then
        (if Reassembly_State.Final_Known then
            Reassembly_State.Highest <= Reassembly_State.Final);

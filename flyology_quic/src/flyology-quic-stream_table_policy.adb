@@ -91,6 +91,17 @@ is
         (Item.Slots (Index).Data);
    end Available_Length;
 
+   function Consumed_Offset
+     (Item      : Stream_Table;
+      Stream_ID : Varint_Policy.Value_Type) return Varint_Policy.Value_Type
+   is
+      Index : constant Optional_Slot := Find (Item, Stream_ID);
+   begin
+      pragma Assert (Index in Slot_Index);
+      return Stream_Reassembly_Policy.Consumed_Offset
+        (Item.Slots (Index).Data);
+   end Consumed_Offset;
+
    function Has_Final_Size
      (Item      : Stream_Table;
       Stream_ID : Varint_Policy.Value_Type) return Boolean

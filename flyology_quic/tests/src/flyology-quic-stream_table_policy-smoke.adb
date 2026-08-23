@@ -46,6 +46,11 @@ begin
       and then Element (Item, 4, 0) = Character'Pos ('z'));
 
    Process_Plaintext (Item, Hex ("0e04010159"), Result);
+   pragma Assert (Result.Status = Processed);
+   --  Bytes entirely below the consumed base are valid retransmissions and
+   --  no longer occupy the rolling comparison window. A retained overlapping
+   --  byte must still agree exactly.
+   Process_Plaintext (Item, Hex ("0e0401025958"), Result);
    pragma Assert (Result.Status = Conflicting_Stream_Data);
 
    Process_Plaintext (Item, Hex ("04002a03"), Result);

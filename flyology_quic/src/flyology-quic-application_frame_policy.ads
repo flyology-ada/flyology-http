@@ -125,12 +125,30 @@ is
 
    subtype Max_Data_Encode_Result is Max_Streams_Encode_Result;
 
+   Max_Stream_Data_Length : constant := 17;
+   subtype Max_Stream_Data_Encode_Length is
+     Natural range 0 .. Max_Stream_Data_Length;
+   type Max_Stream_Data_Encode_Result is record
+      Data   : Ada.Streams.Stream_Element_Array
+        (1 .. Max_Stream_Data_Length) := (others => 0);
+      Length : Max_Stream_Data_Encode_Length := 0;
+   end record;
+
    function Encode_Max_Data
      (Maximum : Varint_Policy.Value_Type)
       return Max_Data_Encode_Result
    with
      Global => null,
      Post => Encode_Max_Data'Result.Length in 3 .. Max_Streams_Length;
+
+   function Encode_Max_Stream_Data
+     (Stream_ID : Varint_Policy.Value_Type;
+      Maximum   : Varint_Policy.Value_Type)
+      return Max_Stream_Data_Encode_Result
+   with
+     Global => null,
+     Post => Encode_Max_Stream_Data'Result.Length in
+       3 .. Max_Stream_Data_Length;
 
    function Encode_Max_Streams
      (Bidirectional : Boolean;
