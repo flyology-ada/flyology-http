@@ -1903,6 +1903,14 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       end Process_Frame;
 
       procedure Parse_One (Progress : out Boolean) is
+         procedure Consume_Input (Count : Natural) is
+         begin
+            State.Driver.Input_Head := State.Driver.Input_Head + Count;
+            State.Driver.Input_Count := State.Driver.Input_Count - Count;
+            if State.Driver.Input_Count = 0 then
+               State.Driver.Input_Head := 0;
+            end if;
+         end Consume_Input;
       begin
          Progress := False;
          if State.Driver.Input_Count < Frames.Frame_Header_Size then
@@ -1921,9 +1929,26 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                Header : constant Frames.Header := Frames.Decode (Wire);
                Total  : constant Natural :=
                  Frames.Frame_Header_Size + Header.Length;
+               Validity : constant Frames.Header_Validity :=
+                 Frames.Validate (Header);
             begin
-               if Frames.Validate (Header) /= Frames.Valid_Header then
-                  Protocol_Failure;
+               if Validity /= Frames.Valid_Header then
+                  --  For a malformed frame that fits the bounded input
+                  --  buffer, wait for and consume its declared payload.
+                  --  Closing a Linux socket while those bytes remain
+                  --  unread can replace the queued GOAWAY with TCP RST.
+                  if Total <= State.Driver.Input'Length
+                    and then State.Driver.Input_Count < Total
+                  then
+                     return;
+                  elsif State.Driver.Input_Count >= Total then
+                     Consume_Input (Total);
+                  end if;
+                  Protocol_Failure
+                    ((if Validity in
+                         Frames.Frame_Too_Large | Frames.Invalid_Length
+                      then Frames.Frame_Size_Error
+                      else Frames.Protocol_Error_Code));
                elsif State.Driver.Input_Count < Total then
                   return;
                end if;
@@ -1945,13 +1970,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                   end if;
                   Process_Frame (Header, Payload);
                end;
-               State.Driver.Input_Head :=
-                 State.Driver.Input_Head + Total;
-               State.Driver.Input_Count :=
-                 State.Driver.Input_Count - Total;
-               if State.Driver.Input_Count = 0 then
-                  State.Driver.Input_Head := 0;
-               end if;
+               Consume_Input (Total);
                Progress := True;
             end;
          end;
