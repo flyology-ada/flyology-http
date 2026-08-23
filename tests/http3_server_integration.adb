@@ -406,7 +406,10 @@ begin
                HTTP_3_Capacity => 16,
                Timeout => 10.0,
                Handshake_Timeout => 10.0,
-               Max_Connection_Age => 20.0,
+               --  The 8,000-exchange loop below isolates bounded stack,
+               --  stream-credit, and slot reuse on one connection. Total-age
+               --  rotation has separate deterministic pool-policy coverage.
+               Max_Connection_Age => -1.0,
                TCP_Max_Requests => 10,
                --  Keep the pooled-credit regression on one connection.  The
                --  loop below deliberately crosses the initial MAX_DATA
