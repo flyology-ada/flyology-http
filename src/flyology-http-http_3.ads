@@ -30,6 +30,9 @@ package Flyology.HTTP.HTTP_3 is
    H3_Request_Rejected : constant Application_Error_Code := 16#10B#;
    --  Request or response processing was cancelled after it could begin.
    H3_Request_Cancelled : constant Application_Error_Code := 16#10C#;
+   --  One request or response message violated HTTP/3 field or sequencing
+   --  semantics without invalidating the connection.
+   H3_Message_Error : constant Application_Error_Code := 16#10E#;
 
    --  HTTP/3 endpoint behavior.
    --  @enum Client Opens request streams and receives responses
@@ -257,12 +260,14 @@ package Flyology.HTTP.HTTP_3 is
    --  @enum Reject_Unprocessed Server did not process the request and permits
    --    transparent retry
    --  @enum Cancel_Processing Request or response processing could have begun
+   --  @enum Malformed_Message Peer response fields or sequencing were invalid
    type Request_Cancellation_Reason is
-     (Reject_Unprocessed, Cancel_Processing);
+     (Reject_Unprocessed, Cancel_Processing, Malformed_Message);
 
    --  Abruptly terminate both directions of a request stream. Clients use
-   --  Cancel_Processing; servers may select either reason based on whether
-   --  request processing began.
+   --  Cancel_Processing; clients use Malformed_Message after a stream-local
+   --  response validation failure. Servers may select either processing
+   --  reason based on whether request processing began.
    --  @param Item Initialized HTTP/3 session
    --  @param Transport Connected QUIC connection
    --  @param Stream Request stream identifier
@@ -466,5 +471,6 @@ private
    end record;
 
    --  @exclude
+   --  @param Item Session state to release
    overriding procedure Finalize (Item : in out Session);
 end Flyology.HTTP.HTTP_3;

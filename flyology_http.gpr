@@ -109,10 +109,11 @@ project Flyology_HTTP is
       --  than a path under FLYOLOGY_ROOT: the Flyology crate vendors a copy
       --  of cachelines, so the two resolve to different build directories,
       --  and GNATdoc rejects an excluded file that is not the project it
-      --  actually loaded rather than quietly ignoring it. The stable
-      --  dependency closure has no separate allocators project to exclude.
+      --  actually loaded rather than quietly ignoring it.
       for Excluded_Project_Files use
         (external ("FLYOLOGY_ROOT", "") & "/flyology.gpr",
+         external ("FLYOLOGY_ALLOCATORS_ALIRE_PREFIX", "")
+         & "/flyology_allocators.gpr",
          external ("FLYOLOGY_CACHELINES_ALIRE_PREFIX", "")
          & "/flyology_cachelines.gpr",
          external ("FLYOLOGY_QUIC_ALIRE_PREFIX", "") & "/flyology_quic.gpr");

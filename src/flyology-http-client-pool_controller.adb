@@ -9,17 +9,35 @@ protected body Pool_Controller is
       --  that reaches neither its deadline nor its cancellation token. An
       --  HTTP/2 slot therefore consults the peer's advertised stream limit
       --  here too, not only the client's own bound.
+      function Compatible (Item : Slot) return Boolean is
+        (Item.Connection = null
+           or else
+             (case Item.Connection.Protocol is
+                 when HTTP_1_Transport => True,
+                 when HTTP_2_Transport => Item.Connection.HTTP_2 /= null,
+                 when HTTP_3_Transport => True));
+
       function Has_Capacity (Item : Slot) return Boolean is
       begin
-         return Item.Phase in Empty | Idle
+         return Item.Phase = Empty
+           or else (Item.Phase = Idle and then Compatible (Item))
            or else
              (Item.Phase = Shared
-                and then Item.Active_Streams <
-                  H2_Connections.Maximum_Concurrent_Streams
                 and then Item.Connection /= null
-                and then Item.Connection.HTTP_2 /= null
-                and then H2_Connections.Can_Open
-                  (Item.Connection.HTTP_2.all));
+                and then Compatible (Item)
+                and then
+                  (if Item.Connection.Protocol = HTTP_2_Transport then
+                     Item.Active_Streams <
+                       H2_Connections.Maximum_Concurrent_Streams
+                     and then Item.Connection.HTTP_2 /= null
+                     and then H2_Connections.Can_Open
+                       (Item.Connection.HTTP_2.all)
+                   elsif Item.Connection.Protocol = HTTP_3_Transport then
+                     Item.Active_Streams <
+                       H3_Connections.Maximum_Concurrent_Streams
+                     and then H3_Connections.Can_Open
+                       (Item.Connection.HTTP_3_Streams)
+                   else False));
       end Has_Capacity;
 
       procedure Configure (Value : Pool_Configuration) is
@@ -50,7 +68,8 @@ protected body Pool_Controller is
          function Matches
            (Item : Slot; Want_HTTP_3 : Boolean) return Boolean is
            (Item.Connection /= null
-              and then Is_HTTP_3 (Item) = Want_HTTP_3);
+              and then Is_HTTP_3 (Item) = Want_HTTP_3
+              and then Compatible (Item));
 
          function HTTP_3_Limit_Reached (Item : Slot) return Boolean is
            (Is_HTTP_3 (Item)
@@ -91,14 +110,15 @@ protected body Pool_Controller is
             return False;
          end Desired_Exists;
 
-         procedure Select_Shared_TCP (Permit : Boolean) is
+         procedure Select_Shared
+           (Want_HTTP_3 : Boolean; Permit : Boolean) is
          begin
             if not Permit then
                return;
             end if;
             for Index in Slots'Range loop
                if Slots (Index).Phase = Shared
-                 and then Matches (Slots (Index), Want_HTTP_3 => False)
+                 and then Matches (Slots (Index), Want_HTTP_3)
                  and then Has_Capacity (Slots (Index))
                then
                   if Expired (Slots (Index)) then
@@ -131,7 +151,7 @@ protected body Pool_Controller is
                   end if;
                end if;
             end loop;
-         end Select_Shared_TCP;
+         end Select_Shared;
 
          procedure Select_Idle
            (Want_HTTP_3 : Boolean; Permit : Boolean) is
@@ -198,7 +218,7 @@ protected body Pool_Controller is
             return;
          end if;
 
-         Select_Shared_TCP (Permit => not Prefer_HTTP_3);
+         Select_Shared (Prefer_HTTP_3, Permit => True);
          if Slot_Index = 0 then
             Select_Idle (Prefer_HTTP_3, Permit => True);
          end if;
@@ -212,7 +232,7 @@ protected body Pool_Controller is
            and then Allow_TCP_Fallback
            and then Desired_Exists
          then
-            Select_Shared_TCP (Permit => True);
+            Select_Shared (Want_HTTP_3 => False, Permit => True);
             if Slot_Index = 0 then
                Select_Idle (Want_HTTP_3 => False, Permit => True);
             end if;
@@ -275,14 +295,17 @@ protected body Pool_Controller is
          end if;
          Slots (Slot_Index) :=
            (Phase         =>
-              (if Connection.Protocol = HTTP_2_Transport
+              (if Connection.Protocol in
+                    HTTP_2_Transport | HTTP_3_Transport
                then Shared else Leased),
             Connection    => Connection,
             Born          => Now,
             Last_Used     => Now,
             Request_Count => 1,
             Active_Streams =>
-              (if Connection.Protocol = HTTP_2_Transport then 1 else 0),
+              (if Connection.Protocol in
+                    HTTP_2_Transport | HTTP_3_Transport
+               then 1 else 0),
             Interrupting  => False,
             Interrupt_Sent => False,
             Owner_Done    => False,
@@ -290,7 +313,8 @@ protected body Pool_Controller is
             Connecting_HTTP_3 => False);
          Connecting_Count := Connecting_Count - 1;
          Leased_Count := Leased_Count + 1;
-         if Connection.Protocol = HTTP_2_Transport then
+         if Connection.Protocol in HTTP_2_Transport | HTTP_3_Transport
+         then
             Shared_Count := Shared_Count + 1;
             if Flyology.Wake_Sources.Descriptor (Checkout_Wake) >= 0
               and then not Checkout_Signalled
@@ -364,7 +388,8 @@ protected body Pool_Controller is
          Leased_Count := Leased_Count - 1;
          if Slots (Slot_Index).Phase in Shared | Draining then
             if Slots (Slot_Index).Active_Streams = 0 then
-               raise Program_Error with "invalid HTTP/2 stream lease return";
+               raise Program_Error with
+                 "invalid multiplexed stream lease return";
             end if;
             Slots (Slot_Index).Active_Streams :=
               Slots (Slot_Index).Active_Streams - 1;
@@ -451,32 +476,6 @@ protected body Pool_Controller is
       --  Undo a reuse whose transport turned out to be desynchronized. The
       --  exchange was never assigned it, so the reuse tally is withdrawn and
       --  the slot moves straight to Closing.
-      procedure Reject_Reuse
-        (Slot_Index : Positive;
-         Result     : out Return_Result;
-         Connection : out Pooled_Connection_Access) is
-      begin
-         if Slot_Index > Capacity
-           or else Slots (Slot_Index).Phase /= Leased
-         then
-            raise Program_Error with "invalid HTTP pool reuse rejection";
-         end if;
-         Connection := Slots (Slot_Index).Connection;
-         Leased_Count := Leased_Count - 1;
-         Reused_Count := Reused_Count - 1;
-         Slots (Slot_Index).Phase := Closing;
-         Slots (Slot_Index).Owner_Done := True;
-         Closing_Count := Closing_Count + 1;
-         Result :=
-           (if Slots (Slot_Index).Interrupting
-            then Return_Close_Deferred else Return_Close);
-         if Flyology.Wake_Sources.Descriptor (Checkout_Wake) >= 0
-           and then not Checkout_Signalled
-         then
-            Flyology.Wake_Sources.Signal (Checkout_Wake);
-            Checkout_Signalled := True;
-         end if;
-      end Reject_Reuse;
 
       procedure Finish_Close (Slot_Index : Positive) is
       begin
@@ -605,7 +604,8 @@ protected body Pool_Controller is
       end Await_Drained;
 
       procedure Wait_Source
-        (FD : out Flyology.IO.Descriptor; Can_Checkout : out Boolean)
+        (FD : out Flyology.IO.Descriptor;
+         Can_Checkout : out Boolean)
       is
       begin
          Can_Checkout := Stopping;
