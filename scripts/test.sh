@@ -71,6 +71,23 @@ compile_and_link () {
 }
 
 cd "$http_root"
+if rg -n \
+  '^[[:space:]]*task([[:space:]]+(type|body))?[[:space:]]' \
+  src/flyology-http-client*.ad[bs] \
+  src/flyology-http-http_2_client_connection.ad[bs] \
+  src/flyology-http-http_3_client_connection.ad[bs]
+then
+  printf '%s\n' \
+    "HTTP client owner-driven engine declares a forbidden helper task" >&2
+  exit 1
+fi
+PYTHONDONTWRITEBYTECODE=1 python3 tests/http_client_corpus.py \
+  tests/corpus/http-client-scenarios.json \
+  --execution tests/corpus/http-client-execution.json \
+  >/dev/null
+PYTHONDONTWRITEBYTECODE=1 python3 tests/generate_http_client_corpus.py \
+  tests/corpus/http-client-scenarios.json \
+  --check tests/http_client_corpus_golden.ads
 flyology_http_run_nested_alire_test \
   "$http_root/flyology_iri/scripts/test.sh"
 "$http_root/scripts/prepare-test-tls.sh"
@@ -116,6 +133,7 @@ flyology-http-http_2_requests-smoke
 flyology-http-http_2_settings-smoke
 flyology-http-http_3_control_policy-smoke
 flyology-http-http_3_connection-smoke
+flyology-http-http_3_client_connection-smoke
 development_certificates_smoke
 http3_public_smoke
 http3_server_integration
@@ -136,6 +154,7 @@ buffers_smoke
 tls_smoke
 http_smoke
 http_operations_smoke
+http_client_scoped_smoke
 http_client_smoke
 http_client_addressing
 http_client_authentication
@@ -164,8 +183,12 @@ connection_hook_mains='http_client_pool_races
 http_client_deadline_matrix
 http_client_fragmentation'
 
+http3_scoped_mains='http3_h3spec_server
+http3_client_scoped_smoke'
+
 unset FLYOLOGY_CONNECTION_TEST_HOOKS || :
 compile_and_link behavioral "$ordinary_mains"
+compile_and_link behavioral-http3-scoped "$http3_scoped_mains"
 
 FLYOLOGY_CONNECTION_TEST_HOOKS=true
 export FLYOLOGY_CONNECTION_TEST_HOOKS
@@ -192,10 +215,59 @@ for main in $ordinary_mains; do
   printf '%s\n' "flyology_http test: PASS $main"
 done
 
+"$http_root/scripts/run-with-timeout.sh" 60 \
+  "$http_root/tests/bin/behavioral/http_client_scoped_smoke" lightweight
+printf '%s\n' \
+  "flyology_http test: PASS http_client_scoped_smoke (lightweight)"
+
 for main in $connection_hook_mains; do
   "$http_root/scripts/run-with-timeout.sh" 30 \
     "$http_root/tests/bin/behavioral-connection-hooks/$main"
   printf '%s\n' "flyology_http test: PASS $main"
+done
+
+for model in native lightweight; do
+  run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http3-scoped.XXXXXX")
+  server_log="$run_dir/server.log"
+  server_pid=
+  cleanup_http3_scoped () {
+    if [ -n "$server_pid" ]; then
+      kill "$server_pid" 2>/dev/null || :
+      wait "$server_pid" 2>/dev/null || :
+    fi
+  }
+  trap cleanup_http3_scoped EXIT HUP INT TERM
+  "$http_root/tests/bin/behavioral-http3-scoped/http3_h3spec_server" \
+    0 32 1 15.0 16 >"$server_log" 2>&1 &
+  server_pid=$!
+  port=
+  attempt=0
+  while [ "$attempt" -lt 100 ]; do
+    if [ -f "$server_log" ] \
+      && grep -q 'Ada HTTP/3 h3spec server listening' "$server_log"
+    then
+      port=$(sed -n \
+        's/^Ada HTTP\/3 h3spec server listening on 127\.0\.0\.1://p' \
+        "$server_log" | tail -n 1)
+      break
+    fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  if [ -z "$port" ]; then
+    sed -n '1,200p' "$server_log" >&2
+    exit 1
+  fi
+  "$http_root/scripts/run-with-timeout.sh" 60 \
+    "$http_root/tests/bin/behavioral-http3-scoped/http3_client_scoped_smoke" \
+    "$port" "$model"
+  cleanup_http3_scoped
+  server_pid=
+  trap - EXIT HUP INT TERM
+  printf '%s\n' "flyology_http test: PASS http3_client_scoped_smoke ($model)"
 done
 
 response_lifetime_log="$http_root/build/tests/http-client-response-lifetime.log"

@@ -5,6 +5,10 @@ http_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 environment="$http_root/build/http2-tester"
 python="$environment/bin/python"
 command=${1:-all}
+h2specd_version=2.6.0
+h2specd_sha256=c438130c70c6cec2c20276726a454a9249b64ba48ca89ce37f39aa721867b4f0
+h2specd_root="$http_root/build/h2specd-$h2specd_version"
+h2specd="$h2specd_root/h2specd"
 
 require_tester () {
   if [ ! -x "$python" ]; then
@@ -50,14 +54,23 @@ run_codecs () {
 run_client () {
   require_tester
   build_test http2_client_integration http2-integration
-  for model in native lightweight; do
-    for scenario in basic prior fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final head-empty-data reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post; do
+  scenarios=${FLYOLOGY_HTTP2_CLIENT_SCENARIOS:-"basic prior scoped scoped-tls scoped-parent scoped-cancel scoped-abandon scoped-source-early-final scoped-source-contract scoped-sink-contract scoped-stream-isolation fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final early-final-body head-empty-data reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post"}
+  models=${FLYOLOGY_HTTP2_CLIENT_MODELS:-"native lightweight"}
+  for model in $models; do
+    for scenario in $scenarios; do
       run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http2.XXXXXX")
       port_file="$run_dir/port"
       log_file="$run_dir/events.jsonl"
       cleartext=
       scheme=https
-      if [ "$scenario" = prior ]; then
+      if [ "$scenario" = prior ] || [ "$scenario" = scoped ] \
+        || [ "$scenario" = early-final ] \
+        || [ "$scenario" = early-final-body ] \
+        || [ "$scenario" = scoped-source-early-final ] \
+        || [ "$scenario" = scoped-source-contract ] \
+        || [ "$scenario" = scoped-sink-contract ] \
+        || [ "$scenario" = scoped-stream-isolation ]
+      then
         cleartext=--cleartext
         scheme=http
       fi
@@ -95,7 +108,8 @@ run_client () {
       fi
       wait "$peer_pid"
       case "$scenario" in
-        multiplex|continuation|peer-capacity|stream-order|reset-race|goaway|refused) expected_requests=2 ;;
+        scoped-source-contract) expected_requests=0 ;;
+        multiplex|continuation|peer-capacity|stream-order|reset-race|goaway|refused|scoped-sink-contract|scoped-stream-isolation) expected_requests=2 ;;
         require-failure|bad-preface) expected_requests=0 ;;
         *) expected_requests=1 ;;
       esac
@@ -107,7 +121,12 @@ run_client () {
           'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; assert sum(e["event"]=="connected" for e in events)==1; assert any(e["event"]=="late-data" for e in events)' \
           "$log_file"
       fi
-      if [ "$scenario" = early-final ]; then
+      if [ "$scenario" = early-final ] \
+        || [ "$scenario" = early-final-body ] \
+        || [ "$scenario" = scoped-source-early-final ] \
+        || [ "$scenario" = scoped-cancel ] \
+        || [ "$scenario" = scoped-stream-isolation ]
+      then
         PYTHONDONTWRITEBYTECODE=1 "$python" -c \
           'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; assert any(e["event"]=="client-reset" for e in events)' \
           "$log_file"
@@ -241,6 +260,100 @@ run_h2spec () {
   cleanup_h2spec
   trap - EXIT HUP INT TERM
   printf '%s\n' "HTTP/2 server h2spec: PASS"
+}
+
+prepare_h2specd () {
+  if [ -x "$h2specd" ]; then
+    return
+  fi
+  if ! command -v curl >/dev/null 2>&1 \
+    || ! command -v go >/dev/null 2>&1
+  then
+    printf '%s\n' \
+      "curl and Go are required to build the pinned h2specd client oracle" >&2
+    exit 2
+  fi
+
+  archive="$h2specd_root/h2spec-$h2specd_version.tar.gz"
+  source_dir="$h2specd_root/source"
+  mkdir -p "$h2specd_root"
+  curl -fsSL \
+    "https://github.com/summerwind/h2spec/archive/refs/tags/v$h2specd_version.tar.gz" \
+    -o "$archive.tmp"
+  actual_sha256=$(shasum -a 256 "$archive.tmp" | awk '{print $1}')
+  if [ "$actual_sha256" != "$h2specd_sha256" ]; then
+    rm -f "$archive.tmp"
+    printf '%s\n' "h2specd source checksum mismatch" >&2
+    exit 1
+  fi
+  mv "$archive.tmp" "$archive"
+  rm -rf "$source_dir"
+  mkdir -p "$source_dir"
+  tar -xzf "$archive" -C "$source_dir" --strip-components=1
+  (
+    cd "$source_dir"
+    go build -trimpath \
+      -ldflags "-X main.VERSION=$h2specd_version -X main.COMMIT=70ac2294010887f48b18e2d64f5cccd48421fad1" \
+      -o "$h2specd" ./cmd/h2specd
+  )
+}
+
+find_h2specd_port_block () {
+  python3 -c '
+import random, socket
+candidates = list(range(20_000, 49_000, 64))
+random.Random().shuffle(candidates)
+for base in candidates:
+    sockets = []
+    try:
+        for port in range(base, base + 64):
+            item = socket.socket()
+            item.bind(("127.0.0.1", port))
+            sockets.append(item)
+    except OSError:
+        pass
+    else:
+        print(base)
+        break
+    finally:
+        for item in sockets:
+            item.close()
+else:
+    raise SystemExit("no free 64-port block for h2specd")'
+}
+
+run_client_h2spec () {
+  if [ ! -d "$http_root/build/rts/adalib" ]; then
+    printf '%s\n' \
+      "prepared test runtime is unavailable; run: ./scripts/test.sh" >&2
+    exit 2
+  fi
+  prepare_h2specd
+  build_test http2_h2spec_client h2spec-client
+
+  styles=${FLYOLOGY_HTTP2_H2SPECD_STYLES:-"sync scoped"}
+  models=${FLYOLOGY_HTTP2_H2SPECD_MODELS:-"native lightweight"}
+  for style in $styles; do
+    for model in $models; do
+      run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-h2specd.XXXXXX")
+      result_log="$run_dir/result.log"
+      from_port=$(find_h2specd_port_block)
+      "$h2specd" -f "$from_port" -o 3 \
+        -e "$http_root/tests/bin/h2spec-client/http2_h2spec_client $style $model" \
+        >"$result_log" 2>&1 || :
+      if ! grep -Fq '57 tests, 57 passed, 0 skipped, 0 failed' \
+        "$result_log"
+      then
+        sed -n '1,220p' "$result_log" >&2
+        rm -rf "$run_dir"
+        printf '%s\n' \
+          "HTTP/2 client h2specd failed: $style/$model" >&2
+        exit 1
+      fi
+      rm -rf "$run_dir"
+      printf '%s\n' "HTTP/2 client h2specd: PASS $style/$model (57/57)"
+    done
+  done
 }
 
 run_showcase_case () {
@@ -388,6 +501,7 @@ case "$command" in
     python3 -m venv "$environment"
     "$environment/bin/pip" install \
       -r "$http_root/tests/requirements-http2.txt"
+    prepare_h2specd
     ;;
   codecs)
     if [ ! -d "$http_root/build/rts/adalib" ]; then
@@ -406,6 +520,9 @@ case "$command" in
   h2spec)
     run_h2spec
     ;;
+  h2spec-client)
+    run_client_h2spec
+    ;;
   showcase)
     run_showcase
     ;;
@@ -420,9 +537,11 @@ case "$command" in
     ;;
   qualification)
     run_server
+    run_client
     "$http_root/scripts/http2-interop.sh" all
     "$http_root/scripts/http2-soak.sh"
     run_h2spec
+    run_client_h2spec
     ;;
   nightly)
     FLYOLOGY_HTTP2_SOAK_SECONDS=${FLYOLOGY_HTTP2_SOAK_SECONDS:-1800.0}
@@ -431,9 +550,11 @@ case "$command" in
     export FLYOLOGY_HTTP2_SOAK_SECONDS FLYOLOGY_HTTP2_SOAK_MODELS
     export FLYOLOGY_HTTP2_SOAK_SEEDS
     run_server
+    run_client
     "$http_root/scripts/http2-interop.sh" all
     "$http_root/scripts/http2-soak.sh"
     run_h2spec
+    run_client_h2spec
     ;;
   all)
     run_codecs
@@ -443,7 +564,7 @@ case "$command" in
     ;;
   *)
     printf '%s\n' \
-      "usage: $0 {prepare|codecs|client|server|h2spec|showcase|interop|faults|soak|qualification|nightly|all}" >&2
+      "usage: $0 {prepare|codecs|client|server|h2spec|h2spec-client|showcase|interop|faults|soak|qualification|nightly|all}" >&2
     exit 2
     ;;
 esac

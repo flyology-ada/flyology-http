@@ -1,3 +1,4 @@
+with Ada.Exceptions;
 with Ada.Streams;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
@@ -308,6 +309,12 @@ begin
             Max_Requests => 1,
             Alt_Svc => "h3="":443""; ma=86400");
          Connections.Close (Channel);
+      exception
+         when Error : others =>
+            Ada.Text_IO.Put_Line
+              ("HTTP/2 server task failed: " &
+               Ada.Exceptions.Exception_Information (Error));
+            raise;
       end Server_Task;
 
       HTTP : aliased Client.Client (Capacity => 1);

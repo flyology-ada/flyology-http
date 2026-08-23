@@ -252,7 +252,8 @@ procedure HTTP3_Server_Integration is
       else
          pragma Assert
            (X.Request_Protocol in Flyology.HTTP.HTTP_1_1_Protocol |
-              Flyology.HTTP.HTTP_2_Protocol);
+              Flyology.HTTP.HTTP_2_Protocol |
+              Flyology.HTTP.HTTP_3_Protocol);
          pragma Assert (X.Request_Scheme = Flyology.HTTP.Secure_HTTPS);
          X.Text (200, "same routes");
       end if;
@@ -424,7 +425,7 @@ begin
            (Initialize_Mixed_Client,
             Mixed_Discover,
             Mixed_H3_Request,
-            Mixed_TCP_Fallback,
+            Mixed_H3_Multiplex,
             Mixed_Shutdown,
             Pooled_Configure,
             Pooled_Exchange,
@@ -729,7 +730,7 @@ begin
          begin
             Dual_Stack_Gate.Await_Ready;
             if Outcome.Passed then
-               Phase := Mixed_TCP_Fallback;
+               Phase := Mixed_H3_Multiplex;
                declare
                   TCP_Value : Client.Request;
                begin
@@ -741,7 +742,7 @@ begin
                      pragma Assert (Client.Status (Reply) = 200);
                      pragma Assert
                        (Client.Negotiated_Protocol (Reply) =
-                          Flyology.HTTP.HTTP_2_Protocol);
+                          Flyology.HTTP.HTTP_3_Protocol);
                      pragma Assert
                        (Flyology.Bytes.To_Byte_String
                           (Client.Read_All (Reply)) = "same routes");

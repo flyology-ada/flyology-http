@@ -61,6 +61,9 @@ jobs:
             --add=git+https://github.com/flyology-ada/alire-index.git \
             --name=flyology \
             --before=community
+      - name: Use the in-tree QUIC prerequisite
+        working-directory: flyology-http
+        run: alr pin flyology_quic --use=flyology_quic
       - name: Install GNATdoc
         timeout-minutes: 10
         run: alr install gnatdoc_bin

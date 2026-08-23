@@ -212,6 +212,24 @@ procedure HTTP_Client_Smoke is
          pragma Assert (Raised);
       end Expect_Head_Error;
 
+      procedure Expect_Head_Size_Error (Target : String) is
+         Raised : Boolean := False;
+      begin
+         Client.Set_Target (Value, Target);
+         begin
+            declare
+               Unexpected : Client.Response := Client.Execute (Item, Value);
+               pragma Unreferenced (Unexpected);
+            begin
+               null;
+            end;
+         exception
+            when Client.Response_Too_Large =>
+               Raised := True;
+         end;
+         pragma Assert (Raised);
+      end Expect_Head_Size_Error;
+
       procedure Expect_Body_Error (Target : String) is
          Raised : Boolean := False;
       begin
@@ -254,6 +272,7 @@ procedure HTTP_Client_Smoke is
          pragma Assert (Client.Body_Complete (Response));
       end;
       Expect_Head_Error ("/bad-status");
+      Expect_Head_Size_Error ("/oversized-head");
       Expect_Body_Error ("/short-body");
       Expect_Body_Error ("/bad-chunk");
       Client.Shutdown (Item);
@@ -476,6 +495,15 @@ procedure HTTP_Client_Smoke is
       Sockets.Close_Socket (Peer);
 
       Accept_Peer;
+      Expect_Target ("/oversized-head");
+      Send
+        ("HTTP/1.1 200 OK" & CRLF &
+         "X-Oversized: " &
+         String'(1 .. Flyology.HTTP.Headers.Default_Max_Bytes => 'x') &
+         CRLF & CRLF);
+      Sockets.Close_Socket (Peer);
+
+      Accept_Peer;
       Expect_Target ("/short-body");
       Send
         ("HTTP/1.1 200 OK" & CRLF &
@@ -508,6 +536,26 @@ procedure HTTP_Client_Smoke is
    Port      : Sockets.Port;
    Server_OK : Boolean;
 begin
+   declare
+      Unconfigured : aliased Client.Client (Capacity => 1);
+      Value        : Client.Request;
+      Raised       : Boolean := False;
+   begin
+      begin
+         declare
+            Unexpected : Client.Response :=
+              Client.Execute (Unconfigured, Value);
+            pragma Unreferenced (Unexpected);
+         begin
+            null;
+         end;
+      exception
+         when Program_Error =>
+            Raised := True;
+      end;
+      pragma Assert (Raised);
+   end;
+
    declare
       Empty  : Client.Response;
       Raised : Boolean := False;

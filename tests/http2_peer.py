@@ -33,6 +33,11 @@ from h2.settings import SettingCodes
 
 BODY = b"flyology-http2"
 FLOW_BODY = bytes(range(256)) * 1024
+FIXTURE_DIRECTORY = Path(__file__).parent / "corpus" / "fixtures"
+
+
+def fixture_bytes(name: str) -> bytes:
+    return (FIXTURE_DIRECTORY / name).read_bytes()
 
 
 @dataclass
@@ -154,12 +159,19 @@ def serve_connection(
                     method=headers.get(":method"),
                     path=headers.get(":path"),
                 )
-                if state.scenario == "early-final":
+                if state.scenario in {
+                    "early-final",
+                    "early-final-body",
+                    "scoped-source-early-final",
+                }:
+                    body = b"rejected" if state.scenario == "early-final-body" else b""
                     connection.send_headers(
                         event.stream_id,
-                        [(":status", "413"), ("content-length", "0")],
-                        end_stream=True,
+                        [(":status", "413"), ("content-length", str(len(body)))],
+                        end_stream=not body,
                     )
+                    if body:
+                        connection.send_data(event.stream_id, body, end_stream=True)
                     state.record("early-final", stream=event.stream_id)
             elif isinstance(event, DataReceived):
                 state.request_bytes[event.stream_id] = (
@@ -205,7 +217,11 @@ def serve_connection(
                         stream=stream_id,
                         bytes=state.request_bytes.get(stream_id, 0),
                     )
-                if state.scenario == "early-final":
+                if state.scenario in {
+                    "early-final",
+                    "early-final-body",
+                    "scoped-source-early-final",
+                }:
                     pass
                 elif state.scenario == "head-empty-data":
                     connection.send_headers(
@@ -216,11 +232,11 @@ def serve_connection(
                     connection.send_data(stream_id, b"", end_stream=True)
                     state.record("head-empty-data", stream=stream_id)
                 elif state.scenario == "informational-end":
-                    # Literal :status 103, carried in an invalid final
-                    # informational HEADERS frame.
-                    block = b"\x08\x03\x31\x30\x33"
-                    frame = bytes((0, 0, len(block), 1, 5, 0, 0, 0, stream_id))
-                    channel.sendall(frame + block)
+                    frame = bytearray(
+                        fixture_bytes("h2-informational-end-stream.bin")
+                    )
+                    frame[5:9] = stream_id.to_bytes(4, "big")
+                    channel.sendall(frame)
                     state.record("informational-end", stream=stream_id)
                 elif state.scenario == "reset-race" and state.request_count == 1:
                     connection.send_headers(stream_id, [(":status", "200")])
@@ -231,12 +247,16 @@ def serve_connection(
                     channel.sendall(connection.data_to_send())
                     state.record("late-data", stream=stream_id)
                 elif state.scenario == "flood":
-                    unknown = b"\x00\x00\x00\x0f\x00\x00\x00\x00\x00"
+                    unknown = fixture_bytes("h2-unknown-frame.bin")
                     ping = b"\x00\x00\x08\x06\x00\x00\x00\x00\x00flooding"
                     channel.sendall((unknown + ping) * 4_000)
                     send_response(connection, stream_id)
                     state.record("flood", frames=8_000)
-                elif state.scenario == "shutdown-race":
+                elif state.scenario in {
+                    "shutdown-race",
+                    "scoped-cancel",
+                    "scoped-abandon",
+                }:
                     connection.send_headers(
                         stream_id,
                         [(":status", "200"), ("content-length", str(len(BODY)))],
@@ -252,10 +272,14 @@ def serve_connection(
                     return True
                 if state.scenario in {
                     "early-final",
+                    "early-final-body",
+                    "scoped-source-early-final",
                     "head-empty-data",
                     "informational-end",
                     "flood",
                     "shutdown-race",
+                    "scoped-cancel",
+                    "scoped-abandon",
                     "soak",
                 } or (
                     state.scenario == "reset-race" and stream_id == 1
@@ -278,6 +302,17 @@ def serve_connection(
                         connection.send_data(second, b"second", end_stream=True)
                         connection.send_data(first, b"response", end_stream=True)
                         state.record("multiplex", streams=state.pending_streams)
+                elif state.scenario == "scoped-stream-isolation":
+                    state.pending_streams.append(stream_id)
+                    if len(state.pending_streams) == 2:
+                        bad, good = state.pending_streams
+                        connection.send_headers(
+                            bad,
+                            [(":status", "200"), ("content-length", "1")],
+                        )
+                        connection.send_data(bad, b"xx", end_stream=False)
+                        send_response(connection, good)
+                        state.record("stream-isolation", bad=bad, good=good)
                 elif state.scenario == "flow":
                     connection.send_headers(
                         stream_id,
@@ -301,11 +336,24 @@ def serve_connection(
                 )
             elif isinstance(event, ConnectionTerminated):
                 state.record("client-goaway", error=int(event.error_code))
-                return state.scenario == "soak"
+                return state.scenario in {"soak", "scoped-source-contract"}
 
         outbound = connection.data_to_send()
         if outbound:
-            channel.sendall(outbound)
+            try:
+                channel.sendall(outbound)
+            except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                if state.scenario not in {
+                    "early-final",
+                    "early-final-body",
+                    "scoped-source-early-final",
+                    "scoped-cancel",
+                    "scoped-abandon",
+                    "shutdown-race",
+                }:
+                    raise
+                state.record("peer-send-closed")
+                return False
 
 def serve_http1(channel: ssl.SSLSocket, state: PeerState) -> bool:
     state.record("connected", alpn=channel.selected_alpn_protocol())
@@ -349,11 +397,21 @@ def main() -> None:
             "goaway",
             "refused",
             "prior",
+            "scoped",
+            "scoped-tls",
+            "scoped-parent",
+            "scoped-cancel",
+            "scoped-abandon",
+            "scoped-source-early-final",
+            "scoped-source-contract",
+            "scoped-sink-contract",
+            "scoped-stream-isolation",
             "fallback",
             "require-failure",
             "upload",
             "refused-post",
             "early-final",
+            "early-final-body",
             "head-empty-data",
             "reset-race",
             "zero-read",

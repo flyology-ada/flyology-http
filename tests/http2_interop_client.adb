@@ -208,6 +208,22 @@ procedure HTTP2_Interop_Client is
       if No_Warm then
          Campaign (Full => True);
       else
+         --  Establish the selected owner runtime before the descriptor
+         --  baseline. The full campaign is the first path that creates
+         --  lightweight caller tasks; their process-wide event-loop wake
+         --  descriptor is intentionally retained by Flyology and is not a
+         --  client transport leak.
+         declare
+            task Runtime_Warmer is
+               pragma Task_Info (Execution);
+            end Runtime_Warmer;
+            task body Runtime_Warmer is
+            begin
+               delay 0.0;
+            end Runtime_Warmer;
+         begin
+            null;
+         end;
          Campaign (Full => False);
          declare
             Baseline : constant Interfaces.C.int := Open_FD_Count;

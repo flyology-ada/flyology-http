@@ -46,6 +46,18 @@ int flyology_test_connection_receive_limit(int requested)
    return maximum > 0 && maximum < requested ? maximum : requested;
 }
 
+int flyology_http_test_connection_receive_limit(int requested)
+{
+   int maximum = atomic_load_explicit(&receive_cap, memory_order_seq_cst);
+
+   return maximum > 0 && maximum < requested ? maximum : requested;
+}
+
+void flyology_http_test_connection_receive_observed(void)
+{
+   atomic_fetch_add_explicit(&receive_calls, 1, memory_order_seq_cst);
+}
+
 unsigned flyology_test_connection_receive_calls(void)
 {
    return atomic_load_explicit(&receive_calls, memory_order_seq_cst);

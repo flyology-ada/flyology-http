@@ -1,0 +1,622 @@
+{
+  "schema": 2,
+  "sources": {
+    "flyology": {
+      "kind": "project-contract",
+      "title": "Flyology ownership, operation, cancellation, and admission-certainty contracts",
+      "path": "src/flyology-http-client.ads"
+    },
+    "rfc9000": {
+      "kind": "standard",
+      "title": "RFC 9000 QUIC: A UDP-Based Multiplexed and Secure Transport",
+      "url": "https://www.rfc-editor.org/rfc/rfc9000.html"
+    },
+    "rfc9110": {
+      "kind": "standard",
+      "title": "RFC 9110 HTTP Semantics",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+    },
+    "rfc9112": {
+      "kind": "standard",
+      "title": "RFC 9112 HTTP/1.1",
+      "url": "https://www.rfc-editor.org/rfc/rfc9112.html"
+    },
+    "rfc9113": {
+      "kind": "standard",
+      "title": "RFC 9113 HTTP/2",
+      "url": "https://www.rfc-editor.org/rfc/rfc9113.html"
+    },
+    "rfc9114": {
+      "kind": "standard",
+      "title": "RFC 9114 HTTP/3",
+      "url": "https://www.rfc-editor.org/rfc/rfc9114.html"
+    },
+    "rfc9204": {
+      "kind": "standard",
+      "title": "RFC 9204 QPACK: Field Compression for HTTP/3",
+      "url": "https://www.rfc-editor.org/rfc/rfc9204.html"
+    },
+    "h2spec-2.6.0": {
+      "kind": "upstream-suite",
+      "title": "summerwind/h2spec 2.6.0 server error corpus",
+      "url": "https://github.com/summerwind/h2spec/tree/v2.6.0"
+    },
+    "h3spec-0.1.13": {
+      "kind": "upstream-suite",
+      "title": "kazu-yamamoto/h3spec 0.1.13 server error corpus",
+      "url": "https://github.com/kazu-yamamoto/h3spec"
+    },
+    "curl": {
+      "kind": "oracle-model",
+      "title": "curl declarative client test format and reply fixtures",
+      "url": "https://github.com/curl/curl/tree/master/tests/data"
+    },
+    "llhttp": {
+      "kind": "upstream-suite",
+      "title": "nodejs/llhttp HTTP/1 parser fixtures",
+      "url": "https://github.com/nodejs/llhttp/tree/main/test"
+    }
+  },
+  "cases": [
+    {
+      "id": "complete-fixed",
+      "provenance": ["rfc9110:6", "curl:reply-data", "flyology"],
+      "fixture": "fixed-200",
+      "payloads": {"h1": {"path": "fixtures/h1-complete-fixed.bin", "sha256": "37975d8398ffeec199d0c398a8a91fc680b7357965f5b28d35979a0ad03fc8cc"}},
+      "differential": [
+        {"implementations": ["pycurl-easy", "pycurl-multi"], "protocols": ["h1", "h2"]},
+        {"implementations": ["aioquic-peer"], "protocols": ["h3"]}
+      ],
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "no-body-204",
+      "provenance": ["rfc9110:15.3.5", "flyology"],
+      "fixture": "status-204",
+      "payloads": {"h1": {"path": "fixtures/h1-no-body-204.bin", "sha256": "f739eba80820ec25bbb9db86e267ce0988fcf5d2df378e9644591bd73f011e2f"}},
+      "differential": [{"implementations": ["pycurl-easy", "pycurl-multi"], "protocols": ["h1", "h2"]}],
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 204, "body_effect": "empty"}
+    },
+    {
+      "id": "complete-zero",
+      "provenance": ["rfc9110:6", "curl:reply-data", "flyology"],
+      "fixture": "zero-200",
+      "payloads": {"h1": {"path": "fixtures/h1-complete-zero.bin", "sha256": "c1cd0d06b3083293e0a44494a5e4b11e2e65e48fd28c7f87c2646e4a4d9157c1"}},
+      "differential": [{"implementations": ["pycurl-easy", "pycurl-multi"], "protocols": ["h1", "h2"]}],
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "empty"}
+    },
+    {
+      "id": "informational-then-final",
+      "provenance": ["rfc9110:15.2", "rfc9113:8.1", "rfc9114:4.1", "curl:reply-data"],
+      "fixture": "informational-final",
+      "payloads": {"h1": {"path": "fixtures/h1-informational-then-final.bin", "sha256": "c8a0a2539eea93139b15c9c40e0c3012f8a70207e65dc21e10f54955f5a245cb"}},
+      "differential": [{"implementations": ["pycurl-easy", "pycurl-multi"], "protocols": ["h1", "h2"]}],
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "no-body-205",
+      "provenance": ["rfc9110:15.3.6", "flyology"],
+      "fixture": "status-205",
+      "payloads": {"h1": {"path": "fixtures/h1-no-body-205.bin", "sha256": "c1c9eff59ee03145d3ba9282c7a7ec70092c0721d3e16eba248fddc1ae8e4065"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 205, "body_effect": "empty"}
+    },
+    {
+      "id": "head-no-body",
+      "provenance": ["rfc9110:9.3.2", "flyology"],
+      "fixture": "head-with-declared-length",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "empty"}
+    },
+    {
+      "id": "not-modified-no-body",
+      "provenance": ["rfc9110:15.4.5", "flyology"],
+      "fixture": "status-304",
+      "payloads": {"h1": {"path": "fixtures/h1-not-modified.bin", "sha256": "0850c57c39d6e9a88f3efea9c5d7fa4a402dc6db750c09a192bcb1e39af8c607"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 304, "body_effect": "empty"}
+    },
+    {
+      "id": "known-capacity-overflow",
+      "provenance": ["rfc9110:8.6", "flyology"],
+      "fixture": "content-length-over-capacity",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer"],
+      "expect": {"kind": "response-body-too-large", "certainty": "response-observed", "body_effect": "zero", "required_length": {"known": true, "bytes": 40}}
+    },
+    {
+      "id": "exact-capacity-boundary",
+      "provenance": ["rfc9110:8.6", "flyology"],
+      "fixture": "content-length-equals-capacity",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "unknown-capacity-overflow",
+      "provenance": ["rfc9112:7.1", "rfc9113:6.1", "rfc9114:7.2.8", "flyology"],
+      "fixture": "unknown-length-over-capacity",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer"],
+      "expect": {"kind": "response-body-too-large", "certainty": "response-observed", "body_effect": "zero", "required_length": {"known": false, "bytes": 0}}
+    },
+    {
+      "id": "truncated-fixed-body",
+      "provenance": ["rfc9112:6.3", "rfc9113:8.1", "rfc9114:4.1", "flyology"],
+      "fixture": "content-length-short",
+      "payloads": {"h1": {"path": "fixtures/h1-truncated-fixed-body.bin", "sha256": "25aa48620f4beb1654df34c96155ea233b591dddfe91e9b84dabc823970c42a1"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "overlong-multiplexed-body",
+      "provenance": ["rfc9113:8.1", "rfc9114:4.1", "flyology"],
+      "fixture": "content-length-long",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "conflicting-content-length",
+      "provenance": ["rfc9110:8.6", "rfc9112:6.3", "flyology"],
+      "fixture": "conflicting-content-length",
+      "payloads": {"h1": {"path": "fixtures/h1-conflicting-content-length.bin", "sha256": "aa9b77af9378c8c3d897ac6ffc3b70a3b2e2e0148394476888adb4a0944427a9"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "body-forbidden-data",
+      "provenance": ["rfc9110:6.4.1", "rfc9113:8.1", "rfc9114:4.1", "flyology"],
+      "fixture": "status-204-with-data",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "blocked-source-early-final",
+      "provenance": ["rfc9110:10.1.1", "rfc9113:8.1", "rfc9114:4.1", "flyology"],
+      "fixture": "early-413",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 413, "body_effect": "empty", "source_releases": 1, "request_reset_committed": true}
+    },
+    {
+      "id": "malformed-stream-isolation",
+      "provenance": ["rfc9113:5.4.2", "rfc9114:8", "h2spec-2.6.0:stream-errors", "h3spec-0.1.13:http3-errors", "flyology"],
+      "fixture": "one-malformed-one-valid",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "cancel-before-admission",
+      "provenance": ["flyology"],
+      "fixture": "cancel-at-admission-wait",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "cancelled", "certainty": "not-admitted", "body_effect": "zero"}
+    },
+    {
+      "id": "cancel-after-admission",
+      "provenance": ["rfc9113:5.4.2", "rfc9114:4.1.3", "flyology"],
+      "fixture": "cancel-after-request-head",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "cancelled", "certainty": "possibly-admitted", "body_effect": "zero", "request_reset_committed": true}
+    },
+    {
+      "id": "expired-at-start",
+      "provenance": ["flyology"],
+      "fixture": "deadline-expired",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "timed-out", "certainty": "not-admitted", "body_effect": "unchanged"}
+    },
+    {
+      "id": "lost-final-response",
+      "provenance": ["flyology"],
+      "fixture": "accept-then-drop-response",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "transport-failed", "certainty": "possibly-admitted", "body_effect": "zero", "automatic_replay": false}
+    },
+    {
+      "id": "request-invalid-expect",
+      "provenance": ["rfc9110:10.1.1", "flyology"],
+      "fixture": "unsupported-expect-continue",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "pre-admission-rejected", "certainty": "not-admitted", "body_effect": "unchanged"}
+    },
+    {
+      "id": "sink-partial-then-failure",
+      "provenance": ["flyology"],
+      "fixture": "body-prefix-then-drop",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-sink"],
+      "expect": {"kind": "response-sink-failed", "certainty": "response-observed", "body_effect": "partial-visible"}
+    },
+    {
+      "id": "sink-exception",
+      "provenance": ["flyology"],
+      "fixture": "sink-raises-after-prefix",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-sink"],
+      "expect": {"kind": "response-sink-failed", "certainty": "response-observed", "body_effect": "partial-visible"}
+    },
+    {
+      "id": "source-needs-with-bytes",
+      "provenance": ["flyology"],
+      "fixture": "invalid-source-step",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "request-source-failed", "certainty": "possibly-admitted", "body_effect": "zero", "source_releases": 1, "automatic_replay": false}
+    },
+    {
+      "id": "source-short",
+      "provenance": ["rfc9110:8.6", "flyology"],
+      "fixture": "source-finishes-before-declared-length",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "request-source-failed", "certainty": "possibly-admitted", "body_effect": "zero", "source_releases": 1, "automatic_replay": false}
+    },
+    {
+      "id": "source-long",
+      "provenance": ["rfc9110:8.6", "flyology"],
+      "fixture": "source-exceeds-declared-length",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "request-source-failed", "certainty": "possibly-admitted", "body_effect": "zero", "source_releases": 1, "automatic_replay": false}
+    },
+    {
+      "id": "source-zero-progress",
+      "provenance": ["flyology"],
+      "fixture": "source-progress-with-empty-slice",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "request-source-failed", "certainty": "possibly-admitted", "body_effect": "zero", "source_releases": 1, "automatic_replay": false}
+    },
+    {
+      "id": "source-exception",
+      "provenance": ["flyology"],
+      "fixture": "source-read-raises",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "request-source-failed", "certainty": "possibly-admitted", "body_effect": "zero", "source_releases": 1, "automatic_replay": false}
+    },
+    {
+      "id": "deadline-admission-wait",
+      "provenance": ["flyology"],
+      "fixture": "pool-full-until-deadline",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "timed-out", "certainty": "not-admitted", "body_effect": "zero"}
+    },
+    {
+      "id": "timeout-after-admission",
+      "provenance": ["rfc9113:5.4.2", "rfc9114:4.1.3", "flyology"],
+      "fixture": "accept-then-stall-past-deadline",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "timed-out", "certainty": "possibly-admitted", "body_effect": "zero", "request_reset_committed": true, "automatic_replay": false}
+    },
+    {
+      "id": "pool-capacity-wait",
+      "provenance": ["flyology"],
+      "fixture": "lease-released-to-waiter",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "stale-after-handoff-no-replay",
+      "provenance": ["flyology"],
+      "fixture": "reused-transport-drops-after-request-byte",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "transport-failed", "certainty": "possibly-admitted", "body_effect": "zero", "automatic_replay": false}
+    },
+    {
+      "id": "parent-continue-after",
+      "provenance": ["flyology"],
+      "fixture": "synthetic-parent-child",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "abandonment-drain",
+      "provenance": ["rfc9113:5.4.2", "rfc9114:4.1.3", "flyology"],
+      "fixture": "abandon-after-admission",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "cancelled", "certainty": "possibly-admitted", "body_effect": "zero", "request_reset_committed": true}
+    },
+    {
+      "id": "slot-reuse-loop",
+      "provenance": ["flyology"],
+      "fixture": "ten-thousand-terminal-reuses",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "multiple-informational-then-final",
+      "provenance": ["rfc9110:15.2", "rfc9113:8.1", "rfc9114:4.1"],
+      "fixture": "informational-103-102-then-200",
+      "payloads": {"h1": {"path": "fixtures/h1-multiple-informational.bin", "sha256": "fb882f2783c6f79cdd06a84a2f2930f26c60d3a5198360950259c8ee9e5ba6e3"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "switching-protocols-101",
+      "provenance": ["rfc9113:8.1", "rfc9114:4.1"],
+      "fixture": "status-101-on-multiplexed-stream",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "identical-content-length-list",
+      "provenance": ["rfc9110:8.6", "rfc9112:6.3", "llhttp:response-content-length"],
+      "fixture": "content-length-comma-list-identical",
+      "payloads": {"h1": {"path": "fixtures/h1-identical-content-length-list.bin", "sha256": "b3ef8d947f2e3c87f62edd0c7f58f97c7ade600296777535a4249cebc89e314b"}},
+      "protocols": ["h1"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "content-length-leading-plus",
+      "provenance": ["rfc9110:8.6", "rfc9112:6.3", "rfc9113:8.1.1", "rfc9114:4.1.3"],
+      "fixture": "content-length-plus-four",
+      "payloads": {"h1": {"path": "fixtures/h1-content-length-leading-plus.bin", "sha256": "17ca47ef563c3a24065a97252c8c7407e73fe279999b72f94ab69b8205553e23"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "content-length-overflow",
+      "provenance": ["rfc9110:8.6", "rfc9112:6.3", "rfc9113:8.1.1", "rfc9114:4.1.3"],
+      "fixture": "content-length-above-body-size-range",
+      "payloads": {"h1": {"path": "fixtures/h1-content-length-overflow.bin", "sha256": "476dfa9c57a3fc933a5f5042ffb1c9d4ba80fd4ae7e9b0acfa24869a6d10f75d"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "transfer-encoding-with-content-length",
+      "provenance": ["rfc9112:6.1", "rfc9112:6.3", "llhttp:smuggling-rejections", "flyology"],
+      "fixture": "chunked-and-content-length",
+      "payloads": {"h1": {"path": "fixtures/h1-transfer-encoding-content-length.bin", "sha256": "d08f23c10b69a65bdeef5301a5ada362cf2b7ac41084a1bedf8ab5ce5bb96732"}},
+      "protocols": ["h1"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "chunk-extensions",
+      "provenance": ["rfc9112:7.1", "llhttp:chunk-extensions"],
+      "fixture": "chunk-extensions-valid",
+      "payloads": {"h1": {"path": "fixtures/h1-chunk-extensions.bin", "sha256": "2bc305d8133450aa1f715bd38be004af9a0b529a5cf69e7d189ea3b6098dfade"}},
+      "protocols": ["h1"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "chunk-trailers-separated",
+      "provenance": ["rfc9110:6.5", "rfc9112:7.1.2"],
+      "fixture": "chunked-body-with-trailers",
+      "payloads": {"h1": {"path": "fixtures/h1-chunk-trailers.bin", "sha256": "9fad8d4a655ba28dc4e7c0636c992fc4285960126362e3ede95f12d4ca0f7444"}},
+      "protocols": ["h1"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "invalid-chunk-size",
+      "provenance": ["rfc9112:7.1", "llhttp:chunk-errors"],
+      "fixture": "chunk-size-not-hexadecimal",
+      "payloads": {"h1": {"path": "fixtures/h1-invalid-chunk-size.bin", "sha256": "4ba965d0dab65853da73f54ccceba4bb9664274c67be56d1ce52c14896f2ad9b"}},
+      "protocols": ["h1"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "truncated-chunked-body",
+      "provenance": ["rfc9112:7.1", "llhttp:finish-unsafe"],
+      "fixture": "chunked-body-missing-last-chunk",
+      "payloads": {"h1": {"path": "fixtures/h1-truncated-chunked-body.bin", "sha256": "e671ce46afa25733d0ce516ce284936c6c1ca06ef7b994f62f1dd1aae056b5e0"}},
+      "protocols": ["h1"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "close-delimited-body",
+      "provenance": ["rfc9112:6.3"],
+      "fixture": "response-body-until-peer-close",
+      "payloads": {"h1": {"path": "fixtures/h1-close-delimited.bin", "sha256": "2b28fc1ec982bc598aa062b8b672eac54d310e6e4d2ded93dbcfaefce6bb157d"}},
+      "protocols": ["h1"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "partial-response-head-then-drop",
+      "provenance": ["rfc9112:2.2", "rfc9113:8.1", "rfc9114:4.1", "flyology"],
+      "fixture": "response-head-prefix-then-close-or-reset",
+      "payloads": {"h1": {"path": "fixtures/h1-partial-response-head.bin", "sha256": "08f08d6b1e56345b68c03651d78e7c6fa6c6e1e7b2033a04b5ce0b8d739ae879"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "automatic_replay": false}
+    },
+    {
+      "id": "head-response-with-data",
+      "provenance": ["rfc9110:9.3.2", "rfc9113:8.1.1", "rfc9114:4.1.3"],
+      "fixture": "head-final-headers-then-data",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "status-205-with-data",
+      "provenance": ["rfc9110:15.3.6", "rfc9113:8.1.1", "rfc9114:4.1.3"],
+      "fixture": "status-205-then-data",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "informational-end-stream",
+      "provenance": ["rfc9113:8.1", "rfc9114:4.1"],
+      "fixture": "informational-103-ends-stream",
+      "payloads": {"h2": {"path": "fixtures/h2-informational-end-stream.bin", "sha256": "cc077ee0d138d32cc3f7f1761b97f2ea87cdc9bbdd393600754dbf498df3ee76"}},
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero"}
+    },
+    {
+      "id": "trailer-pseudo-header",
+      "provenance": ["rfc9113:8.1", "rfc9114:4.1", "h2spec-2.6.0:8.1", "h3spec-0.1.13:http3-errors"],
+      "fixture": "trailers-contain-status",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "trailers-without-end-stream",
+      "provenance": ["rfc9113:8.1", "rfc9114:4.1"],
+      "fixture": "trailer-fields-do-not-end-stream",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "missing-response-status",
+      "provenance": ["rfc9113:8.3.2", "rfc9114:4.3.1"],
+      "fixture": "final-fields-without-status",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "duplicate-response-status",
+      "provenance": ["rfc9113:8.3.2", "rfc9114:4.3.1"],
+      "fixture": "two-status-pseudo-fields",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "pseudo-header-after-field",
+      "provenance": ["rfc9113:8.3", "rfc9114:4.3"],
+      "fixture": "regular-field-before-status",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "connection-specific-response-field",
+      "provenance": ["rfc9113:8.2.2", "rfc9114:4.2"],
+      "fixture": "response-contains-connection-field",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "te-response-not-trailers",
+      "provenance": ["rfc9113:8.2.2", "rfc9114:4.2"],
+      "fixture": "response-te-gzip",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "stream-reset-before-response-head",
+      "provenance": ["rfc9113:5.4.2", "rfc9114:8", "rfc9000:19.4", "flyology"],
+      "fixture": "peer-resets-request-stream-before-head",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "transport-failed", "certainty": "possibly-admitted", "body_effect": "zero", "automatic_replay": false, "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "stream-reset-after-response-head",
+      "provenance": ["rfc9113:5.4.2", "rfc9114:8", "rfc9000:19.4", "flyology"],
+      "fixture": "head-then-peer-reset",
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-invalid", "certainty": "response-observed", "body_effect": "zero", "automatic_replay": false, "sibling_kind": "response-complete"}
+    },
+    {
+      "id": "unknown-frame-interleaved",
+      "provenance": ["rfc9113:5.5", "rfc9114:7.2.8"],
+      "fixture": "unknown-frame-between-body-parts",
+      "payloads": {"h2": {"path": "fixtures/h2-unknown-frame.bin", "sha256": "930b57a4a1f6dabe247f6eba8970c52b49ae69b958f2ba3add50ff86db69697e"}},
+      "protocols": ["h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete"}
+    },
+    {
+      "id": "conditional-precondition-failed",
+      "provenance": ["rfc9110:13.1", "rfc9110:15.5.13", "flyology"],
+      "fixture": "status-412-complete",
+      "payloads": {"h1": {"path": "fixtures/h1-precondition-failed.bin", "sha256": "978d0969c1f6afd50f849016a6f1c601e4c0a001457cd4aa303062b001f246a4"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 412, "body_effect": "empty"}
+    },
+    {
+      "id": "authorization-denied-complete",
+      "provenance": ["rfc9110:11", "rfc9110:15.5.4", "flyology"],
+      "fixture": "status-403-complete",
+      "payloads": {"h1": {"path": "fixtures/h1-authorization-denied.bin", "sha256": "698112933401a85b8bac6b0dca518a4aba7ea75cca8b92d4b8fdaba61492fc7a"}},
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["sync-head", "scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 403, "body_effect": "empty"}
+    },
+    {
+      "id": "cancel-after-response-head",
+      "provenance": ["rfc9113:5.4.2", "rfc9114:4.1.3", "rfc9000:3.5", "flyology"],
+      "fixture": "head-then-body-stall-and-cancel",
+      "protocols": ["h1", "h2", "h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink", "established-child"],
+      "expect": {"kind": "cancelled", "certainty": "response-observed", "body_effect": "zero", "request_reset_committed": true, "automatic_replay": false}
+    },
+    {
+      "id": "qpack-dynamic-reference-at-zero-capacity",
+      "provenance": ["rfc9204:3.2.2", "rfc9204:Appendix B.2", "rfc9114:4.1", "flyology"],
+      "fixture": "dynamic-reference-while-client-advertises-zero-capacity",
+      "payloads": {"h3": {"path": "fixtures/h3-qpack-dynamic-reference.bin", "sha256": "b54d2ea20e0a7dca58b4b0b29f3783989536f8005bf2a96c9bf5107f0b81b86a"}},
+      "protocols": ["h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "transport-failed", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "transport-failed"}
+    },
+    {
+      "id": "qpack-decompression-failure",
+      "provenance": ["rfc9204:2.2.3", "rfc9204:6", "rfc9114:4.1"],
+      "fixture": "invalid-huffman-field-section",
+      "payloads": {"h3": {"path": "fixtures/h3-qpack-invalid-huffman.bin", "sha256": "44cac2c01accdb208d27e6a19f3b99d9386ab2d70b93b536b67c06fa2e843d30"}},
+      "protocols": ["h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "transport-failed", "certainty": "response-observed", "body_effect": "zero", "sibling_kind": "transport-failed"}
+    },
+    {
+      "id": "h3-critical-stream-closed",
+      "provenance": ["rfc9114:6.2", "rfc9114:7.2.8"],
+      "fixture": "peer-closes-control-stream",
+      "protocols": ["h3"],
+      "api_styles": ["scoped-buffer", "scoped-sink"],
+      "expect": {"kind": "transport-failed", "certainty": "possibly-admitted", "body_effect": "zero", "sibling_kind": "transport-failed"}
+    }
+  ]
+}
