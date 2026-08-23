@@ -34,6 +34,26 @@ concurrency:
 # a cold run downloads a whole toolchain, so the observations do not bound it.
 
 jobs:
+  agent-packages:
+    name: Agent package lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out sources
+        timeout-minutes: 5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install APM
+        run: pip install apm-cli==0.28.0
+      - name: Reproduce agent resources
+        run: |
+          apm install --frozen
+          apm compile --target codex,claude --clean
+          apm audit --ci
+          git diff --exit-code -- AGENTS.md apm.lock.yaml
+
   test:
     name: HTTP tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

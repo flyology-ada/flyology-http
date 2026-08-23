@@ -48,3 +48,7 @@
 /flyology_quic/proof/alire/
 /flyology_quic/proof/config/
 /flyology_quic/proof/obj/
+apm_modules/
+/.agents/
+/.claude/rules/
+/.claude/skills/

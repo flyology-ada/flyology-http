@@ -24,6 +24,26 @@ The [client guide](https://http.flyology.org/guide/client/), dedicated
 [server guide](https://http.flyology.org/guide/server/) describe outbound and
 inbound lifecycles separately.
 
+## Agent setup
+
+This repository uses APM 0.28.0 to provision its pinned shared instructions
+and skills for Codex and Claude. Before starting either client in a new clone
+or worktree, run:
+
+```sh
+curl -sSL https://aka.ms/apm-unix | sh -s -- @v0.28.0
+apm --version
+
+apm install --frozen
+apm compile --target codex
+```
+
+Start a fresh client session after provisioning so it discovers the generated
+skill tree. Repository-specific instructions are packaged under
+`agent-packages/`; shared instructions and skills come from
+`flyology-ada/agents`. `apm.lock.yaml` records exact dependency commits and
+content hashes; updating it is a reviewed dependency change.
+
 ## Build and test
 
 ```sh
