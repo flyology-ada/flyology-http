@@ -57,7 +57,9 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
 
    --  Claim the shared session pump for Handle. Exactly one stream operation
    --  drives the connection at a time; every other stream remains protected
-   --  by the controller and waits on its ordinary stream wake source.
+   --  by the controller and waits on its ordinary stream wake source. Waiting
+   --  streams receive bounded round-robin ownership handoff so a repeatedly
+   --  rescheduled owner cannot starve a sibling through its whole deadline.
    procedure Try_Claim_Pump
      (Item    : in out Session;
       Handle  : Stream_Handle;

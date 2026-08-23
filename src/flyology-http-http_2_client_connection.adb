@@ -95,6 +95,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       Pending_Receive_Credit : Natural := 0;
       Wake           : Flyology.Wake_Sources.Source;
       Wake_Signalled : Boolean := False;
+      Pump_Waiting   : Boolean := False;
    end record;
 
    type Stream_Array is
@@ -202,6 +203,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       procedure Try_Claim_Pump
         (Handle : Stream_Handle; Claimed : out Boolean);
       function Owns_Pump (Handle : Stream_Handle) return Boolean;
+      procedure Handoff_Pump (Leaving_Index : Natural);
       procedure Release_Pump (Handle : Stream_Handle);
       procedure Pump_Wait_Source
         (Handle    : Stream_Handle;
@@ -226,6 +228,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       Draining         : Boolean := False;
       Broken           : Boolean := False;
       Pump_Owner       : Natural := 0;
+      Pump_Cursor      : Positive := Streams'First;
    end Controller;
 
    subtype Pump_Output_Index is Stream_Element_Offset range
@@ -543,6 +546,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             Flyology.Wake_Sources.Release (Streams (Index).Wake);
          end if;
          Streams (Index).Wake_Signalled := False;
+         Streams (Index).Pump_Waiting := False;
       end Clear_Stream;
 
       procedure Open
@@ -588,6 +592,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Streams (Index).Upload_First := 1;
          Streams (Index).Upload_Count := 0;
          Streams (Index).Upload_Finished := False;
+         Streams (Index).Pump_Waiting := False;
          Bytes.Clear (Streams (Index).Request_Trailers);
          Streams (Index).Trailer_Cursor := 1;
          Streams (Index).Send_Window :=
@@ -1636,15 +1641,9 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             end if;
             Streams (Handle.Slot).Remote_End := True;
             Streams (Handle.Slot).Phase := Complete;
+            Streams (Handle.Slot).Pump_Waiting := False;
             if Pump_Owner = Handle.ID then
-               Pump_Owner := 0;
-               for Index in Streams'Range loop
-                  if Streams (Index).Phase /= Free
-                    and then Index /= Handle.Slot
-                  then
-                     Notify (Index);
-                  end if;
-               end loop;
+               Handoff_Pump (Handle.Slot);
             end if;
          end if;
       end Cancel_Stream;
@@ -1656,15 +1655,9 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       begin
          Wake_Pump := False;
          if Valid (Handle) then
+            Streams (Handle.Slot).Pump_Waiting := False;
             if Pump_Owner = Handle.ID then
-               Pump_Owner := 0;
-               for Index in Streams'Range loop
-                  if Streams (Index).Phase /= Free
-                    and then Index /= Handle.Slot
-                  then
-                     Notify (Index);
-                  end if;
-               end loop;
+               Handoff_Pump (Handle.Slot);
             end if;
             if Streams (Handle.Slot).Response_Count > 0 then
                Unread := Streams (Handle.Slot).Response_Count;
@@ -1683,21 +1676,42 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
            and then (Pump_Owner = 0 or else Pump_Owner = Handle.ID);
          if Claimed then
             Pump_Owner := Handle.ID;
+            Streams (Handle.Slot).Pump_Waiting := False;
+         elsif Valid (Handle) then
+            Streams (Handle.Slot).Pump_Waiting := True;
          end if;
       end Try_Claim_Pump;
 
       function Owns_Pump (Handle : Stream_Handle) return Boolean is
         (Valid (Handle) and then Pump_Owner = Handle.ID);
 
+      procedure Handoff_Pump (Leaving_Index : Natural) is
+      begin
+         Pump_Owner := 0;
+         for Offset in 0 .. Streams'Length - 1 loop
+            declare
+               Index : constant Positive :=
+                 ((Pump_Cursor - Streams'First + Offset) mod
+                    Streams'Length) + Streams'First;
+            begin
+               if Index /= Leaving_Index
+                 and then Streams (Index).Phase /= Free
+                 and then Streams (Index).Pump_Waiting
+               then
+                  Streams (Index).Pump_Waiting := False;
+                  Pump_Owner := Natural (Streams (Index).ID);
+                  Pump_Cursor := Index mod Streams'Last + Streams'First;
+                  Notify (Index);
+                  return;
+               end if;
+            end;
+         end loop;
+      end Handoff_Pump;
+
       procedure Release_Pump (Handle : Stream_Handle) is
       begin
          if Pump_Owner = Handle.ID then
-            Pump_Owner := 0;
-            for Index in Streams'Range loop
-               if Streams (Index).Phase /= Free then
-                  Notify (Index);
-               end if;
-            end loop;
+            Handoff_Pump (Handle.Slot);
          end if;
       end Release_Pump;
 

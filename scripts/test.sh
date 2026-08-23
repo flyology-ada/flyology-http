@@ -127,6 +127,7 @@ flyology-http-client_policy-smoke
 flyology-http-http_2_frames-smoke
 flyology-http-http_2_huffman-smoke
 flyology-http-http_2_hpack-smoke
+flyology-http-http_2_client_connection-smoke
 flyology-http-http_2_payloads-smoke
 flyology-http-http_2_policy-smoke
 flyology-http-http_2_requests-smoke
