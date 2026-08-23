@@ -105,7 +105,12 @@ run_client () {
         kill "$peer_pid" 2>/dev/null || :
         wait "$peer_pid" 2>/dev/null || :
         printf '%s\n' "HTTP/2 peer log ($model/$scenario):" >&2
-        sed -n '1,120p' "$log_file" >&2
+        sed -n '1,40p' "$log_file" >&2
+        printf '%s\n' "... final peer events ..." >&2
+        tail -40 "$log_file" >&2
+        PYTHONDONTWRITEBYTECODE=1 "$python" -c \
+          'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; print("peer summary: connections=%d requests=%d responses=%d" % (sum(e["event"]=="connected" for e in events), sum(e["event"]=="request" for e in events), sum(e["event"]=="response" for e in events)), file=sys.stderr)' \
+          "$log_file"
         exit 1
       fi
       wait "$peer_pid"

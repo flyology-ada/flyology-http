@@ -55,7 +55,9 @@ procedure HTTP_Client_Smoke is
         (Item, Origin,
          (Max_Idle                    => 1,
           Idle_Timeout                => 10.0,
-          Max_Connection_Age          => 60.0,
+          --  The 20,000-exchange reuse checks below isolate bounded stack and
+          --  slot reuse. Pool-age rotation has separate deterministic tests.
+          Max_Connection_Age          => -1.0,
           Max_Requests_Per_Connection => 0));
 
       Client.Set_Method (Value, Flyology.HTTP.Methods.CONNECT);

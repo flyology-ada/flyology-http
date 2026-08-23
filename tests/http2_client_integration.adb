@@ -232,6 +232,14 @@ procedure HTTP2_Client_Integration is
 
    Item : aliased Client.Client (Capacity => 1);
    Backend : aliased OpenSSL.OpenSSL_Provider;
+   Pool : constant Client.Pool_Configuration :=
+     (if Scenario = "long-sync"
+      then
+        (Max_Idle                    => 1,
+         Idle_Timeout                => -1.0,
+         Max_Connection_Age          => -1.0,
+         Max_Requests_Per_Connection => 0)
+      else Client.Default_Pool_Configuration);
 begin
    if Scenario in
      "prior" | "early-final" | "early-final-body" | "scoped" |
@@ -243,7 +251,7 @@ begin
    then
       Client.Configure
         (Item, Flyology.HTTP.Parse_Origin (Origin_Text),
-         Client.HTTP_2_Prior_Knowledge);
+         Client.HTTP_2_Prior_Knowledge, Pool);
    else
       OpenSSL.Initialize_Client
         (Backend, CA_File => Certificate,
@@ -251,7 +259,8 @@ begin
       Client.Configure
         (Item, Flyology.HTTP.Parse_Origin (Origin_Text), Backend'Access,
          (if Scenario = "fallback" then Client.Negotiate_HTTP_2
-          else Client.Require_HTTP_2));
+          else Client.Require_HTTP_2),
+         Pool);
    end if;
 
    if Scenario = "scoped-stream-isolation" then
