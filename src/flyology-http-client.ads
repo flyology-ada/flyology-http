@@ -527,6 +527,34 @@ package Flyology.HTTP.Client is
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null) return Response;
 
+   --  Execute one request into a reusable response object. Any previous
+   --  response in Result is finalized before the new exchange starts. This
+   --  form avoids successive limited-function return slots in a long-running
+   --  caller scope. Result is uninitialized and reusable if the new exchange
+   --  raises. The exceptions are the same as the function overload above.
+   --  @param Item Shared configured client that outlives the result
+   --  @param Value Request to execute
+   --  @param Result Reusable response destination
+   --  @param Timeout Whole-exchange deadline interval
+   --  @param Token Optional cancellation source
+   --  @exception Client_Closed Client is stopping
+   --  @exception Connection_Error Resolution or connection setup fails
+   --  @exception Constraint_Error Request metadata is unsupported
+   --  @exception Protocol_Error Response framing is malformed or unsupported
+   --  @exception Response_Too_Large Response head exceeds its bound
+   --  @exception Redirect_Error An enabled redirect cannot be followed safely
+   --  @exception Flyology.IO.Timeout_Error Whole-exchange deadline expires
+   --  @exception Flyology.IO.Device_Error Established transport I/O fails
+   --  @exception Flyology.IO.Sockets.Socket_Error Socket transmission fails
+   --  @exception Flyology.IO.TLS.TLS_Error TLS setup or transmission fails
+   --  @exception Flyology.Cancellation.Operation_Cancelled Token is requested
+   procedure Execute
+     (Item    : aliased in out Client;
+      Value   : Request;
+      Result  : in out Response;
+      Timeout : Duration := 30.0;
+      Token   : access Flyology.Cancellation.Token := null);
+
    --  Execute one request while pulling its body from Source. The source's
    --  Declared_Length controls protocol framing. Source is not retained and
    --  is replayed only when it implements Rewindable_Request_Body_Source and
@@ -564,6 +592,36 @@ package Flyology.HTTP.Client is
       Source  : in out Request_Body_Source'Class;
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null) return Response;
+
+   --  Execute a streamed request into a reusable response object. Result is
+   --  uninitialized and reusable if the new exchange raises. The exceptions
+   --  are the same as the streamed function overload above.
+   --  @param Item Shared configured client that outlives the result
+   --  @param Value Request metadata; a retained body is rejected
+   --  @param Source Request body producer used only during this call
+   --  @param Result Reusable response destination
+   --  @param Timeout Whole-exchange deadline interval
+   --  @param Token Optional cancellation source
+   --  @exception Client_Closed Client is stopping
+   --  @exception Connection_Error Resolution or connection setup fails
+   --  @exception Constraint_Error Request metadata is unsupported or already
+   --     contains a retained body
+   --  @exception Request_Body_Error Source violates its progress contract
+   --  @exception Protocol_Error Response framing is malformed or unsupported
+   --  @exception Response_Too_Large Response head exceeds its bound
+   --  @exception Redirect_Error An enabled redirect cannot be followed safely
+   --  @exception Flyology.IO.Timeout_Error Whole-exchange deadline expires
+   --  @exception Flyology.IO.Device_Error Established transport I/O fails
+   --  @exception Flyology.IO.Sockets.Socket_Error Socket transmission fails
+   --  @exception Flyology.IO.TLS.TLS_Error TLS setup or transmission fails
+   --  @exception Flyology.Cancellation.Operation_Cancelled Token is requested
+   procedure Execute
+     (Item    : aliased in out Client;
+      Value   : Request;
+      Source  : in out Request_Body_Source'Class;
+      Result  : in out Response;
+      Timeout : Duration := 30.0;
+      Token   : access Flyology.Cancellation.Token := null);
 
    --  Absolute monotonic budget shared by a parent operation and one HTTP
    --  exchange. Construct it before signing or other parent preparation so
@@ -671,9 +729,11 @@ package Flyology.HTTP.Client is
    --  @param Item Result to inspect
    --  @return Monotonic admission certainty
    function Certainty (Item : Exchange_Result) return Admission_Certainty;
-   --  Return the last raw exchange phase.
+   --  Return the causal terminal exchange phase. Protocol cleanup does not
+   --  overwrite this value with Draining; use Scoped.Raw_Phase to observe an
+   --  active drain before terminal completion.
    --  @param Item Result to inspect
-   --  @return Last diagnostic driver phase
+   --  @return Causal terminal diagnostic phase
    function Phase (Item : Exchange_Result) return Exchange_Phase;
    --  Return an exact required body length when a trusted Content-Length was
    --  available before a bounded destination overflowed.
@@ -1124,6 +1184,29 @@ package Flyology.HTTP.Client is
       Maximum : Natural := 1_024 * 1_024;
       Token   : access Flyology.Cancellation.Token := null)
       return Flyology.Bytes.Unbounded_Bytes;
+
+   --  Read the complete remaining body into reusable owned storage. Result is
+   --  cleared before reading and is empty if the operation raises. This form
+   --  avoids successive function-result temporaries in a long-running caller
+   --  scope.
+   --  @param Item Active response
+   --  @param Result Reusable owned body destination
+   --  @param Maximum Maximum decoded bytes
+   --  @param Token Optional cancellation source borrowed for this call
+   --  @exception Program_Error Item is not initialized by Execute
+   --  @exception Response_Too_Large Maximum would be exceeded
+   --  @exception Client_Closed Client shutdown interrupts the exchange
+   --  @exception Protocol_Error Response body framing is malformed
+   --  @exception Flyology.IO.Timeout_Error Whole-exchange deadline expires
+   --  @exception Flyology.IO.Device_Error Established transport I/O fails
+   --  @exception Flyology.IO.Sockets.Socket_Error Socket reception fails
+   --  @exception Flyology.IO.TLS.TLS_Error TLS reception fails
+   --  @exception Flyology.Cancellation.Operation_Cancelled Token is requested
+   procedure Read_All
+     (Item    : in out Response;
+      Result  : in out Flyology.Bytes.Unbounded_Bytes;
+      Maximum : Natural := 1_024 * 1_024;
+      Token   : access Flyology.Cancellation.Token := null);
 
    --  Return coherent exchange and transport diagnostics without starting I/O.
    --  @param Item Client to inspect

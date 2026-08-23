@@ -30,6 +30,7 @@ procedure HTTP2_Client_Integration is
    package Sink_Faults renames HTTP_Client_Corpus_Sinks;
    package Drivers renames Flyology.Operations.Drivers;
    use Ada.Strings.Unbounded;
+   use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
    use type Client.Admission_Certainty;
    use type Client.Exchange_Result_Kind;
@@ -234,6 +235,8 @@ procedure HTTP2_Client_Integration is
 begin
    if Scenario in
      "prior" | "early-final" | "early-final-body" | "scoped" |
+     "long-sync" |
+     "scoped-body-forbidden" |
      "scoped-source-early-final" |
      "scoped-source-contract" | "scoped-sink-contract" |
      "scoped-stream-isolation"
@@ -308,6 +311,50 @@ begin
              others => <>));
          Buffers.Release (Bad_Buffer);
          Buffers.Release (Good_Buffer);
+      end;
+   elsif Scenario = "scoped-body-forbidden" then
+      declare
+         package Buffers renames Flyology.Buffers;
+         package Operations renames Flyology.Operations;
+         Pool : aliased Buffers.Pool (Block_Size => 1, Capacity => 1);
+         Destination : Buffers.Unique_Buffer (Pool'Access);
+
+         procedure Check
+           (Target          : String;
+            Method          : Flyology.HTTP.Method;
+            Expected_Status : Flyology.HTTP.Status_Code)
+         is
+            Set     : aliased Operations.Completion_Set (4);
+            Request : aliased Client.Request;
+            Result  : Client.Exchange_Result;
+            Reply   : Client.Response;
+         begin
+            Client.Set_Target (Request, Target);
+            Client.Set_Method (Request, Method);
+            declare
+               Operation : Client.Exchange_Operation :=
+                 Client.Scoped.Exchange_To_Buffer
+                   (Set'Access, Item'Access, Request'Unchecked_Access,
+                    Destination, Client.Deadline_After (30.0));
+            begin
+               Operations.Wait_All (Set);
+               Client.Scoped.Finish
+                 (Operation, Result, Reply, Destination);
+            end;
+            pragma Assert
+              (Client.Kind (Result) = Client.Response_Complete);
+            pragma Assert
+              (Client.Certainty (Result) = Client.Response_Observed);
+            pragma Assert (Client.Status (Reply) = Expected_Status);
+            pragma Assert
+              (Client.Header (Reply, "content-length") = "5368709129");
+            pragma Assert (Buffers.Length (Destination) = 0);
+         end Check;
+      begin
+         Buffers.Acquire (Destination);
+         Check ("/head", Flyology.HTTP.Methods.HEAD, 200);
+         Check ("/not-modified", Flyology.HTTP.Methods.GET, 304);
+         Buffers.Release (Destination);
       end;
    elsif Scenario in
      "multiplex" | "continuation" | "peer-capacity" | "stream-order"
@@ -433,6 +480,48 @@ begin
                Results.Report
                  (False, Ada.Exceptions.Exception_Information (Event));
          end Stopper;
+      begin
+         Results.Await_All;
+         if not Results.Passed then
+            raise Program_Error with Results.Detail;
+         end if;
+      end;
+   elsif Scenario = "long-sync" then
+      declare
+         Results : Outcome (1);
+         task Caller is
+            pragma Task_Info (Model);
+         end Caller;
+
+         task body Caller is
+            Value    : Client.Request;
+            Reply    : Client.Response;
+            Content  : Flyology.Bytes.Unbounded_Bytes;
+            Expected : constant String := "flyology-http2";
+         begin
+            Client.Set_Target (Value, "/long-sync");
+            for Iteration in 1 .. 10_000 loop
+               Client.Execute (Item, Value, Reply, Timeout => 30.0);
+               Client.Read_All (Reply, Content, Maximum => 300_000);
+               pragma Assert
+                 (Client.Negotiated_Protocol (Reply) =
+                    Flyology.HTTP.HTTP_2_Protocol);
+               pragma Assert (Client.Status (Reply) = 200);
+               pragma Assert
+                 (Flyology.Bytes.Length (Content) = Expected'Length);
+               for Index in Expected'Range loop
+                  pragma Assert
+                    (Flyology.Bytes.Element (Content, Index) =
+                       Ada.Streams.Stream_Element
+                         (Character'Pos (Expected (Index))));
+               end loop;
+            end loop;
+            Results.Report (True);
+         exception
+            when Event : others =>
+               Results.Report
+                 (False, Ada.Exceptions.Exception_Information (Event));
+         end Caller;
       begin
          Results.Await_All;
          if not Results.Passed then

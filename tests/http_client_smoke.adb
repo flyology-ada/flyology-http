@@ -61,19 +61,29 @@ procedure HTTP_Client_Smoke is
       Client.Set_Method (Value, Flyology.HTTP.Methods.CONNECT);
       declare
          Rejected : Boolean := False;
+         Vacant   : Boolean := False;
+         Response : Client.Response;
       begin
          begin
+            Client.Execute (Item, Value, Response);
+         exception
+            when Constraint_Error =>
+               Rejected := True;
+         end;
+         begin
             declare
-               Unexpected : Client.Response := Client.Execute (Item, Value);
+               Unexpected : constant Flyology.HTTP.Status_Code :=
+                 Client.Status (Response);
                pragma Unreferenced (Unexpected);
             begin
                null;
             end;
          exception
-            when Constraint_Error =>
-               Rejected := True;
+            when Program_Error =>
+               Vacant := True;
          end;
          pragma Assert (Rejected);
+         pragma Assert (Vacant);
       end;
       Client.Set_Method (Value, Flyology.HTTP.Methods.GET);
 
@@ -232,25 +242,22 @@ procedure HTTP_Client_Smoke is
 
       procedure Expect_Body_Error (Target : String) is
          Raised : Boolean := False;
+         Payload : Flyology.Bytes.Unbounded_Bytes :=
+           Flyology.Bytes.From_Byte_String ("discard me");
       begin
          Client.Set_Target (Value, Target);
          declare
             Response : Client.Response := Client.Execute (Item, Value);
          begin
             begin
-               declare
-                  Payload : constant Flyology.Bytes.Unbounded_Bytes :=
-                    Client.Read_All (Response);
-                  pragma Unreferenced (Payload);
-               begin
-                  null;
-               end;
+               Client.Read_All (Response, Payload);
             exception
                when Flyology.HTTP.Protocol_Error =>
                   Raised := True;
             end;
          end;
          pragma Assert (Raised);
+         pragma Assert (Flyology.Bytes.Length (Payload) = 0);
       end Expect_Body_Error;
    begin
       Client.Configure (Item, Origin);

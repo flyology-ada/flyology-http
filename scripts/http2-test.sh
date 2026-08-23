@@ -54,7 +54,7 @@ run_codecs () {
 run_client () {
   require_tester
   build_test http2_client_integration http2-integration
-  scenarios=${FLYOLOGY_HTTP2_CLIENT_SCENARIOS:-"basic prior scoped scoped-tls scoped-parent scoped-cancel scoped-abandon scoped-source-early-final scoped-source-contract scoped-sink-contract scoped-stream-isolation fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final early-final-body head-empty-data reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post"}
+  scenarios=${FLYOLOGY_HTTP2_CLIENT_SCENARIOS:-"basic prior scoped scoped-tls scoped-parent scoped-cancel scoped-abandon scoped-source-early-final scoped-source-contract scoped-sink-contract scoped-stream-isolation scoped-body-forbidden long-sync fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final early-final-body head-empty-data reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post"}
   models=${FLYOLOGY_HTTP2_CLIENT_MODELS:-"native lightweight"}
   for model in $models; do
     for scenario in $scenarios; do
@@ -64,6 +64,8 @@ run_client () {
       cleartext=
       scheme=https
       if [ "$scenario" = prior ] || [ "$scenario" = scoped ] \
+        || [ "$scenario" = scoped-body-forbidden ] \
+        || [ "$scenario" = long-sync ] \
         || [ "$scenario" = early-final ] \
         || [ "$scenario" = early-final-body ] \
         || [ "$scenario" = scoped-source-early-final ] \
@@ -108,6 +110,8 @@ run_client () {
       fi
       wait "$peer_pid"
       case "$scenario" in
+        long-sync) expected_requests=10000 ;;
+        scoped-body-forbidden) expected_requests=2 ;;
         scoped-source-contract) expected_requests=0 ;;
         multiplex|continuation|peer-capacity|stream-order|reset-race|goaway|refused|scoped-sink-contract|scoped-stream-isolation) expected_requests=2 ;;
         require-failure|bad-preface) expected_requests=0 ;;

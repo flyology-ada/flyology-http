@@ -283,6 +283,17 @@ Body  : Flyology.Bytes.Unbounded_Bytes :=
 
 pragma Assert (Client.Status (Reply) = 200);
 pragma Assert (Client.Body_Complete (Reply));</code></pre></figure>
+            <h3>Reuse synchronous results in a long-running loop</h3>
+            <p>Use the procedural <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#19a879d0be086d298f85de89e5340ea4ed1b6f4bd389ec92d2f2109c1d1c0946"><code>Execute</code></a> and <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#f39b6d894b38a2dd647ac46dddffac554106a7d6c9e7485f8b0f52d84ce65ba8"><code>Read_All</code></a> overloads when one caller scope performs many synchronous exchanges. These overloads keep one response object and one body object in that scope. They avoid successive function-result temporaries while using the same composable exchange engine.</p>
+            <figure class="code-panel"><figcaption>constant-stack synchronous loop</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Reply : Client.Response;
+Body  : Flyology.Bytes.Unbounded_Bytes;
+
+loop
+   Client.Execute (HTTP, Request, Reply, Timeout =&gt; 5.0);
+   Client.Read_All (Reply, Body, Maximum =&gt; 64 * 1_024);
+   Consume (Reply, Body);
+end loop;</code></pre></figure>
+            <p>The procedural <code>Execute</code> finalizes the previous response before it starts the next exchange. An incomplete previous response therefore closes its HTTP/1.1 or HTTP/3 transport, or resets its HTTP/2 stream. The procedural <code>Read_All</code> clears its destination before reading and leaves it empty if body consumption raises.</p>
             <p>For bounded streaming, repeatedly call <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#287dbcad760fe6edea7cef203c259b3cf3a2d7e6988bf371e2a7dc41242b3b47"><code>Read_Body</code></a>. It removes fixed-length or chunked framing and reports completion only when the complete message is safe. The original <code>Execute</code> deadline remains authoritative; a body read never restarts it. A token passed to a body-reading call is borrowed only for that call.</p>
             <figure class="code-panel"><figcaption>stream decoded response bytes</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">loop
    Client.Read_Body

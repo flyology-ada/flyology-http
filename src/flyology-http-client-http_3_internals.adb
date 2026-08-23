@@ -228,35 +228,6 @@ package body HTTP_3_Internals is
       end case;
    end Receive_One;
 
-   procedure Copy_Pending
-     (Item : in out Response_Data;
-      Data : out Stream_Element_Array;
-      Last : out Stream_Element_Offset)
-   is
-      Available : constant Natural :=
-        Flyology.Bytes.Length (Item.HTTP_3_Pending) -
-          Item.HTTP_3_Pending_Offset;
-      Count : constant Natural := Natural'Min (Available, Data'Length);
-   begin
-      Last := Data'First - 1;
-      if Count > 0 then
-         for Offset in 0 .. Count - 1 loop
-            Data (Data'First + Stream_Element_Offset (Offset)) :=
-              Flyology.Bytes.Element
-                (Item.HTTP_3_Pending,
-                 Item.HTTP_3_Pending_Offset + Offset + 1);
-         end loop;
-         Last := Data'First + Stream_Element_Offset (Count) - 1;
-         Item.HTTP_3_Pending_Offset := Item.HTTP_3_Pending_Offset + Count;
-      end if;
-      if Item.HTTP_3_Pending_Offset =
-        Flyology.Bytes.Length (Item.HTTP_3_Pending)
-      then
-         Flyology.Bytes.Clear (Item.HTTP_3_Pending);
-         Item.HTTP_3_Pending_Offset := 0;
-      end if;
-   end Copy_Pending;
-
    function Is_Usable
      (Connection : Pooled_Connection_Access) return Boolean is
      (Connection /= null
@@ -270,7 +241,6 @@ package body HTTP_3_Internals is
       Finished : out Boolean;
       Token    : access Flyology.Cancellation.Token)
    is
-      Event  : H3.Event;
       Status : H3.Operation_Status;
 
       procedure Wait_For_Stream is
@@ -350,12 +320,15 @@ package body HTTP_3_Internals is
             loop
                H3.Poll
                  (Item.Data.Connection.HTTP_3,
-                  Item.Data.Connection.QUIC_Transport, Event, Status);
+                  Item.Data.Connection.QUIC_Transport,
+                  Item.Data.Connection.HTTP_3_Event.all, Status);
                if Status = H3.Succeeded then
                   H3_Connections.Publish
                     (Item.Data.Connection.HTTP_3_Streams,
-                     Event, Published);
-                  if Event.Kind = H3.Goaway_Received then
+                     Item.Data.Connection.HTTP_3_Event.all, Published);
+                  if Item.Data.Connection.HTTP_3_Event.all.Kind =
+                    H3.Goaway_Received
+                  then
                      Item.Data.Connection.HTTP_3_Goaway := True;
                   end if;
                   exit;
@@ -436,116 +409,58 @@ package body HTTP_3_Internals is
    begin
       Last := Data'First - 1;
       Finished := False;
-      if Item.Data.HTTP_3_Handle /= H3_Connections.No_Stream then
-         loop
-            declare
-               Body_State : H3_Connections.Body_Result;
-            begin
-               H3_Connections.Read
-                 (Item.Data.Connection.HTTP_3_Streams,
-                  Item.Data.HTTP_3_Handle, Data, Last, Finished,
-                  Body_State, Item.Data.Trailers);
-               case Body_State is
-                  when H3_Connections.Body_Progress =>
-                     if Last >= Data'First then
-                        Item.Data.HTTP_3_Decoded_Length :=
-                          Item.Data.HTTP_3_Decoded_Length +
-                            QUIC.Stream_Offset (Last - Data'First + 1);
-                     end if;
-                     Return_Credit_If_Due;
-                     return;
-                  when H3_Connections.Body_Finished =>
-                     if Last >= Data'First then
-                        Item.Data.HTTP_3_Decoded_Length :=
-                          Item.Data.HTTP_3_Decoded_Length +
-                            QUIC.Stream_Offset (Last - Data'First + 1);
-                     end if;
-                     Return_Credit_If_Due;
-                     H3_Connections.Release_Stream
-                       (Item.Data.Connection.HTTP_3_Streams,
-                        Item.Data.HTTP_3_Handle);
-                     Item.Data.HTTP_3_Handle := H3_Connections.No_Stream;
-                     Release_Lease
-                       (Item.Data.all,
-                        not Item.Data.Request_Incomplete
-                          and then Is_Usable (Item.Data.Connection));
-                     return;
-                  when H3_Connections.Body_Would_Block =>
-                     Pump_One;
-                  when H3_Connections.Body_Connection_Failed |
-                       H3_Connections.Body_Stream_Failed =>
-                     H3_Connections.Release_Stream
-                       (Item.Data.Connection.HTTP_3_Streams,
-                        Item.Data.HTTP_3_Handle);
-                     Item.Data.HTTP_3_Handle := H3_Connections.No_Stream;
-                     Release_Lease (Item.Data.all, False);
-                     raise Protocol_Error with
-                       "HTTP/3 response stream failed before body completion";
-               end case;
-            end;
-         end loop;
-      end if;
-      if Flyology.Bytes.Length (Item.Data.HTTP_3_Pending) > 0 then
-         Copy_Pending (Item.Data.all, Data, Last);
-         return;
+      if Item.Data.HTTP_3_Handle = H3_Connections.No_Stream
+        or else Item.Data.Connection.HTTP_3_Event = null
+      then
+         raise Program_Error with
+           "HTTP/3 response is missing its composable stream state";
       end if;
       loop
-         H3.Poll
-           (Item.Data.Connection.HTTP_3,
-            Item.Data.Connection.QUIC_Transport, Event, Status);
-         if Status = H3.No_Event then
-            Receive_One
-              (Item.Data.Owner, Item.Data.Connection, Item.Data.Started,
-               Item.Data.Timeout, Token);
-         elsif Status /= H3.Succeeded then
-            raise Protocol_Error with
-              "HTTP/3 response body failed: " &
-                H3.Operation_Status'Image (Status);
-         elsif Event.Kind = H3.Goaway_Received then
-            Item.Data.Connection.HTTP_3_Goaway := True;
-         elsif Event.Stream = Item.Data.HTTP_3_Stream
-           and then Event.Kind = H3.Data_Received
-         then
-            if Event.Data_Length > 0 then
-               Flyology.Bytes.Append
-                 (Item.Data.HTTP_3_Pending,
-                  Event.Data (1 .. Stream_Element_Offset (Event.Data_Length)));
-               Copy_Pending (Item.Data.all, Data, Last);
-               return;
-            end if;
-         elsif Event.Stream = Item.Data.HTTP_3_Stream
-           and then Event.Kind = H3.Headers_Received
-         then
-            for Index in 1 .. H3.Header_Count (Event.Headers) loop
-               declare
-                  Field : constant H3.Header_Field :=
-                    H3.Field_At (Event.Headers, Index);
-                  Name : constant String := H3.Field_Name (Field);
-               begin
-                  if Name (Name'First) = ':' then
-                     raise Protocol_Error with
-                       "pseudo-field in HTTP/3 response trailers";
+         declare
+            Body_State : H3_Connections.Body_Result;
+         begin
+            H3_Connections.Read
+              (Item.Data.Connection.HTTP_3_Streams,
+               Item.Data.HTTP_3_Handle, Data, Last, Finished,
+               Body_State, Item.Data.Trailers);
+            case Body_State is
+               when H3_Connections.Body_Progress =>
+                  if Last >= Data'First then
+                     Item.Data.HTTP_3_Decoded_Length :=
+                       Item.Data.HTTP_3_Decoded_Length +
+                         QUIC.Stream_Offset (Last - Data'First + 1);
                   end if;
-                  Flyology.HTTP.Headers.Add
-                    (Item.Data.Trailers, Name, H3.Field_Value (Field));
-               end;
-            end loop;
-         elsif Event.Stream = Item.Data.HTTP_3_Stream
-           and then Event.Kind = H3.Stream_Ended
-         then
-            Item.Data.HTTP_3_Stream_Ended := True;
-            Release_Lease
-              (Item.Data.all,
-               not Item.Data.Request_Incomplete
-                 and then Is_Usable (Item.Data.Connection));
-            Finished := True;
-            return;
-         elsif Event.Stream = Item.Data.HTTP_3_Stream
-           and then Event.Kind = H3.Stream_Reset
-         then
-            Release_Lease (Item.Data.all, False);
-            raise Protocol_Error with "HTTP/3 response stream was reset";
-         end if;
+                  Return_Credit_If_Due;
+                  return;
+               when H3_Connections.Body_Finished =>
+                  if Last >= Data'First then
+                     Item.Data.HTTP_3_Decoded_Length :=
+                       Item.Data.HTTP_3_Decoded_Length +
+                         QUIC.Stream_Offset (Last - Data'First + 1);
+                  end if;
+                  Return_Credit_If_Due;
+                  H3_Connections.Release_Stream
+                    (Item.Data.Connection.HTTP_3_Streams,
+                     Item.Data.HTTP_3_Handle);
+                  Item.Data.HTTP_3_Handle := H3_Connections.No_Stream;
+                  Release_Lease
+                    (Item.Data.all,
+                     not Item.Data.Request_Incomplete
+                       and then Is_Usable (Item.Data.Connection));
+                  return;
+               when H3_Connections.Body_Would_Block =>
+                  Pump_One;
+               when H3_Connections.Body_Connection_Failed |
+                    H3_Connections.Body_Stream_Failed =>
+                  H3_Connections.Release_Stream
+                    (Item.Data.Connection.HTTP_3_Streams,
+                     Item.Data.HTTP_3_Handle);
+                  Item.Data.HTTP_3_Handle := H3_Connections.No_Stream;
+                  Release_Lease (Item.Data.all, False);
+                  raise Protocol_Error with
+                    "HTTP/3 response stream failed before body completion";
+            end case;
+         end;
       end loop;
    end Read_Response_Body;
 end HTTP_3_Internals;

@@ -231,6 +231,19 @@ def serve_connection(
                     )
                     connection.send_data(stream_id, b"", end_stream=True)
                     state.record("head-empty-data", stream=stream_id)
+                elif state.scenario == "scoped-body-forbidden":
+                    status = 200 if state.request_count == 1 else 304
+                    connection.send_headers(
+                        stream_id,
+                        [
+                            (":status", str(status)),
+                            ("content-length", "5368709129"),
+                        ],
+                        end_stream=True,
+                    )
+                    state.record(
+                        "body-forbidden", stream=stream_id, status=status
+                    )
                 elif state.scenario == "informational-end":
                     frame = bytearray(
                         fixture_bytes("h2-informational-end-stream.bin")
@@ -275,6 +288,7 @@ def serve_connection(
                     "early-final-body",
                     "scoped-source-early-final",
                     "head-empty-data",
+                    "scoped-body-forbidden",
                     "informational-end",
                     "flood",
                     "shutdown-race",
@@ -406,6 +420,8 @@ def main() -> None:
             "scoped-source-contract",
             "scoped-sink-contract",
             "scoped-stream-isolation",
+            "scoped-body-forbidden",
+            "long-sync",
             "fallback",
             "require-failure",
             "upload",

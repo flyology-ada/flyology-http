@@ -37,6 +37,7 @@ procedure HTTP3_Server_Integration is
    use type QUIC.Timeout_Status;
    use type QUIC.Timestamp;
    use type Ada.Real_Time.Time;
+   use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
    use type Flyology.HTTP.Origin_Scheme;
    use type Flyology.HTTP.Protocol;
@@ -762,6 +763,28 @@ begin
       declare
          HTTP : aliased Client.Client (Capacity => 1);
          Request : Client.Request;
+         Pooled_Reply : Client.Response;
+         Pooled_Body  : Flyology.Bytes.Unbounded_Bytes;
+
+         procedure Check_Pooled_Exchange is
+            Expected : constant String := "hello Ada";
+         begin
+            Client.Execute
+              (HTTP, Request, Pooled_Reply, Timeout => 10.0);
+            Client.Read_All (Pooled_Reply, Pooled_Body);
+            pragma Assert (Client.Status (Pooled_Reply) = 200);
+            pragma Assert
+              (Client.Negotiated_Protocol (Pooled_Reply) =
+                 Flyology.HTTP.HTTP_3_Protocol);
+            pragma Assert
+              (Flyology.Bytes.Length (Pooled_Body) = Expected'Length);
+            for Index in Expected'Range loop
+               pragma Assert
+                 (Flyology.Bytes.Element (Pooled_Body, Index) =
+                    Ada.Streams.Stream_Element
+                      (Character'Pos (Expected (Index))));
+            end loop;
+         end Check_Pooled_Exchange;
       begin
          Phase := Pooled_Configure;
          Client.Configure
@@ -934,18 +957,7 @@ begin
          for Exchange in 1 .. 8_000 loop
             Phase := Pooled_Exchange;
             Exchange_Number := Exchange;
-            declare
-               Reply : Client.Response :=
-                 Client.Execute (HTTP, Request, Timeout => 10.0);
-            begin
-               pragma Assert (Client.Status (Reply) = 200);
-               pragma Assert
-                 (Client.Negotiated_Protocol (Reply) =
-                    Flyology.HTTP.HTTP_3_Protocol);
-               pragma Assert
-                 (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
-                    "hello Ada");
-            end;
+            Check_Pooled_Exchange;
          end loop;
          Exchange_Number := 0;
          Phase := Pooled_Shutdown;
@@ -1180,24 +1192,23 @@ begin
          Client.Shutdown (HTTP);
       end;
       declare
-         task First_Client;
-         task Second_Client;
+         --  Keep less than the runtime's 2 MiB default so a transaction-sized
+         --  QUIC stream-table copy cannot silently return to the owner stack.
+         --  The raw-protocol oracle itself retains about 1.3 MiB in its
+         --  deepest path, so this bound still leaves measured test overhead.
+         task type Client_Task (Use_IPv6 : Boolean);
+         for Client_Task'Storage_Size use 7 * 256 * 1_024;
+         First_Client  : Client_Task (False);
+         Second_Client : Client_Task (True);
 
-         task body First_Client is
+         task body Client_Task is
          begin
-            Run_Client (Address);
+            Run_Client
+              ((if Use_IPv6 then IPv6_Address else Address));
          exception
             when Error : others =>
                Outcome.Fail (Ada.Exceptions.Exception_Information (Error));
-         end First_Client;
-
-         task body Second_Client is
-         begin
-            Run_Client (IPv6_Address);
-         exception
-            when Error : others =>
-               Outcome.Fail (Ada.Exceptions.Exception_Information (Error));
-         end Second_Client;
+         end Client_Task;
       begin
          null;
       end;

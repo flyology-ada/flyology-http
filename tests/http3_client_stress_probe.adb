@@ -1,12 +1,13 @@
 with Ada.Command_Line;
 with Ada.Exceptions;
 with Ada.Real_Time;
+with Ada.Streams;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
-with Flyology.Bytes;
 with Flyology.Execution_Groups;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
+with Flyology.Operations;
 with Flyology.QUIC.Test_Connections;
 
 procedure HTTP3_Client_Stress_Probe is
@@ -16,6 +17,7 @@ procedure HTTP3_Client_Stress_Probe is
    use Ada.Strings.Unbounded;
    use type Ada.Real_Time.Time;
    use type Flyology.HTTP.Protocol;
+   use type Client.Exchange_Result_Kind;
 
    Worker_Count : constant Positive :=
      (if Ada.Command_Line.Argument_Count < 1 then 1
@@ -33,6 +35,9 @@ procedure HTTP3_Client_Stress_Probe is
    Max_Idle : constant Natural :=
      (if Ada.Command_Line.Argument_Count < 5 then 1
       else Natural'Value (Ada.Command_Line.Argument (5)));
+   Request_Timeout : constant Duration :=
+     (if Ada.Command_Line.Argument_Count < 6 then 8.0
+      else Duration'Value (Ada.Command_Line.Argument (6)));
 
    function Decimal (Value : Positive) return String is
       Image : constant String := Positive'Image (Value);
@@ -41,6 +46,41 @@ procedure HTTP3_Client_Stress_Probe is
    end Decimal;
 
    HTTP : aliased Client.Client (Capacity => Worker_Count);
+
+   type Body_Storage is
+     array (Positive range 1 .. 5) of Ada.Streams.Stream_Element;
+
+   type Body_Sink is limited new Client.Response_Body_Sink with record
+      Storage  : Body_Storage := (others => 0);
+      Length   : Natural range 0 .. 5 := 0;
+      Overflow : Boolean := False;
+   end record;
+
+   overriding procedure Write
+     (Item : in out Body_Sink;
+      Data : Ada.Streams.Stream_Element_Array);
+
+   overriding procedure Write
+     (Item : in out Body_Sink;
+      Data : Ada.Streams.Stream_Element_Array)
+   is
+   begin
+      if Data'Length > Item.Storage'Length - Item.Length then
+         Item.Overflow := True;
+         return;
+      end if;
+      for Index in Data'Range loop
+         Item.Length := Item.Length + 1;
+         Item.Storage (Item.Length) := Data (Index);
+      end loop;
+   end Write;
+
+   function Is_Hello (Item : Body_Sink) return Boolean is
+     (not Item.Overflow
+        and then Item.Length = 5
+        and then Item.Storage =
+          (Character'Pos ('h'), Character'Pos ('e'), Character'Pos ('l'),
+           Character'Pos ('l'), Character'Pos ('o')));
 
    protected Results is
       procedure Start;
@@ -115,26 +155,40 @@ procedure HTTP3_Client_Stress_Probe is
       Results.Await_Start;
       for Iteration in 1 .. Requests_Per_Worker loop
          declare
-            Value : Client.Request;
+            Value : aliased Client.Request;
             Started : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
          begin
             Client.Set_Target (Value, "/hello");
             declare
-               Reply : Client.Response :=
-                 Client.Execute (HTTP, Value, Timeout => 8.0);
-               Body_Value : constant String :=
-                 Flyology.Bytes.To_Byte_String (Client.Read_All (Reply));
-               Elapsed : constant Duration :=
-                 Ada.Real_Time.To_Duration (Ada.Real_Time.Clock - Started);
+               --  Root exchange, DNS resolver, and resolver socket child.
+               Set : aliased Flyology.Operations.Completion_Set (3);
+               Sink : aliased Body_Sink;
+               Result : Client.Exchange_Result;
+               Reply : Client.Response;
+               Operation : Client.Exchange_Operation :=
+                 Client.Scoped.Exchange_To_Sink
+                   (Set'Access, HTTP'Access, Value'Unchecked_Access,
+                    Sink'Access, Client.Deadline_After (Request_Timeout));
             begin
-               if Client.Status (Reply) = 200
+               Flyology.Operations.Wait_All (Set);
+               Client.Scoped.Finish (Operation, Result, Reply);
+               if Client.Kind (Result) = Client.Response_Complete
+                 and then Client.Status (Reply) = 200
                  and then Client.Negotiated_Protocol (Reply) =
                    Flyology.HTTP.HTTP_3_Protocol
-                 and then Body_Value = "hello"
+                 and then Is_Hello (Sink)
                then
-                  Results.Succeed (Elapsed);
+                  Results.Succeed
+                    (Ada.Real_Time.To_Duration
+                       (Ada.Real_Time.Clock - Started));
                else
-                  Results.Fail ("unexpected response");
+                  Results.Fail
+                    (Client.Exchange_Result_Kind'Image (Client.Kind (Result))
+                     & " / " & Client.Admission_Certainty'Image
+                       (Client.Certainty (Result))
+                     & " / " & Client.Exchange_Phase'Image
+                       (Client.Phase (Result))
+                     & " / " & Client.Failure_Detail (Result));
                end if;
             end;
          exception

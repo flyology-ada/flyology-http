@@ -6,6 +6,7 @@ with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Flyology;
 with Flyology.Buffers;
+with Flyology.Bytes;
 with Flyology.Cancellation;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
@@ -35,8 +36,10 @@ procedure HTTP_Client_Scoped_Smoke is
 
    use Ada.Streams;
    use type Client.Admission_Certainty;
+   use type Client.Exchange_Phase;
    use type Client.Exchange_Result_Kind;
    use type Client.Source_Step_Kind;
+   use type Flyology.HTTP.Protocol;
    use type Sink_Faults.Fault_Kind;
    use type Operations.Driver_Event;
    use type Operations.Terminal_Outcome;
@@ -430,6 +433,13 @@ begin
          for Iteration in 1 .. 10_000 loop
             Stage := 40_000 + Iteration;
             Read_Head (Peer, "/slot-loop");
+            Send
+              (Peer, "HTTP/1.1 200 OK" & CRLF &
+                 "Content-Length: 0" & CRLF & CRLF);
+         end loop;
+         for Iteration in 1 .. 10_000 loop
+            Stage := 50_000 + Iteration;
+            Read_Head (Peer, "/sync-loop");
             Send
               (Peer, "HTTP/1.1 200 OK" & CRLF &
                  "Content-Length: 0" & CRLF & CRLF);
@@ -876,6 +886,21 @@ begin
              Status => 200,
              Body_Effect => Golden.Complete,
              others => <>));
+         Client.Set_Target (Ask, "/sync-loop");
+         declare
+            Reply   : Client.Response;
+            Content : Flyology.Bytes.Unbounded_Bytes;
+         begin
+            for Iteration in 1 .. 10_000 loop
+               Client.Execute (HTTP, Ask, Reply, Timeout => 5.0);
+               pragma Assert (Client.Status (Reply) = 200);
+               pragma Assert
+                 (Client.Negotiated_Protocol (Reply) =
+                    Flyology.HTTP.HTTP_1_1_Protocol);
+               Client.Read_All (Reply, Content);
+               pragma Assert (Flyology.Bytes.Length (Content) = 0);
+            end loop;
+         end;
       end;
       Stage := 10;
 
@@ -971,6 +996,8 @@ begin
             pragma Assert
               (Client.Scoped.Admission (Operation) =
                  Client.Possibly_Admitted);
+            pragma Assert
+              (Client.Scoped.Raw_Phase (Operation) /= Client.Draining);
             Corpus.Check
               (Golden.Abandonment_Drain, Golden.H1,
                Golden.Scoped_Buffer,

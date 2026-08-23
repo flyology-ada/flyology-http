@@ -29,6 +29,7 @@ plus compile-fail client/response and body-source/payload lifetime fixtures:
 | Parser mutation | 10,000 fixed-seed random and near-valid inputs, rotating all 42 RFC seeds through zero to eight byte mutations and the same production parser oracle used by GNATfuzz |
 | Deadlines and cancellation | forced timeout and active call-scoped cancellation at DNS, connect, request send, response head, fixed-length body, chunked body, and close-delimited body boundaries, plus pool-admission timeout |
 | Task lanes | the same successful, streaming, and boundary exchange sequences from native and explicitly lightweight callers |
+| Long-running reuse | 10,000 HTTP/1.1 composable exchanges followed by 10,000 synchronous exchanges, 10,000 HTTP/2 synchronous exchanges in each task lane, and two concurrent 8,000-exchange HTTP/3 clients followed by direct QUIC work; synchronous loops reuse response and complete-body destinations, and stale retries unwind before the next attempt |
 | HTTPS | OpenSSL certificate and hostname verification, retained provider state after the original provider finalizes, native/lightweight reuse, mismatch rejection, handshake timeout and cancellation, orderly and truncating closure during every response body mode, and descriptor restoration |
 | Lifetime | the compiler rejects a response that would escape the aliased client and an adapter that would escape its borrowed payload; runtime shutdown closes and drains active exchanges |
 

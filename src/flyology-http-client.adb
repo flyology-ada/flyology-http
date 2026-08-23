@@ -335,9 +335,6 @@ package body Flyology.HTTP.Client is
       HTTP_3_Stream  : QUIC.Stream_ID := 0;
       HTTP_3_Handle  : H3_Connections.Stream_Handle :=
         H3_Connections.No_Stream;
-      HTTP_3_Pending : Flyology.Bytes.Unbounded_Bytes;
-      HTTP_3_Pending_Offset : Natural := 0;
-      HTTP_3_Stream_Ended : Boolean := False;
       HTTP_3_Decoded_Length : QUIC.Stream_Offset := 0;
       HTTP_3_Last_Stream_Credit : QUIC.Stream_Offset := 0;
       Status_Value   : Status_Code := 200;
@@ -484,6 +481,7 @@ package body Flyology.HTTP.Client is
       Deadline           : Monotonic_Deadline := No_Deadline;
       Target             : Exchange_Target := Sink_Target;
       Driver_State       : Exchange_Driver_State := Exchange_Idle;
+      Drain_Active       : Boolean := False;
       Active_Child       : Exchange_Child_Kind := No_Exchange_Child;
       Start_Rejected     : Boolean := False;
       Pending_Result     : Exchange_Result_Kind := Response_Complete;
@@ -524,6 +522,7 @@ package body Flyology.HTTP.Client is
       HTTP_2_Source_Wait : Source_Wait_Kind := Source_Needs_Read;
       HTTP_2_Cancelling : Boolean := False;
       HTTP_2_Settling   : Boolean := False;
+      HTTP_2_Flush_Pending : Boolean := False;
       HTTP_2_Retryable_Refusal : Boolean := False;
       Metadata           : Response_Data;
       Request_Head       : Unbounded_String;
@@ -545,7 +544,6 @@ package body Flyology.HTTP.Client is
       HTTP_3_Output_Last : Natural := 0;
       HTTP_3_Output_Item : Stream_Element_Array_Access := null;
       HTTP_3_Input_Item  : Stream_Element_Array_Access := null;
-      HTTP_3_Event       : H3.Event;
       HTTP_3_Stage       : HTTP_3_Exchange_Stage := HTTP_3_Handshake;
       HTTP_3_After_Send  : HTTP_3_Exchange_Stage := HTTP_3_Handshake;
       HTTP_3_After_Flight : HTTP_3_Exchange_Stage := HTTP_3_Handshake;
@@ -921,7 +919,6 @@ package body Flyology.HTTP.Client is
          Flyology.HTTP.Headers.Clear (State.Metadata.Trailers);
          State.Metadata.Reason_Value := Null_Unbounded_String;
          State.Metadata.Pending := Null_Unbounded_String;
-         Flyology.Bytes.Clear (State.Metadata.HTTP_3_Pending);
          State.Metadata := (others => <>);
       end if;
       State.Buffer := (others => 0);
@@ -938,6 +935,7 @@ package body Flyology.HTTP.Client is
    begin
       Item.State.Result.Result_Kind := Kind;
       Item.State.Driver_State := Exchange_Done;
+      Item.State.Drain_Active := False;
       Release_Exchange_Borrows (Item.State.all);
       Flyology.Operations.Drivers.Complete (Item, Outcome);
    end Complete_Exchange;
@@ -1077,7 +1075,7 @@ package body Flyology.HTTP.Client is
           (Item.State.Metadata.Connection.HTTP_2.all)
       then
          Item.State.Pending_Result := Kind;
-         Item.State.Result.Last_Phase := Draining;
+         Item.State.Drain_Active := True;
          Item.State.HTTP_2_Cancelling := True;
          --  A cancellation can arrive while the owner pump's connection
          --  capability is armed. Disarm and relinquish that claim before the
@@ -1111,7 +1109,7 @@ package body Flyology.HTTP.Client is
           (Item.State.Metadata.Connection.HTTP_3_Streams)
       then
          Item.State.Pending_Result := Kind;
-         Item.State.Result.Last_Phase := Draining;
+         Item.State.Drain_Active := True;
          Item.State.HTTP_3_Cancelling := True;
          Item.State.HTTP_3_Stage := HTTP_3_Cancel_Request;
          H3_Connections.Signal_Outbound
@@ -1261,6 +1259,7 @@ package body Flyology.HTTP.Client is
       Operation.State.Deadline := Deadline;
       Operation.State.Target := Target;
       Operation.State.Driver_State := Exchange_Idle;
+      Operation.State.Drain_Active := False;
       Operation.State.Active_Child := No_Exchange_Child;
       Operation.State.Start_Rejected := False;
       Operation.State.Pending_Result := Response_Complete;
@@ -1306,6 +1305,7 @@ package body Flyology.HTTP.Client is
       Operation.State.HTTP_2_Source_Wait := Source_Needs_Read;
       Operation.State.HTTP_2_Cancelling := False;
       Operation.State.HTTP_2_Settling := False;
+      Operation.State.HTTP_2_Flush_Pending := False;
       Operation.State.HTTP_2_Retryable_Refusal := False;
       Operation.State.HTTP_3_Stage := HTTP_3_Handshake;
       Operation.State.HTTP_3_Flight.Count := 0;
@@ -1623,6 +1623,8 @@ package body Flyology.HTTP.Client is
         (Operation : Exchange_Operation) return Exchange_Phase is
         (if Operation.State = null
          then Not_Started
+         elsif Operation.State.Drain_Active
+         then Draining
          else Operation.State.Result.Last_Phase);
 
       procedure Finish
@@ -1736,7 +1738,7 @@ package body Flyology.HTTP.Client is
            and then Active_Child_Is_Terminal
          then
             Item.State.Pending_Result := Cancelled;
-            Item.State.Result.Last_Phase := Draining;
+            Item.State.Drain_Active := True;
             Item.State.Driver_State := Cancelling_Child;
             Drive_Exchange_Engine (Item, Event);
          else
@@ -1756,7 +1758,7 @@ package body Flyology.HTTP.Client is
          end if;
          if Item.State.Active_Child /= No_Exchange_Child then
             Item.State.Pending_Result := Timed_Out;
-            Item.State.Result.Last_Phase := Draining;
+            Item.State.Drain_Active := True;
             Item.State.Driver_State := Cancelling_Child;
             if Event = Flyology.Operations.Dependency_Changed
               and then Active_Child_Is_Terminal
@@ -1789,7 +1791,7 @@ package body Flyology.HTTP.Client is
    begin
       if Item.State /= null and then Flyology.Operations.Is_Active (Item) then
          Item.State.Pending_Result := Cancelled;
-         Item.State.Result.Last_Phase := Draining;
+         Item.State.Drain_Active := True;
          if Item.State.Active_Child = Connect_Exchange_Child then
             Item.State.Driver_State := Cancelling_Child;
             Flyology.Operations.Cancel (Item.State.Connect_Child);
@@ -3172,6 +3174,7 @@ package body Flyology.HTTP.Client is
          Sockets.Prepare (State.Socket);
          Sockets.Connect_Socket (State.Socket, Server);
          State.Connection := new Pooled_Connection;
+         State.Connection.HTTP_3_Event := new H3.Event;
          Sockets.Move (State.Socket, State.Connection.UDP);
          State.Connection.Protocol := HTTP_3_Transport;
          State.Connection.HTTP_3_Epoch := Ada.Real_Time.Clock;
@@ -3819,7 +3822,7 @@ package body Flyology.HTTP.Client is
                --  direction. Commit RST_STREAM to the shared transport before
                --  releasing the source or publishing terminal completion.
                State.HTTP_2_Finished := False;
-               State.Result.Last_Phase := Draining;
+               State.Drain_Active := True;
                State.HTTP_2_Cancelling := True;
                H2_Connections.Cancel_Stream
                  (State.Metadata.Connection.HTTP_2.all,
@@ -3833,7 +3836,7 @@ package body Flyology.HTTP.Client is
                --  STOP_SENDING and RESET_STREAM must reach QUIC before the
                --  source borrow is released or completion becomes visible.
                State.HTTP_3_Finished := False;
-               State.Result.Last_Phase := Draining;
+               State.Drain_Active := True;
                State.HTTP_3_Cancelling := True;
                State.HTTP_3_Stage := HTTP_3_Cancel_Request;
                H3_Connections.Signal_Outbound
@@ -4027,7 +4030,11 @@ package body Flyology.HTTP.Client is
         (Status   : Status_Code;
          Fields   : Flyology.HTTP.Headers.List;
          Finished : Boolean;
-         Early    : Boolean) is
+         Early    : Boolean)
+      is
+         Body_Forbidden : constant Boolean :=
+           Image (State.Request_Item.Method_Value) = "HEAD"
+             or else Status in 204 | 205 | 304;
       begin
          State.Result.Admission := Response_Observed;
          State.Metadata.Saw_Response_Bytes := True;
@@ -4043,6 +4050,7 @@ package body Flyology.HTTP.Client is
             return;
          end if;
          if State.Target = Buffer_Target
+           and then not Body_Forbidden
            and then Flyology.HTTP.Headers.Count
              (Fields, "content-length") = 1
          then
@@ -4398,6 +4406,7 @@ package body Flyology.HTTP.Client is
          end if;
          case Step.Result is
             when H2_Connections.Pump_Progress =>
+               State.HTTP_2_Flush_Pending := Step.Outbound_Pending;
                Release_HTTP_2_Pump;
                State.Driver_State :=
                  (if Step.Outbound_Pending
@@ -4648,11 +4657,11 @@ package body Flyology.HTTP.Client is
             H3.Poll
               (State.Connection.HTTP_3,
                State.Connection.QUIC_Transport,
-               State.HTTP_3_Event, Status);
+               State.Connection.HTTP_3_Event.all, Status);
             if Status = H3.Succeeded then
                H3_Connections.Publish
                  (State.Connection.HTTP_3_Streams,
-                  State.HTTP_3_Event, Accepted);
+                  State.Connection.HTTP_3_Event.all, Accepted);
                if H3_Connections.Has_Response_Observation
                  (State.Connection.HTTP_3_Streams,
                   State.Metadata.HTTP_3_Handle)
@@ -4987,27 +4996,24 @@ package body Flyology.HTTP.Client is
                end if;
 
             when HTTP_3_Send_Trailers =>
-               declare
-                  Trailers : H3.Header_Block;
-               begin
-                  for Index in 1 .. Flyology.HTTP.Headers.Count
-                    (State.Request_Item.Trailer_Fields)
-                  loop
-                     H3.Append
-                       (Trailers,
-                        H3.Make_Field
-                          (Ada.Characters.Handling.To_Lower
-                             (Flyology.HTTP.Headers.Name
-                                (State.Request_Item.Trailer_Fields, Index)),
-                           Flyology.HTTP.Headers.Value
-                             (State.Request_Item.Trailer_Fields, Index)));
-                  end loop;
-                  H3.Send_Headers
-                    (State.Connection.HTTP_3,
-                     State.Connection.QUIC_Transport,
-                     State.Metadata.HTTP_3_Stream, Trailers,
-                     True, HTTP_3_Now, Packet, Status);
-               end;
+               H3.Clear (State.HTTP_3_Headers);
+               for Index in 1 .. Flyology.HTTP.Headers.Count
+                 (State.Request_Item.Trailer_Fields)
+               loop
+                  H3.Append
+                    (State.HTTP_3_Headers,
+                     H3.Make_Field
+                       (Ada.Characters.Handling.To_Lower
+                          (Flyology.HTTP.Headers.Name
+                             (State.Request_Item.Trailer_Fields, Index)),
+                        Flyology.HTTP.Headers.Value
+                          (State.Request_Item.Trailer_Fields, Index)));
+               end loop;
+               H3.Send_Headers
+                 (State.Connection.HTTP_3,
+                  State.Connection.QUIC_Transport,
+                  State.Metadata.HTTP_3_Stream, State.HTTP_3_Headers,
+                  True, HTTP_3_Now, Packet, Status);
                if Status = H3.Succeeded then
                   Queue_HTTP_3_Packet
                     (Packet, HTTP_3_Wait_Response_Head);
@@ -5480,7 +5486,10 @@ package body Flyology.HTTP.Client is
             --  body, or failure while we waited. Re-poll the stream first;
             --  claiming and arming the transport immediately would ignore an
             --  already-published response and could sleep until deadline.
-            if State.HTTP_2_Cancelling or else State.HTTP_2_Settling then
+            if State.HTTP_2_Cancelling
+              or else State.HTTP_2_Settling
+              or else State.HTTP_2_Flush_Pending
+            then
                Need_HTTP_2_Pump;
             else
                State.Driver_State := HTTP_2_Protocol_Step;
@@ -6141,15 +6150,22 @@ package body Flyology.HTTP.Client is
       end loop;
    end Drain;
 
-   function Take (Item : in out Response) return Response is
+   procedure Move_Response
+     (Source      : in out Response;
+      Destination : in out Response)
+   is
    begin
-      return Result : Response do
-         Result.Data := Item.Data;
-         Item.Data := null;
-      end return;
-   end Take;
+      if Destination.Data /= null then
+         raise Program_Error with
+           "response move destination is not vacant";
+      elsif Source.Data = null then
+         raise Program_Error with "response move source is vacant";
+      end if;
+      Destination.Data := Source.Data;
+      Source.Data := null;
+   end Move_Response;
 
-   function Execute_Operation_Once
+   procedure Execute_Operation_Once
      (Item    : aliased in out Client;
       Value   : Request;
       Source  : access Request_Body_Source'Class;
@@ -6157,7 +6173,9 @@ package body Flyology.HTTP.Client is
       Started : Ada.Real_Time.Time;
       Timeout : Duration;
       Token   : access Flyology.Cancellation.Token;
-      Retried : not null access Boolean) return Response
+      Retried : not null access Boolean;
+      Output  : in out Response;
+      Retry   : out Boolean)
    is
       --  One root exchange, its DNS resolver child, and the resolver's one
       --  retained socket child. Other connection and protocol stages retain
@@ -6194,6 +6212,7 @@ package body Flyology.HTTP.Client is
            or else
          Flyology.HTTP.Headers.Count (Value.Fields, "if-range") > 0);
    begin
+      Retry := False;
       if Item.Control.State = null
         or else not Item.Control.State.Is_Configured
       then
@@ -6229,7 +6248,8 @@ package body Flyology.HTTP.Client is
       Failure_Cause := Operation.State.Failure_Cause;
       Scoped.Finish (Operation, Result, Reply);
       if Result.Result_Kind = Response_Complete then
-         return Take (Reply);
+         Move_Response (Reply, Output);
+         return;
       elsif not Retried.all
         and then Operation.State.HTTP_2_Retryable_Refusal
         and then Is_Idempotent (Value.Method_Value)
@@ -6246,8 +6266,8 @@ package body Flyology.HTTP.Client is
             Rewind (Rewindable_Request_Body_Source'Class (Source.all));
          end if;
          Retried.all := True;
-         return Execute_Operation_Once
-           (Item, Value, Source, Length, Started, Timeout, Token, Retried);
+         Retry := True;
+         return;
       elsif not Retried.all
         and then Operation.State.Was_Reused
         and then Result.Admission in Not_Admitted | Possibly_Admitted
@@ -6267,8 +6287,8 @@ package body Flyology.HTTP.Client is
             Rewind (Rewindable_Request_Body_Source'Class (Source.all));
          end if;
          Retried.all := True;
-         return Execute_Operation_Once
-           (Item, Value, Source, Length, Started, Timeout, Token, Retried);
+         Retry := True;
+         return;
       else
          if Failure_Cause /= Ada.Exceptions.Null_Id
            and then
@@ -6316,13 +6336,14 @@ package body Flyology.HTTP.Client is
       end if;
    end Execute_Operation_Once;
 
-   function Execute_Redirects
+   procedure Execute_Redirects
      (Item    : aliased in out Client;
       Value   : Request;
       Source  : access Request_Body_Source'Class;
       Length  : Body_Length;
       Timeout : Duration;
-      Token   : access Flyology.Cancellation.Token) return Response
+      Token   : access Flyology.Cancellation.Token;
+      Output  : in out Response)
    is
       Started : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
       Current : Request := Value;
@@ -6336,97 +6357,111 @@ package body Flyology.HTTP.Client is
       Seen (0) := Current.Target_Value;
       loop
          declare
-            Reply : Response := Execute_Operation_Once
-              (Item, Current, Current_Source, Current_Length, Started,
-               Timeout, Token, Retried'Access);
-            Locations : constant Natural := Header_Count (Reply, "Location");
-            Action : constant Redirect_Action := Classify_Redirect
-              (Current.Redirects.Mode = Follow_Same_Origin,
-               Locations > 0, Status (Reply),
-               Image (Current.Method_Value) = "POST",
-               Image (Current.Method_Value) = "HEAD");
-            Retry_Expectation : Boolean := False;
+            Reply : Response;
+            Retry : Boolean;
          begin
-            if Status (Reply) = 417
-              and then Current.Expect_Continue
-              and then not Retried
-            then
-               --  A complete 417 conclusively rejects the expectation before
-               --  this adapter has consumed Source. Retry once without the
-               --  Expect field, inside the original absolute budget.
-               Drain (Reply, Max_Redirect_Drain_Bytes, Token);
-               Current.Expect_Continue := False;
-               Retried := True;
-               Retry_Expectation := True;
-            elsif Action = Return_Redirect_Response then
-               return Take (Reply);
-            elsif Locations /= 1 then
-               raise Redirect_Error with
-                 "redirect response has multiple Location fields";
-            elsif Hops = Current.Redirects.Maximum_Hops then
-               raise Redirect_Error with "redirect hop limit exceeded";
-            end if;
-
-            if not Retry_Expectation then
-               declare
-                  Next_Target : Unbounded_String;
-                  Within_Origin : Boolean;
-               begin
-                  Resolve_Redirect
-                    (Item.Control.State.Origin_Value,
-                     To_String (Current.Target_Value),
-                     Header (Reply, "Location"),
-                     Next_Target, Within_Origin);
-                  if not Within_Origin then
-                     return Take (Reply);
-                  end if;
-                  for Index in Redirect_Limit range 0 .. Seen_Last loop
-                     if Seen (Index) = Next_Target then
-                        raise Redirect_Error with "redirect cycle detected";
-                     end if;
-                  end loop;
-
-                  if Action = Follow_Preserving_Method
-                    and then Current_Source /= null
-                    and then Current_Source.all not in
-                      Rewindable_Request_Body_Source'Class
-                  then
-                     raise Redirect_Error with
-                       "redirect requires a rewindable request body source";
-                  end if;
-
+            loop
+               Execute_Operation_Once
+                 (Item, Current, Current_Source, Current_Length, Started,
+                  Timeout, Token, Retried'Access, Reply, Retry);
+               exit when not Retry;
+            end loop;
+            declare
+               Locations : constant Natural :=
+                 Header_Count (Reply, "Location");
+               Action : constant Redirect_Action := Classify_Redirect
+                 (Current.Redirects.Mode = Follow_Same_Origin,
+                  Locations > 0, Status (Reply),
+                  Image (Current.Method_Value) = "POST",
+                  Image (Current.Method_Value) = "HEAD");
+               Retry_Expectation : Boolean := False;
+            begin
+               if Status (Reply) = 417
+                 and then Current.Expect_Continue
+                 and then not Retried
+               then
+                  --  A complete 417 conclusively rejects the expectation
+                  --  before this adapter has consumed Source. Retry once
+                  --  without the Expect field, inside the original absolute
+                  --  budget.
                   Drain (Reply, Max_Redirect_Drain_Bytes, Token);
-                  if Action = Follow_As_Get
-                    or else Action = Follow_As_Head
-                  then
-                     Rewrite_Without_Content
-                       (Current, As_Head => Action = Follow_As_Head);
-                     Current_Source := null;
-                     Current_Length := Unknown_Length;
-                  elsif Current_Source /= null then
-                     if Token /= null and then Token.Requested then
-                        raise Flyology.Cancellation.Operation_Cancelled;
-                     elsif Timeout >= 0.0
-                       and then Remaining (Started, Timeout) <= 0.0
-                     then
-                        raise Flyology.IO.Timeout_Error;
-                     end if;
-                     Rewind
-                       (Rewindable_Request_Body_Source'Class
-                          (Current_Source.all));
-                  end if;
+                  Current.Expect_Continue := False;
+                  Retried := True;
+                  Retry_Expectation := True;
+               elsif Action = Return_Redirect_Response then
+                  Move_Response (Reply, Output);
+                  return;
+               elsif Locations /= 1 then
+                  raise Redirect_Error with
+                    "redirect response has multiple Location fields";
+               elsif Hops = Current.Redirects.Maximum_Hops then
+                  raise Redirect_Error with "redirect hop limit exceeded";
+               end if;
+
+               if not Retry_Expectation then
+                  declare
+                     Next_Target : Unbounded_String;
+                     Within_Origin : Boolean;
                   begin
-                     Set_Target (Current, To_String (Next_Target));
-                  exception
-                     when Constraint_Error =>
-                        raise Redirect_Error with "invalid redirect target";
+                     Resolve_Redirect
+                       (Item.Control.State.Origin_Value,
+                        To_String (Current.Target_Value),
+                        Header (Reply, "Location"),
+                        Next_Target, Within_Origin);
+                     if not Within_Origin then
+                        Move_Response (Reply, Output);
+                        return;
+                     end if;
+                     for Index in Redirect_Limit range 0 .. Seen_Last loop
+                        if Seen (Index) = Next_Target then
+                           raise Redirect_Error with
+                             "redirect cycle detected";
+                        end if;
+                     end loop;
+
+                     if Action = Follow_Preserving_Method
+                       and then Current_Source /= null
+                       and then Current_Source.all not in
+                         Rewindable_Request_Body_Source'Class
+                     then
+                        raise Redirect_Error with
+                          "redirect requires a rewindable request body source";
+                     end if;
+
+                     Drain (Reply, Max_Redirect_Drain_Bytes, Token);
+                     if Action = Follow_As_Get
+                       or else Action = Follow_As_Head
+                     then
+                        Rewrite_Without_Content
+                          (Current, As_Head => Action = Follow_As_Head);
+                        Current_Source := null;
+                        Current_Length := Unknown_Length;
+                     elsif Current_Source /= null then
+                        if Token /= null and then Token.Requested then
+                           raise Flyology.Cancellation.Operation_Cancelled;
+                        elsif Timeout >= 0.0
+                          and then Remaining (Started, Timeout) <= 0.0
+                        then
+                           raise Flyology.IO.Timeout_Error;
+                        end if;
+                        Rewind
+                          (Rewindable_Request_Body_Source'Class
+                             (Current_Source.all));
+                     end if;
+                     begin
+                        Set_Target (Current, To_String (Next_Target));
+                     exception
+                        when Constraint_Error =>
+                           raise Redirect_Error with
+                             "invalid redirect target";
+                     end;
+                     Hops := Hops + 1;
+                     Seen_Last := Seen_Last + 1;
+                     Seen (Seen_Last) := Next_Target;
+                     Retried := False;
                   end;
-                  Hops := Hops + 1;
-                  Seen_Last := Seen_Last + 1;
-                  Seen (Seen_Last) := Next_Target;
-                  Retried := False;
-               end;
-            end if;
+               end if;
+            end;
          end;
       end loop;
    end Execute_Redirects;
@@ -6436,9 +6471,26 @@ package body Flyology.HTTP.Client is
       Value   : Request;
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null) return Response is
-     (Execute_Redirects
+   begin
+      return Result : Response do
+         Execute_Redirects
+           (Item, Value, Source => null, Length => Unknown_Length,
+            Timeout => Timeout, Token => Token, Output => Result);
+      end return;
+   end Execute;
+
+   procedure Execute
+     (Item    : aliased in out Client;
+      Value   : Request;
+      Result  : in out Response;
+      Timeout : Duration := 30.0;
+      Token   : access Flyology.Cancellation.Token := null) is
+   begin
+      Finalize (Result);
+      Execute_Redirects
         (Item, Value, Source => null, Length => Unknown_Length,
-         Timeout => Timeout, Token => Token));
+         Timeout => Timeout, Token => Token, Output => Result);
+   end Execute;
 
    function Execute
      (Item    : aliased in out Client;
@@ -6446,10 +6498,29 @@ package body Flyology.HTTP.Client is
       Source  : in out Request_Body_Source'Class;
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null) return Response is
-     (Execute_Redirects
+   begin
+      return Result : Response do
+         Execute_Redirects
+           (Item, Value, Source => Source'Access,
+            Length => Declared_Length (Source),
+            Timeout => Timeout, Token => Token, Output => Result);
+      end return;
+   end Execute;
+
+   procedure Execute
+     (Item    : aliased in out Client;
+      Value   : Request;
+      Source  : in out Request_Body_Source'Class;
+      Result  : in out Response;
+      Timeout : Duration := 30.0;
+      Token   : access Flyology.Cancellation.Token := null) is
+   begin
+      Finalize (Result);
+      Execute_Redirects
         (Item, Value, Source => Source'Access,
          Length => Declared_Length (Source),
-         Timeout => Timeout, Token => Token));
+         Timeout => Timeout, Token => Token, Output => Result);
+   end Execute;
 
    procedure Require_Response (Item : Response) is
    begin
@@ -6842,18 +6913,18 @@ package body Flyology.HTTP.Client is
       return Item.Data.Complete;
    end Body_Complete;
 
-   function Read_All
-     (Item : in out Response;
+   procedure Read_All
+     (Item    : in out Response;
+      Result  : in out Flyology.Bytes.Unbounded_Bytes;
       Maximum : Natural := 1_024 * 1_024;
-      Token : access Flyology.Cancellation.Token := null)
-      return Flyology.Bytes.Unbounded_Bytes
+      Token   : access Flyology.Cancellation.Token := null)
    is
-      Result   : Flyology.Bytes.Unbounded_Bytes;
       Buffer   : Ada.Streams.Stream_Element_Array
         (1 .. Ada.Streams.Stream_Element_Offset (Receive_Buffer_Size));
       Last     : Ada.Streams.Stream_Element_Offset;
       Finished : Boolean;
    begin
+      Flyology.Bytes.Clear (Result);
       loop
          Read_Body (Item, Buffer, Last, Finished, Token);
          if Last >= Buffer'First then
@@ -6876,6 +6947,21 @@ package body Flyology.HTTP.Client is
          end if;
          exit when Finished;
       end loop;
+   exception
+      when others =>
+         Flyology.Bytes.Clear (Result);
+         raise;
+   end Read_All;
+
+   function Read_All
+     (Item    : in out Response;
+      Maximum : Natural := 1_024 * 1_024;
+      Token   : access Flyology.Cancellation.Token := null)
+      return Flyology.Bytes.Unbounded_Bytes
+   is
+      Result : Flyology.Bytes.Unbounded_Bytes;
+   begin
+      Read_All (Item, Result, Maximum, Token);
       return Result;
    end Read_All;
 
