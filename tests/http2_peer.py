@@ -135,6 +135,14 @@ def serve_connection(
     while True:
         try:
             data = channel.recv(65_535)
+        except TimeoutError:
+            if state.scenario == "soak":
+                state.record(
+                    "receive-timeout",
+                    requests=state.request_count,
+                    active_streams=sorted(state.request_headers),
+                )
+            raise
         except (ConnectionResetError, ssl.SSLError):
             return state.scenario == "soak"
         if not data:
@@ -187,6 +195,7 @@ def serve_connection(
             elif isinstance(event, StreamEnded):
                 stream_id = event.stream_id
                 if state.scenario == "soak":
+                    state.record("request-end", stream=stream_id)
                     headers = state.request_headers.pop(stream_id)
                     request_body = bytes(state.request_bodies.pop(stream_id))
                     path = headers[":path"]
