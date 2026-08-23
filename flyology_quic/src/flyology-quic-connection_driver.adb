@@ -1164,6 +1164,18 @@ package body Flyology.QUIC.Connection_Driver is
                   Output => Output, Result => Result);
                return;
             end if;
+            if Message_Length (Item.Handshake, Length) > 0 then
+               --  RFC 9001 4.1.2 forbids TLS KeyUpdate in QUIC.  The peer can
+               --  place it immediately after Finished in the same CRYPTO
+               --  stream range, so reject an already-complete trailing
+               --  message before publishing the connected state.  A message
+               --  completed by a later packet is rejected by the Connected
+               --  branch below.
+               Fail_Handshake_With_Close
+                 (Item, Error_Code => 16#10A#, Frame_Type => 16#06#,
+                  Output => Output, Result => Result);
+               return;
+            end if;
             Initialize_Application (Item);
             Application_Space.Build_Handshake_Done_Packet
               (Item.Application, Now, Packet_Out, Built);
