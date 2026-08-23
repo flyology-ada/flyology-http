@@ -145,9 +145,22 @@ is
          Relative := Relative + 1;
       end loop;
 
+      --  The capacity guard above bounds the candidate ending, while the
+      --  state invariant bounds the retained high-water mark. State the two
+      --  branches explicitly so the invariant proof does not have to recover
+      --  this maximum through the preceding byte-array loops.
       if Ending > Item.Highest then
+         pragma Assert (Ending > Item.Base);
+         pragma Assert
+           (Ending - Item.Base <= Absolute_Offset (Max_Stream_Data));
          Item.Highest := Ending;
+      else
+         pragma Assert
+           (Item.Highest - Item.Base <=
+              Absolute_Offset (Max_Stream_Data));
       end if;
+      pragma Assert
+        (Item.Highest - Item.Base <= Absolute_Offset (Max_Stream_Data));
       while Item.Contiguous < Item.Highest
         and then Item.Present
           (Stream_Index

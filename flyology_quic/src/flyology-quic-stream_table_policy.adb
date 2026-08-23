@@ -225,6 +225,16 @@ is
          Item.Slots (Index).Occupied := True;
          Item.Slots (Index).ID := Stream_ID;
          Item.Count := Item.Count + 1;
+         --  The newly occupied slot is a concrete witness for Find.
+         pragma Assert (Item.Slots (Index).Occupied);
+         pragma Assert (Item.Slots (Index).ID = Stream_ID);
+         pragma Assert (Find (Item, Stream_ID) /= 0);
+      elsif not Created then
+         --  Reassembly only mutates the selected slot's Data component, so
+         --  the slot returned by the initial Find remains the witness.
+         pragma Assert (Item.Slots (Index).Occupied);
+         pragma Assert (Item.Slots (Index).ID = Stream_ID);
+         pragma Assert (Find (Item, Stream_ID) /= 0);
       end if;
    end Insert;
 

@@ -1219,21 +1219,6 @@ package body Flyology.QUIC.Application_Space is
          when Receive_Flow_Control_Policy.Stream_Final_Size_Mismatch =>
            Stream_Final_Size_Error);
 
-   procedure Process_Stream_Frames_Transactionally
-     (Item      : in out Stream_Table_Policy.Stream_Table;
-      Plaintext : Ada.Streams.Stream_Element_Array;
-      Result    : out Stream_Table_Policy.Process_Result)
-   is
-      Candidate : Stream_Table_Policy.Stream_Table := Item;
-   begin
-      Stream_Table_Policy.Process_Plaintext
-        (Candidate, Plaintext, Result);
-      if Result.Status /= Stream_Table_Policy.Processed then
-         return;
-      end if;
-      Item := Candidate;
-   end Process_Stream_Frames_Transactionally;
-
    procedure Process_Packet
      (Item                : in out State;
       Packet              : Ada.Streams.Stream_Element_Array;
@@ -1555,18 +1540,14 @@ package body Flyology.QUIC.Application_Space is
          Cursor := Cursor + Frame.Consumed;
       end loop;
 
-      if Active_Stream_Frame_Count = 1 then
-         --  Insert and reset operations validate before mutation, so one
-         --  active stream frame can commit directly after every other frame
-         --  in the packet has passed validation.
+      if Active_Stream_Frame_Count > 0 then
+         --  Every frame has passed parsing, stream-admission, flow-control,
+         --  and control-frame validation before reassembly starts.  A later
+         --  reassembly conflict is connection-fatal, so partially applied
+         --  stream state cannot be observed by another packet or exchange.
+         --  Keeping the table in place avoids a Max_Streams-sized rollback
+         --  copy on the owner task stack.
          Stream_Table_Policy.Process_Plaintext
-           (Candidate_Streams,
-            Stream_Plaintext (1 .. Stream_Plaintext_Length), Streams);
-      elsif Active_Stream_Frame_Count > 0 then
-         --  Preserve packet-level atomicity when more than one stream can be
-         --  changed. This slow path is bounded but deliberately pays for a
-         --  full table copy.
-         Process_Stream_Frames_Transactionally
            (Candidate_Streams,
             Stream_Plaintext (1 .. Stream_Plaintext_Length), Streams);
       else

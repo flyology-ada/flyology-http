@@ -284,6 +284,60 @@ begin
       pragma Assert (Client_Result.Status = Succeeded);
    end;
 
+   --  A packet may apply an earlier stream frame before a later overlapping
+   --  frame proves that the packet is invalid.  The driver must make that
+   --  reassembly failure connection-fatal, publish a transport close, and
+   --  reject every later packet so the partial stream table is never reused
+   --  by another exchange.
+   declare
+      First_Stream, Reuse_Stream : Varint_Policy.Value_Type;
+      Opened       : Application_Space.Open_Status;
+      Sent         : Application_Space.Send_Status;
+      ACK_Included : Boolean;
+      Poison, Reuse_Probe : Datagram;
+      Fragments : constant Application_Space.Stream_Fragment_Array :=
+        (1 => (ID => 4, Offset => 0, Length => 1, Fin => True),
+         2 => (ID => 0, Offset => 0, Length => 1, Fin => False));
+   begin
+      Open_Stream
+        (Client, Stream_ID_Policy.Bidirectional, First_Stream, Opened);
+      pragma Assert
+        (Opened = Stream_ID_Policy.Opened and then First_Stream = 4);
+      Build_Stream_Batch_Datagram_With_ACK
+        (Client, Fragments, (16#78#, 16#58#), Now => 210,
+         Packet => Poison, Status => Sent, ACK_Included => ACK_Included);
+      pragma Assert (Sent = Application_Space.Sent);
+      Process_Datagram
+        (Server,
+         Poison.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Poison.Length)),
+         Server_Output, Server_Result, Now => 211);
+      pragma Assert
+        (Server_Result.Status = Succeeded
+         and then State (Server) = Failed
+         and then not Is_Connected (Server)
+         and then Server_Output.Count = 1);
+
+      Open_Stream
+        (Client, Stream_ID_Policy.Bidirectional, Reuse_Stream, Opened);
+      pragma Assert
+        (Opened = Stream_ID_Policy.Opened and then Reuse_Stream = 8);
+      Build_Stream_Datagram
+        (Client, Reuse_Stream, 0, Fin => True,
+         Data => (16#6E#, 16#6F#), Now => 212,
+         Packet => Reuse_Probe, Status => Sent);
+      pragma Assert (Sent = Application_Space.Sent);
+      Process_Datagram
+        (Server,
+         Reuse_Probe.Data
+           (1 .. Ada.Streams.Stream_Element_Offset (Reuse_Probe.Length)),
+         Server_Output, Server_Result, Now => 213);
+      pragma Assert
+        (Server_Result.Status = Unsupported_Packet
+         and then State (Server) = Failed
+         and then Server_Output.Count = 0);
+   end;
+
    declare
       Sending, Receiving : TLS_Key_Schedule.QUIC_Traffic_Keys;
       Close_Sender : Application_Connection.Connection;
