@@ -52,6 +52,13 @@ is
      Global => null,
      Pre => Has_Stream (Item, Stream_ID);
 
+   function Consumed_Offset
+     (Item      : Stream_Table;
+      Stream_ID : Varint_Policy.Value_Type) return Varint_Policy.Value_Type
+   with
+     Global => null,
+     Pre => Has_Stream (Item, Stream_ID);
+
    function Has_Final_Size
      (Item      : Stream_Table;
       Stream_ID : Varint_Policy.Value_Type) return Boolean

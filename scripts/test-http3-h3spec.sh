@@ -78,6 +78,7 @@ prepare_qualification_rts
 
 server_log="$http_root/build/oracle/ada-h3-h3spec.log"
 report="$http_root/build/oracle/h3spec-report.log"
+keyupdate_report="$http_root/build/oracle/h3spec-keyupdate-report.log"
 server_pid=
 cleanup () {
   if [ -n "$server_pid" ]; then
@@ -118,5 +119,29 @@ if grep -q '\[✘\]' "$report"; then
 fi
 if [ "$status" -ne 0 ]; then
   printf '%s\n' "h3spec $version reported failures; see $report" >&2
+  exit "$status"
 fi
-exit "$status"
+
+# Exercise the same-flight Finished + forbidden KeyUpdate boundary repeatedly.
+# A server must reject the already-reassembled trailing TLS message without
+# depending on another Handshake packet to drive the connection state machine.
+repetition=1
+while [ "$repetition" -le 10 ]; do
+  set +e
+  "$h3spec" 127.0.0.1 "$port" -n -t 5000 \
+    -m 'MUST send unexpected_message TLS alert if KeyUpdate in Handshake is received' \
+    >"$keyupdate_report" 2>&1
+  keyupdate_status=$?
+  set -e
+  if [ "$keyupdate_status" -ne 0 ] \
+    || grep -q '\[✘\]' "$keyupdate_report"
+  then
+    sed -n '1,160p' "$keyupdate_report"
+    printf '%s\n' \
+      "h3spec KeyUpdate repetition $repetition failed; see $keyupdate_report" \
+      >&2
+    exit 1
+  fi
+  repetition=$((repetition + 1))
+done
+printf '%s\n' 'h3spec repeated same-flight KeyUpdate boundary: 10/10 passed'

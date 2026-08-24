@@ -1,18 +1,18 @@
+with Ada.Real_Time;
 with Ada.Unchecked_Deallocation;
 with Flyology.HTTP.HTTP_2_Frames;
 with Flyology.HTTP.HTTP_2_HPACK;
 with Flyology.HTTP.HTTP_2_Payloads;
 with Flyology.HTTP.HTTP_2_Policy;
 with Flyology.HTTP.HTTP_2_Settings;
-with Flyology.IO.Connections.Drivers;
 with Flyology.Wake_Sources;
 with Interfaces;
 
 package body Flyology.HTTP.HTTP_2_Client_Connection is
    use Ada.Streams;
+   use type Ada.Real_Time.Time;
    use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_32;
-   use type Stream_Element_Offset;
    use type Flyology.IO.Descriptor;
    package Bytes renames Flyology.Bytes;
    package Drivers renames Flyology.IO.Connections.Drivers;
@@ -34,6 +34,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    Maximum_Buffered_Data : constant Positive := 65_535;
    Maximum_Control_Backlog : constant Positive := 32 * 1_024;
    Window_Update_Threshold : constant Positive := 8 * 1_024;
+   Protocol_Close_Grace : constant Duration := 1.0;
 
    type Request_Buffer_Access is access Bytes.Unbounded_Bytes;
    procedure Free_Request_Buffer is new Ada.Unchecked_Deallocation
@@ -51,7 +52,11 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    type Stream_Phase is (Free, Open, Complete, Failed);
    type Failure_Kind is
      (No_Failure, Connection_Failure, Refused_Failure,
-      Goaway_Unprocessed_Failure, Other_Stream_Failure);
+      Goaway_Unprocessed_Failure, Response_Protocol_Failure,
+      Other_Stream_Failure);
+   type Publish_Result is
+     (Publish_Accepted, Publish_Stream_Rejected,
+      Publish_Connection_Rejected);
 
    type Stream_Record is limited record
       Phase          : Stream_Phase := Free;
@@ -70,6 +75,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       Has_Expected_Length : Boolean := False;
       Expected_Length : Long_Long_Integer := 0;
       Received_Length : Long_Long_Integer := 0;
+      Response_Observed : Boolean := False;
       Failure        : Failure_Kind := No_Failure;
       Request_Head   : Bytes.Unbounded_Bytes;
       Head_Cursor    : Natural := 1;
@@ -89,6 +95,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       Pending_Receive_Credit : Natural := 0;
       Wake           : Flyology.Wake_Sources.Source;
       Wake_Signalled : Boolean := False;
+      Pump_Waiting   : Boolean := False;
    end record;
 
    type Stream_Array is
@@ -102,6 +109,12 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    type Closed_Stream_Array is
      array (Positive range 1 .. Maximum_Remembered_Closed_Streams)
        of Closed_Stream_Record;
+
+   type Window_Update_Result is
+     (Window_Accepted,
+      Window_Stream_Rejected,
+      Window_Connection_Protocol_Error,
+      Window_Connection_Flow_Control_Error);
 
    protected type Controller is
       procedure Open
@@ -127,23 +140,28 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Result : out Boolean);
       procedure Queue_Settings_Ack;
       procedure Queue_Ping_Ack (Payload : Stream_Element_Array);
+      procedure Queue_Goaway (Error : Frames.Error_Code);
       procedure Publish_Headers
         (Stream_ID  : Frames.Stream_Identifier;
          Fields     : Flyology.HTTP.Headers.List;
          Status     : Status_Code;
          Has_Status : Boolean;
          End_Stream : Boolean;
-         Accepted   : out Boolean);
+         Result     : out Publish_Result);
       procedure Publish_Data
         (Stream_ID  : Frames.Stream_Identifier;
          Payload    : Stream_Element_Array;
          Flow_Length : Natural;
          End_Stream : Boolean;
-         Accepted   : out Boolean);
+         Result     : out Publish_Result);
+      procedure Reject_Stream (Index : Positive);
+      procedure Observe_Stream (Stream_ID : Frames.Stream_Identifier);
+      function Has_Response_Observation
+        (Handle : Stream_Handle) return Boolean;
       procedure Window_Update
         (Stream_ID : Frames.Stream_Identifier;
          Increment : Natural;
-         Accepted  : out Boolean);
+         Result    : out Window_Update_Result);
       procedure Reset_Stream
         (Stream_ID : Frames.Stream_Identifier;
          Error     : Frames.Error_Code);
@@ -182,6 +200,15 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
         (Handle : Stream_Handle; Wake_Pump : out Boolean);
       procedure Release_Stream
         (Handle : Stream_Handle; Wake_Pump : out Boolean);
+      procedure Try_Claim_Pump
+        (Handle : Stream_Handle; Claimed : out Boolean);
+      function Owns_Pump (Handle : Stream_Handle) return Boolean;
+      procedure Handoff_Pump (Leaving_Index : Natural);
+      procedure Release_Pump (Handle : Stream_Handle);
+      procedure Pump_Wait_Source
+        (Handle    : Stream_Handle;
+         FD        : out Flyology.IO.Descriptor;
+         Ready_Now : out Boolean);
    private
       Streams          : Stream_Array;
       Next_Stream_ID   : Frames.Stream_Identifier := 1;
@@ -200,19 +227,47 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       Closed_Cursor    : Positive := Closed_Streams'First;
       Draining         : Boolean := False;
       Broken           : Boolean := False;
+      Pump_Owner       : Natural := 0;
+      Pump_Cursor      : Positive := Streams'First;
    end Controller;
 
-   protected type Completion is
-      procedure Finish;
-      entry Await_Finished;
-   private
-      Finished : Boolean := False;
-   end Completion;
+   subtype Pump_Output_Index is Stream_Element_Offset range
+     1 .. Stream_Element_Offset
+       (Frames.Default_Maximum_Frame_Size + Frames.Frame_Header_Size);
+   subtype Pump_Input_Index is Stream_Element_Offset range
+     1 .. Stream_Element_Offset
+       (2 * (Frames.Default_Maximum_Frame_Size + Frames.Frame_Header_Size));
+
+   type Owner_Pump_Driver is limited record
+      Output              : Stream_Element_Array (Pump_Output_Index) :=
+        (others => 0);
+      Output_Last         : Stream_Element_Offset :=
+        Pump_Output_Index'First - 1;
+      Output_Cursor       : Stream_Element_Offset :=
+        Pump_Output_Index'First;
+      Have_Output         : Boolean := False;
+      Input               : Stream_Element_Array (Pump_Input_Index) :=
+        (others => 0);
+      Input_Head          : Natural := 0;
+      Input_Count         : Natural := 0;
+      Decoder             : HPACK.Decoder;
+      Peer_Settings       : Settings.State;
+      Header_Block        : Bytes.Unbounded_Bytes;
+      Header_Stream       : Frames.Stream_Identifier := 0;
+      Header_End_Stream   : Boolean := False;
+      Expect_Continuation : Boolean := False;
+      Peer_Preface_Seen   : Boolean := False;
+      Broken              : Boolean := False;
+      Closing             : Boolean := False;
+      Closing_Drain_Started : Boolean := False;
+      Closing_Drain_Deadline : Ada.Real_Time.Time :=
+        Ada.Real_Time.Time_Last;
+   end record;
 
    type Session_State is limited record
       Streams  : Controller;
-      Outbound : Drivers.Outbound_Wakeup;
-      Done     : Completion;
+      Outbound : aliased Drivers.Outbound_Wakeup;
+      Driver   : Owner_Pump_Driver;
    end record;
 
    procedure Append_Frame
@@ -282,18 +337,6 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          end loop;
       end;
    end Parse_Content_Length;
-
-   protected body Completion is
-      procedure Finish is
-      begin
-         Finished := True;
-      end Finish;
-
-      entry Await_Finished when Finished is
-      begin
-         null;
-      end Await_Finished;
-   end Completion;
 
    protected body Controller is
       function Valid (Handle : Stream_Handle) return Boolean is
@@ -479,6 +522,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Streams (Index).Has_Expected_Length := False;
          Streams (Index).Expected_Length := 0;
          Streams (Index).Received_Length := 0;
+         Streams (Index).Response_Observed := False;
          Streams (Index).Failure := No_Failure;
          Bytes.Clear (Streams (Index).Request_Head);
          Streams (Index).Head_Cursor := 1;
@@ -502,6 +546,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             Flyology.Wake_Sources.Release (Streams (Index).Wake);
          end if;
          Streams (Index).Wake_Signalled := False;
+         Streams (Index).Pump_Waiting := False;
       end Clear_Stream;
 
       procedure Open
@@ -547,6 +592,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Streams (Index).Upload_First := 1;
          Streams (Index).Upload_Count := 0;
          Streams (Index).Upload_Finished := False;
+         Streams (Index).Pump_Waiting := False;
          Bytes.Clear (Streams (Index).Request_Trailers);
          Streams (Index).Trailer_Cursor := 1;
          Streams (Index).Send_Window :=
@@ -991,6 +1037,19 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
            (Frames.Ping_Frame, Frames.Ack_Flag, 0, Payload);
       end Queue_Ping_Ack;
 
+      procedure Queue_Goaway (Error : Frames.Error_Code) is
+         Payload : Stream_Element_Array (1 .. 8);
+         Last_Stream : constant Stream_Element_Array := U31_Payload (0);
+         Error_Value : constant Stream_Element_Array :=
+           U31_Payload (Natural (Error));
+      begin
+         Payload (1 .. 4) := Last_Stream;
+         Payload (5 .. 8) := Error_Value;
+         Queue_Control_Frame
+           (Frames.Goaway_Frame, 0, 0, Payload);
+         Draining := True;
+      end Queue_Goaway;
+
       function Find
         (Stream_ID : Frames.Stream_Identifier) return Natural is
       begin
@@ -1004,29 +1063,68 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          return 0;
       end Find;
 
+      procedure Reject_Stream (Index : Positive) is
+      begin
+         if Streams (Index).Phase in Free | Failed then
+            return;
+         end if;
+         --  A response framing error is a stream error even when the request
+         --  half has already ended. Local_End only describes the request
+         --  direction, so it cannot suppress the required RST_STREAM.
+         Queue_Control_Frame
+           (Frames.Reset_Stream_Frame, 0, Streams (Index).ID,
+            U31_Payload (Natural (Frames.Protocol_Error_Code)));
+         Streams (Index).Local_End := True;
+         Streams (Index).Failure := Response_Protocol_Failure;
+         Streams (Index).Phase := Failed;
+         Notify (Index);
+      end Reject_Stream;
+
+      procedure Observe_Stream (Stream_ID : Frames.Stream_Identifier) is
+         Index : constant Natural := Find (Stream_ID);
+      begin
+         if Index /= 0 then
+            Streams (Index).Response_Observed := True;
+         end if;
+      end Observe_Stream;
+
+      function Has_Response_Observation
+        (Handle : Stream_Handle) return Boolean is
+        (Valid (Handle)
+           and then Streams (Handle.Slot).Response_Observed);
+
       procedure Publish_Headers
         (Stream_ID  : Frames.Stream_Identifier;
          Fields     : Flyology.HTTP.Headers.List;
          Status     : Status_Code;
          Has_Status : Boolean;
          End_Stream : Boolean;
-         Accepted   : out Boolean)
+         Result     : out Publish_Result)
       is
          Index : constant Natural := Find (Stream_ID);
+         Length_Accepted : Boolean;
       begin
-         Accepted := Index /= 0 or else Is_Closed (Stream_ID);
+         Result :=
+           (if Index /= 0 or else Is_Closed (Stream_ID)
+            then Publish_Accepted else Publish_Connection_Rejected);
          if Index = 0 then
             return;
-         elsif Streams (Index).Remote_End then
-            Accepted := False;
+         else
+            Streams (Index).Response_Observed := True;
+         end if;
+         if Streams (Index).Remote_End then
+            Result := Publish_Stream_Rejected;
+            Reject_Stream (Positive (Index));
             return;
          elsif Has_Status then
             if Streams (Index).Head_Available then
-               Accepted := False;
+               Result := Publish_Stream_Rejected;
+               Reject_Stream (Positive (Index));
                return;
             elsif Natural (Status) in 100 .. 199 then
                if Status = 101 or else End_Stream then
-                  Accepted := False;
+                  Result := Publish_Stream_Rejected;
+                  Reject_Stream (Positive (Index));
                end if;
                return;
             end if;
@@ -1040,21 +1138,24 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
               (Fields,
                Streams (Index).Has_Expected_Length,
                Streams (Index).Expected_Length,
-               Accepted);
-            if not Accepted
+               Length_Accepted);
+            if not Length_Accepted
               or else
                 (Status = 204
                    and then Streams (Index).Has_Expected_Length)
             then
-               Accepted := False;
+               Result := Publish_Stream_Rejected;
+               Reject_Stream (Positive (Index));
                return;
             end if;
          else
             if not Streams (Index).Head_Available then
-               Accepted := False;
+               Result := Publish_Stream_Rejected;
+               Reject_Stream (Positive (Index));
                return;
             elsif not End_Stream then
-               Accepted := False;
+               Result := Publish_Stream_Rejected;
+               Reject_Stream (Positive (Index));
                return;
             end if;
             Streams (Index).Trailers := Fields;
@@ -1065,7 +1166,8 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
               and then Streams (Index).Received_Length /=
                 Streams (Index).Expected_Length
             then
-               Accepted := False;
+               Result := Publish_Stream_Rejected;
+               Reject_Stream (Positive (Index));
                return;
             end if;
             Abandon_Local_Half (Positive (Index));
@@ -1080,27 +1182,51 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Payload    : Stream_Element_Array;
          Flow_Length : Natural;
          End_Stream : Boolean;
-         Accepted   : out Boolean)
+         Result     : out Publish_Result)
       is
          Index : constant Natural := Find (Stream_ID);
          Connection_Result : Policy.Window_Result;
          Stream_Result : Policy.Window_Result;
       begin
-         Accepted := Index /= 0 or else Is_Closed (Stream_ID);
+         Result :=
+           (if Index /= 0 or else Is_Closed (Stream_ID)
+            then Publish_Accepted else Publish_Connection_Rejected);
          if Index = 0 then
-            if Accepted then
+            if Result = Publish_Accepted then
                Connection_Result := Policy.Consume
                  (Connection_Receive_Window,
                   Policy.Data_Length (Flow_Length));
                if not Connection_Result.Accepted then
-                  Accepted := False;
+                  Result := Publish_Connection_Rejected;
                   return;
                end if;
                Connection_Receive_Window := Connection_Result.Window;
                Return_Connection_Credit (Flow_Length);
             end if;
             return;
-         elsif not Streams (Index).Head_Available
+         end if;
+
+         Streams (Index).Response_Observed := True;
+
+         Connection_Result := Policy.Consume
+           (Connection_Receive_Window, Policy.Data_Length (Flow_Length));
+         if not Connection_Result.Accepted then
+            Result := Publish_Connection_Rejected;
+            return;
+         end if;
+         Connection_Receive_Window := Connection_Result.Window;
+         Stream_Result := Policy.Consume
+           (Streams (Index).Receive_Window,
+            Policy.Data_Length (Flow_Length));
+         if not Stream_Result.Accepted then
+            Return_Connection_Credit (Flow_Length);
+            Result := Publish_Stream_Rejected;
+            Reject_Stream (Positive (Index));
+            return;
+         end if;
+         Streams (Index).Receive_Window := Stream_Result.Window;
+
+         if not Streams (Index).Head_Available
            or else Streams (Index).Remote_End
            or else
              (Streams (Index).Body_Forbidden and then Payload'Length > 0)
@@ -1108,22 +1234,11 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
            or else Streams (Index).Response_Count + Payload'Length >
              Response_Buffer_Capacity
          then
-            Accepted := False;
+            Return_Connection_Credit (Flow_Length);
+            Result := Publish_Stream_Rejected;
+            Reject_Stream (Positive (Index));
             return;
          end if;
-         Connection_Result := Policy.Consume
-           (Connection_Receive_Window, Policy.Data_Length (Flow_Length));
-         Stream_Result := Policy.Consume
-           (Streams (Index).Receive_Window,
-            Policy.Data_Length (Flow_Length));
-         if not Connection_Result.Accepted
-           or else not Stream_Result.Accepted
-         then
-            Accepted := False;
-            return;
-         end if;
-         Connection_Receive_Window := Connection_Result.Window;
-         Streams (Index).Receive_Window := Stream_Result.Window;
          Streams (Index).Received_Length :=
            Streams (Index).Received_Length + Payload'Length;
          if Streams (Index).Has_Expected_Length
@@ -1132,7 +1247,9 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          then
             Streams (Index).Received_Length :=
               Streams (Index).Received_Length - Payload'Length;
-            Accepted := False;
+            Return_Connection_Credit (Flow_Length);
+            Result := Publish_Stream_Rejected;
+            Reject_Stream (Positive (Index));
             return;
          end if;
          if Payload'Length > 0 then
@@ -1166,7 +1283,8 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
               and then Streams (Index).Received_Length /=
                 Streams (Index).Expected_Length
             then
-               Accepted := False;
+               Result := Publish_Stream_Rejected;
+               Reject_Stream (Positive (Index));
                return;
             end if;
             Abandon_Local_Half (Positive (Index));
@@ -1179,20 +1297,44 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       procedure Window_Update
         (Stream_ID : Frames.Stream_Identifier;
          Increment : Natural;
-         Accepted  : out Boolean)
+         Result    : out Window_Update_Result)
       is
+         procedure Reject
+           (Index : Positive; Error : Frames.Error_Code) is
+         begin
+            Queue_Control_Frame
+              (Frames.Reset_Stream_Frame, 0, Streams (Index).ID,
+               U31_Payload (Natural (Error)));
+            Streams (Index).Failure := Other_Stream_Failure;
+            Streams (Index).Phase := Failed;
+            Notify (Index);
+         end Reject;
       begin
-         Accepted := Increment > 0;
-         if not Accepted then
+         Result := Window_Accepted;
+         if Increment = 0 then
+            if Stream_ID = 0 then
+               Result := Window_Connection_Protocol_Error;
+            else
+               declare
+                  Index : constant Natural := Find (Stream_ID);
+               begin
+                  if Index /= 0 then
+                     Reject
+                       (Positive (Index), Frames.Protocol_Error_Code);
+                     Result := Window_Stream_Rejected;
+                  end if;
+               end;
+            end if;
             return;
          elsif Stream_ID = 0 then
             declare
                Updated : constant Policy.Window_Result := Policy.Increase
                  (Connection_Send_Window, Policy.Window_Increment (Increment));
             begin
-               Accepted := Updated.Accepted;
-               if Accepted then
+               if Updated.Accepted then
                   Connection_Send_Window := Updated.Window;
+               else
+                  Result := Window_Connection_Flow_Control_Error;
                end if;
             end;
          else
@@ -1207,16 +1349,22 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                     (Streams (Index).Send_Window,
                      Policy.Window_Increment (Increment));
                begin
-                  Accepted := Updated.Accepted;
-                  if Accepted then
+                  if Updated.Accepted then
                      Streams (Index).Send_Window := Updated.Window;
+                  else
+                     Reject
+                       (Positive (Index), Frames.Flow_Control_Error);
+                     Result := Window_Stream_Rejected;
                   end if;
                end;
             end;
          end if;
       exception
          when Constraint_Error =>
-            Accepted := False;
+            Result :=
+              (if Stream_ID = 0
+               then Window_Connection_Flow_Control_Error
+               else Window_Stream_Rejected);
       end Window_Update;
 
       procedure Reset_Stream
@@ -1228,6 +1376,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          if Index = 0 then
             return;
          end if;
+         Streams (Index).Response_Observed := True;
          Streams (Index).Failure :=
            (if Error = Frames.Refused_Stream
               and then not Streams (Index).Head_Available
@@ -1336,6 +1485,8 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             case Item.Failure is
                when Connection_Failure | Other_Stream_Failure =>
                   Result := Head_Connection_Failed;
+               when Response_Protocol_Failure =>
+                  Result := Head_Protocol_Failed;
                when Refused_Failure =>
                   Result := Head_Refused;
                when Goaway_Unprocessed_Failure =>
@@ -1370,6 +1521,9 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          begin
             if Item.Failure = Connection_Failure then
                Result := Body_Connection_Failed;
+               return;
+            elsif Item.Failure = Response_Protocol_Failure then
+               Result := Body_Protocol_Failed;
                return;
             elsif Item.Failure /= No_Failure then
                Result := Body_Stream_Failed;
@@ -1487,6 +1641,10 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             end if;
             Streams (Handle.Slot).Remote_End := True;
             Streams (Handle.Slot).Phase := Complete;
+            Streams (Handle.Slot).Pump_Waiting := False;
+            if Pump_Owner = Handle.ID then
+               Handoff_Pump (Handle.Slot);
+            end if;
          end if;
       end Cancel_Stream;
 
@@ -1497,6 +1655,10 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       begin
          Wake_Pump := False;
          if Valid (Handle) then
+            Streams (Handle.Slot).Pump_Waiting := False;
+            if Pump_Owner = Handle.ID then
+               Handoff_Pump (Handle.Slot);
+            end if;
             if Streams (Handle.Slot).Response_Count > 0 then
                Unread := Streams (Handle.Slot).Response_Count;
                Buffered_Data := Buffered_Data - Unread;
@@ -1506,60 +1668,135 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             Clear_Stream (Handle.Slot);
          end if;
       end Release_Stream;
+
+      procedure Try_Claim_Pump
+        (Handle : Stream_Handle; Claimed : out Boolean) is
+      begin
+         Claimed := Valid (Handle)
+           and then (Pump_Owner = 0 or else Pump_Owner = Handle.ID);
+         if Claimed then
+            Pump_Owner := Handle.ID;
+            Streams (Handle.Slot).Pump_Waiting := False;
+         elsif Valid (Handle) then
+            Streams (Handle.Slot).Pump_Waiting := True;
+         end if;
+      end Try_Claim_Pump;
+
+      function Owns_Pump (Handle : Stream_Handle) return Boolean is
+        (Valid (Handle) and then Pump_Owner = Handle.ID);
+
+      procedure Handoff_Pump (Leaving_Index : Natural) is
+      begin
+         Pump_Owner := 0;
+         for Offset in 0 .. Streams'Length - 1 loop
+            declare
+               Index : constant Positive :=
+                 ((Pump_Cursor - Streams'First + Offset) mod
+                    Streams'Length) + Streams'First;
+            begin
+               if Index /= Leaving_Index
+                 and then Streams (Index).Phase /= Free
+                 and then Streams (Index).Pump_Waiting
+               then
+                  Streams (Index).Pump_Waiting := False;
+                  Pump_Owner := Natural (Streams (Index).ID);
+                  Pump_Cursor := Index mod Streams'Last + Streams'First;
+                  Notify (Index);
+                  return;
+               end if;
+            end;
+         end loop;
+      end Handoff_Pump;
+
+      procedure Release_Pump (Handle : Stream_Handle) is
+      begin
+         if Pump_Owner = Handle.ID then
+            Handoff_Pump (Handle.Slot);
+         end if;
+      end Release_Pump;
+
+      procedure Pump_Wait_Source
+        (Handle    : Stream_Handle;
+         FD        : out Flyology.IO.Descriptor;
+         Ready_Now : out Boolean) is
+      begin
+         if not Valid (Handle) then
+            FD := Flyology.IO.Invalid_Descriptor;
+            Ready_Now := True;
+            return;
+         end if;
+         Ready_Now := Pump_Owner = 0
+           or else Pump_Owner = Handle.ID
+           or else Streams (Handle.Slot).Failure /= No_Failure;
+         if Ready_Now then
+            FD := Flyology.IO.Invalid_Descriptor;
+         else
+            if Streams (Handle.Slot).Wake_Signalled then
+               Flyology.Wake_Sources.Consume (Streams (Handle.Slot).Wake);
+               Streams (Handle.Slot).Wake_Signalled := False;
+            end if;
+            Flyology.Wake_Sources.Ensure (Streams (Handle.Slot).Wake);
+            FD := Flyology.Wake_Sources.Descriptor
+              (Streams (Handle.Slot).Wake);
+         end if;
+      end Pump_Wait_Source;
    end Controller;
 
-   task body Pump_Task is
-      Output : Stream_Element_Array
-        (1 .. Stream_Element_Offset (Frames.Default_Maximum_Frame_Size +
-                                     Frames.Frame_Header_Size));
-      Output_Last   : Stream_Element_Offset := Output'First - 1;
-      Output_Cursor : Stream_Element_Offset := Output'First;
-      Have_Output   : Boolean := False;
-      Input : Stream_Element_Array
-        (1 .. Stream_Element_Offset
-          (2 *
-             (Frames.Default_Maximum_Frame_Size + Frames.Frame_Header_Size)));
-      Input_Head  : Natural := 0;
-      Input_Count : Natural := 0;
-      Decoder : HPACK.Decoder;
-      Peer_Settings : Settings.State;
-      Header_Block : Bytes.Unbounded_Bytes;
-      Header_Stream : Frames.Stream_Identifier := 0;
-      Header_End_Stream : Boolean := False;
-      Expect_Continuation : Boolean := False;
-      Peer_Preface_Received : Boolean := False;
-      Stop_Pump : exception;
+   procedure Drive_Owner_Pump
+     (State : in out Session_State;
+      IO    : in out Drivers.Capability;
+      Step  : out Pump_Step)
+   is
+      Stop : exception;
 
-      procedure Protocol_Failure is
+      procedure Protocol_Failure
+        (Error : Frames.Error_Code := Frames.Protocol_Error_Code) is
       begin
-         State.Streams.Fail_All;
-         raise Stop_Pump;
+         if not State.Driver.Closing then
+            State.Streams.Queue_Goaway (Error);
+            State.Streams.Fail_All;
+            State.Driver.Closing := True;
+         end if;
+         raise Stop;
       end Protocol_Failure;
 
-      procedure Process_Header_Block is
-         Fields : Flyology.HTTP.Headers.List;
-         Status : Status_Code := 200;
-         Has_Status : Boolean := False;
-         Accepted : Boolean;
-         Trailers : constant Boolean :=
-           State.Streams.Is_Trailers (Header_Stream);
+      function Closing_Drain_Remaining return Duration is
+         Now : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
       begin
+         if not State.Driver.Closing_Drain_Started
+           or else Now >= State.Driver.Closing_Drain_Deadline
+         then
+            return 0.0;
+         end if;
+         return Ada.Real_Time.To_Duration
+           (State.Driver.Closing_Drain_Deadline - Now);
+      end Closing_Drain_Remaining;
+
+      procedure Process_Header_Block is
+         Fields     : Flyology.HTTP.Headers.List;
+         Status     : Status_Code := 200;
+         Has_Status : Boolean := False;
+         Publication : Publish_Result;
+         Trailers   : constant Boolean :=
+           State.Streams.Is_Trailers (State.Driver.Header_Stream);
+      begin
+         State.Streams.Observe_Stream (State.Driver.Header_Stream);
          HPACK.Decode_Response
-           (Decoder, Bytes.To_Array (Header_Block), Trailers,
+           (State.Driver.Decoder,
+            Bytes.To_Array (State.Driver.Header_Block), Trailers,
             Fields, Status, Has_Status);
          State.Streams.Publish_Headers
-           (Header_Stream, Fields, Status, Has_Status,
-            Header_End_Stream, Accepted);
-         Bytes.Clear (Header_Block);
-         Header_Stream := 0;
-         Header_End_Stream := False;
-         Expect_Continuation := False;
-         if not Accepted then
+           (State.Driver.Header_Stream, Fields, Status, Has_Status,
+            State.Driver.Header_End_Stream, Publication);
+         Bytes.Clear (State.Driver.Header_Block);
+         State.Driver.Header_Stream := 0;
+         State.Driver.Header_End_Stream := False;
+         State.Driver.Expect_Continuation := False;
+         if Publication = Publish_Connection_Rejected then
             Protocol_Failure;
          end if;
       exception
-         when HPACK.Header_List_Too_Large |
-              Protocol_Error |
+         when HPACK.Header_List_Too_Large | Protocol_Error |
               Constraint_Error =>
             Protocol_Failure;
       end Process_Header_Block;
@@ -1569,34 +1806,35 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
          Payload : Stream_Element_Array)
       is
          Accepted : Boolean;
+         Publication : Publish_Result;
+         Window_Result : Window_Update_Result;
       begin
-         if not Peer_Preface_Received then
+         if not State.Driver.Peer_Preface_Seen then
             if Header.Kind /= Frames.Settings_Frame
               or else (Header.Flags and Frames.Ack_Flag) /= 0
             then
                Protocol_Failure;
             end if;
-            Peer_Preface_Received := True;
+            State.Driver.Peer_Preface_Seen := True;
          end if;
-         if Expect_Continuation
+         if State.Driver.Expect_Continuation
            and then
              (Header.Kind /= Frames.Continuation_Frame
-                or else Header.Stream_ID /= Header_Stream)
+                or else Header.Stream_ID /= State.Driver.Header_Stream)
          then
             Protocol_Failure;
          elsif Header.Kind = Frames.Settings_Frame then
-            if (Header.Flags and Frames.Ack_Flag) /= 0 then
-               null;
-            else
+            if (Header.Flags and Frames.Ack_Flag) = 0 then
                declare
                   Applied : Settings.Apply_Result;
                begin
-                  Settings.Apply (Peer_Settings, Payload, Applied);
+                  Settings.Apply
+                    (State.Driver.Peer_Settings, Payload, Applied);
                   if Applied /= Settings.Settings_Accepted then
                      Protocol_Failure;
                   end if;
                   State.Streams.Apply_Peer_Settings
-                    (Peer_Settings, Accepted);
+                    (State.Driver.Peer_Settings, Accepted);
                   if not Accepted then
                      Protocol_Failure;
                   end if;
@@ -1609,7 +1847,7 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
             end if;
          elsif Header.Kind = Frames.Headers_Frame then
             declare
-               View : Payloads.Fragment_View;
+               View   : Payloads.Fragment_View;
                Result : Payloads.Fragment_Result;
             begin
                Payloads.Header_Fragment
@@ -1617,276 +1855,336 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
                if Result /= Payloads.Valid_Fragment then
                   Protocol_Failure;
                end if;
-               Header_Stream := Header.Stream_ID;
-               Header_End_Stream :=
+               State.Driver.Header_Stream := Header.Stream_ID;
+               State.Driver.Header_End_Stream :=
                  (Header.Flags and Frames.End_Stream_Flag) /= 0;
                if not View.Empty then
                   Bytes.Append
-                    (Header_Block, Payload (View.First .. View.Last));
+                    (State.Driver.Header_Block,
+                     Payload (View.First .. View.Last));
                end if;
-               if Bytes.Length (Header_Block) > Maximum_Header_Block then
+               if Bytes.Length (State.Driver.Header_Block) >
+                 Maximum_Header_Block
+               then
                   Protocol_Failure;
                elsif (Header.Flags and Frames.End_Headers_Flag) /= 0 then
                   Process_Header_Block;
                else
-                  Expect_Continuation := True;
+                  State.Driver.Expect_Continuation := True;
                end if;
             end;
          elsif Header.Kind = Frames.Continuation_Frame then
-            --  RFC 9113 6.10: a CONTINUATION that does not follow an
-            --  unterminated HEADERS or CONTINUATION is a connection
-            --  PROTOCOL_ERROR. With END_HEADERS clear its payload would
-            --  otherwise stay buffered and prepend the next field section.
-            if not Expect_Continuation then
+            if not State.Driver.Expect_Continuation then
                Protocol_Failure;
             end if;
-            Bytes.Append (Header_Block, Payload);
-            if Bytes.Length (Header_Block) > Maximum_Header_Block then
+            Bytes.Append (State.Driver.Header_Block, Payload);
+            if Bytes.Length (State.Driver.Header_Block) >
+              Maximum_Header_Block
+            then
                Protocol_Failure;
             elsif (Header.Flags and Frames.End_Headers_Flag) /= 0 then
                Process_Header_Block;
             end if;
          elsif Header.Kind = Frames.Data_Frame then
             declare
-               View : Payloads.Fragment_View;
+               View   : Payloads.Fragment_View;
                Result : Payloads.Fragment_Result;
-               Empty : Stream_Element_Array (1 .. 0);
+               Empty  : Stream_Element_Array (1 .. 0);
             begin
-               Payloads.Data_Fragment (Header.Flags, Payload, View, Result);
+               State.Streams.Observe_Stream (Header.Stream_ID);
+               Payloads.Data_Fragment
+                 (Header.Flags, Payload, View, Result);
                if Result /= Payloads.Valid_Fragment then
                   Protocol_Failure;
                elsif View.Empty then
                   State.Streams.Publish_Data
                     (Header.Stream_ID, Empty, Payload'Length,
                      (Header.Flags and Frames.End_Stream_Flag) /= 0,
-                     Accepted);
+                     Publication);
                else
                   State.Streams.Publish_Data
                     (Header.Stream_ID, Payload (View.First .. View.Last),
                      Payload'Length,
                      (Header.Flags and Frames.End_Stream_Flag) /= 0,
-                     Accepted);
+                     Publication);
                end if;
-               if not Accepted then
+               if Publication = Publish_Connection_Rejected then
                   Protocol_Failure;
                end if;
             end;
          elsif Header.Kind = Frames.Window_Update_Frame then
             State.Streams.Window_Update
-              (Header.Stream_ID,
-               Payloads.Window_Increment (Payload), Accepted);
-            if not Accepted then
-               Protocol_Failure;
-            end if;
+              (Header.Stream_ID, Payloads.Window_Increment (Payload),
+               Window_Result);
+            case Window_Result is
+               when Window_Accepted | Window_Stream_Rejected => null;
+               when Window_Connection_Protocol_Error =>
+                  Protocol_Failure (Frames.Protocol_Error_Code);
+               when Window_Connection_Flow_Control_Error =>
+                  Protocol_Failure (Frames.Flow_Control_Error);
+            end case;
          elsif Header.Kind = Frames.Reset_Stream_Frame then
             State.Streams.Reset_Stream
               (Header.Stream_ID, Payloads.Unsigned_32 (Payload));
          elsif Header.Kind = Frames.Goaway_Frame then
-            State.Streams.Receive_Goaway (Payloads.Stream_ID (Payload));
+            State.Streams.Receive_Goaway
+              (Payloads.Stream_ID (Payload));
          elsif Header.Kind = Frames.Push_Promise_Frame then
             Protocol_Failure;
-         else
-            null;
          end if;
       end Process_Frame;
 
-      procedure Parse_Input is
-      begin
-         loop
-            exit when Input_Count < Frames.Frame_Header_Size;
-            declare
-               Wire : Frames.Wire_Header;
-            begin
-               for Index in Wire'Range loop
-                  Wire (Index) := Input
-                    (Input'First + Stream_Element_Offset (Input_Head) +
-                       Index - Wire'First);
-               end loop;
-               declare
-                  Header : constant Frames.Header := Frames.Decode (Wire);
-                  Total  : constant Natural := Frames.Frame_Header_Size +
-                    Header.Length;
-               begin
-                  if Frames.Validate (Header) /= Frames.Valid_Header then
-                     Protocol_Failure;
-                  elsif Input_Count < Total then
-                     return;
-                  end if;
-                  declare
-                     Payload : Stream_Element_Array
-                       (1 .. Stream_Element_Offset (Header.Length));
-                  begin
-                     if Header.Length > 0 then
-                        for Offset in 0 .. Header.Length - 1 loop
-                           Payload
-                             (Payload'First +
-                                Stream_Element_Offset (Offset)) :=
-                             Input
-                               (Input'First +
-                                  Stream_Element_Offset (Input_Head) +
-                                  Stream_Element_Offset
-                                    (Frames.Frame_Header_Size + Offset));
-                        end loop;
-                     end if;
-                     Process_Frame (Header, Payload);
-                  end;
-                  Input_Head := Input_Head + Total;
-                  Input_Count := Input_Count - Total;
-                  if Input_Count = 0 then
-                     Input_Head := 0;
-                  end if;
-               end;
-            end;
-         end loop;
-      end Parse_Input;
-
-      procedure Drive (IO : in out Drivers.Capability) is
-         Step : Drivers.Step_Result;
-         Last : Stream_Element_Offset;
-         Waited : Drivers.Wait_Result;
-         Progress : Boolean;
-         Backlogged : Boolean;
-
-         procedure Compact_Input is
+      procedure Parse_One (Progress : out Boolean) is
+         procedure Consume_Input (Count : Natural) is
          begin
-            if Input_Head > 0 and then Input_Count > 0 then
-               for Offset in 0 .. Input_Count - 1 loop
-                  Input (Input'First + Stream_Element_Offset (Offset)) :=
-                    Input
-                      (Input'First + Stream_Element_Offset
-                         (Input_Head + Offset));
-               end loop;
-               Input_Head := 0;
-            elsif Input_Count = 0 then
-               Input_Head := 0;
+            State.Driver.Input_Head := State.Driver.Input_Head + Count;
+            State.Driver.Input_Count := State.Driver.Input_Count - Count;
+            if State.Driver.Input_Count = 0 then
+               State.Driver.Input_Head := 0;
             end if;
-         end Compact_Input;
+         end Consume_Input;
       begin
-         loop
-            Progress := False;
-            Backlogged := State.Streams.Control_Backlogged;
-            if not Backlogged then
-               Parse_Input;
-            end if;
-            if not Have_Output then
-               State.Streams.Pull_Output
-                 (Output, Output_Last, Have_Output);
-               Output_Cursor := Output'First;
-            end if;
-            if Have_Output then
-               Drivers.Send
-                 (IO, Output (Output_Cursor .. Output_Last), Last, Step);
-               case Step is
-                  when Drivers.Made_Progress =>
-                     if Last >= Output_Cursor then
-                        Output_Cursor := Last + 1;
-                        Progress := True;
-                     end if;
-                     if Output_Cursor > Output_Last then
-                        Have_Output := False;
-                     end if;
-                  when Drivers.Peer_Closed =>
-                     raise Stop_Pump;
-                  when Drivers.Need_Read | Drivers.Need_Write =>
-                     null;
-               end case;
-            end if;
-
-            Backlogged := State.Streams.Control_Backlogged;
-            if not Backlogged
-              and then Input_Head + Input_Count = Input'Length
-              and then Input_Head > 0
-            then
-               Compact_Input;
-            end if;
-            if not Backlogged
-              and then Input_Head + Input_Count < Input'Length
-            then
-               Drivers.Receive
-                 (IO,
-                  Input
-                    (Input'First + Stream_Element_Offset
-                       (Input_Head + Input_Count) ..
-                     Input'Last),
-                  Last, Step);
-               case Step is
-                  when Drivers.Made_Progress =>
-                     if Last >=
-                       Input'First + Stream_Element_Offset
-                         (Input_Head + Input_Count)
-                     then
-                        Input_Count := Natural
-                          (Last - Input'First -
-                             Stream_Element_Offset (Input_Head) + 1);
-                        Progress := True;
-                     end if;
-                  when Drivers.Peer_Closed =>
-                     raise Stop_Pump;
-                  when Drivers.Need_Read | Drivers.Need_Write =>
-                     null;
-               end case;
-            end if;
-
-            if not Progress then
-               if not Have_Output then
-                  --  Observe protocol work one final time immediately before
-                  --  sleeping.  Work can be published while this iteration
-                  --  processes input, and outbound wakeups intentionally
-                  --  coalesce until the driver's wait consumes them.
-                  State.Streams.Pull_Output
-                    (Output, Output_Last, Have_Output);
-                  Output_Cursor := Output'First;
+         Progress := False;
+         if State.Driver.Input_Count < Frames.Frame_Header_Size then
+            return;
+         end if;
+         declare
+            Wire : Frames.Wire_Header;
+         begin
+            for Index in Wire'Range loop
+               Wire (Index) := State.Driver.Input
+                 (State.Driver.Input'First
+                    + Stream_Element_Offset (State.Driver.Input_Head)
+                    + Index - Wire'First);
+            end loop;
+            declare
+               Header : constant Frames.Header := Frames.Decode (Wire);
+               Total  : constant Natural :=
+                 Frames.Frame_Header_Size + Header.Length;
+               Validity : constant Frames.Header_Validity :=
+                 Frames.Validate (Header);
+            begin
+               if Validity /= Frames.Valid_Header then
+                  --  For a malformed frame that fits the bounded input
+                  --  buffer, wait for and consume its declared payload.
+                  --  Closing a Linux socket while those bytes remain
+                  --  unread can replace the queued GOAWAY with TCP RST.
+                  if Total <= State.Driver.Input'Length
+                    and then State.Driver.Input_Count < Total
+                  then
+                     return;
+                  elsif State.Driver.Input_Count >= Total then
+                     Consume_Input (Total);
+                  end if;
+                  Protocol_Failure
+                    ((if Validity in
+                         Frames.Frame_Too_Large | Frames.Invalid_Length
+                      then Frames.Frame_Size_Error
+                      else Frames.Protocol_Error_Code));
+               elsif State.Driver.Input_Count < Total then
+                  return;
                end if;
-            end if;
+               declare
+                  Payload : Stream_Element_Array
+                    (1 .. Stream_Element_Offset (Header.Length));
+               begin
+                  if Header.Length > 0 then
+                     for Offset in 0 .. Header.Length - 1 loop
+                        Payload
+                          (Payload'First + Stream_Element_Offset (Offset)) :=
+                          State.Driver.Input
+                            (State.Driver.Input'First
+                               + Stream_Element_Offset
+                                 (State.Driver.Input_Head)
+                               + Stream_Element_Offset
+                                 (Frames.Frame_Header_Size + Offset));
+                     end loop;
+                  end if;
+                  Process_Frame (Header, Payload);
+               end;
+               Consume_Input (Total);
+               Progress := True;
+            end;
+         end;
+      end Parse_One;
 
-            if not Progress then
-               Drivers.Wait
-                 (IO, State.Outbound,
-                  (if Have_Output then Drivers.Duplex_Interest
-                   else Drivers.Read_Interest),
-                  Result => Waited);
-            end if;
-         end loop;
-      end Drive;
-   begin
+      procedure Compact_Input is
       begin
-         Drivers.Run (Channel.all, Drive'Access);
-      exception
-         when Stop_Pump =>
-            State.Streams.Fail_All;
-         when others =>
-            State.Streams.Fail_All;
-      end;
-      State.Done.Finish;
-   end Pump_Task;
+         if State.Driver.Input_Head > 0
+           and then State.Driver.Input_Count > 0
+         then
+            for Offset in 0 .. State.Driver.Input_Count - 1 loop
+               State.Driver.Input
+                 (State.Driver.Input'First
+                    + Stream_Element_Offset (Offset)) :=
+                 State.Driver.Input
+                   (State.Driver.Input'First
+                      + Stream_Element_Offset
+                        (State.Driver.Input_Head + Offset));
+            end loop;
+            State.Driver.Input_Head := 0;
+         elsif State.Driver.Input_Count = 0 then
+            State.Driver.Input_Head := 0;
+         end if;
+      end Compact_Input;
 
-   procedure Free_Pump is new Ada.Unchecked_Deallocation
-     (Pump_Task, Pump_Access);
+      Last       : Stream_Element_Offset;
+      IO_Result  : Drivers.Step_Result;
+      Parsed     : Boolean;
+      Backlogged : Boolean;
+      First      : Stream_Element_Offset;
+   begin
+      Step := (others => <>);
+      if State.Driver.Broken then
+         Step.Result := Pump_Protocol_Failed;
+         return;
+      end if;
+
+      Backlogged := State.Streams.Control_Backlogged;
+      if not Backlogged and then not State.Driver.Closing then
+         Parse_One (Parsed);
+         if Parsed then
+            Step.Result := Pump_Progress;
+            return;
+         end if;
+      end if;
+
+      if not State.Driver.Have_Output then
+         State.Streams.Pull_Output
+           (State.Driver.Output, State.Driver.Output_Last,
+            State.Driver.Have_Output);
+         State.Driver.Output_Cursor := State.Driver.Output'First;
+      end if;
+      if State.Driver.Have_Output then
+         Drivers.Send
+           (IO,
+            State.Driver.Output
+              (State.Driver.Output_Cursor .. State.Driver.Output_Last),
+            Last, IO_Result);
+         case IO_Result is
+            when Drivers.Made_Progress =>
+               if Last >= State.Driver.Output_Cursor then
+                  State.Driver.Output_Cursor := Last + 1;
+                  Step.Sent_Bytes := True;
+               end if;
+               if State.Driver.Output_Cursor > State.Driver.Output_Last then
+                  State.Driver.Have_Output := False;
+               end if;
+               Step.Result := Pump_Progress;
+            when Drivers.Need_Read =>
+               Step.Result := Pump_Need_Read;
+            when Drivers.Need_Write =>
+               Step.Result := Pump_Need_Write;
+            when Drivers.Peer_Closed =>
+               Step.Result :=
+                 (if State.Driver.Closing
+                  then Pump_Protocol_Failed else Pump_Peer_Closed);
+         end case;
+         Step.Outbound_Pending := State.Driver.Have_Output;
+         Step.Closing_Drain := State.Driver.Closing;
+         Step.Drain_Remaining :=
+           (if State.Driver.Closing then Protocol_Close_Grace else 0.0);
+         return;
+      end if;
+
+      if State.Driver.Closing then
+         if not State.Driver.Closing_Drain_Started then
+            State.Driver.Closing_Drain_Started := True;
+            State.Driver.Closing_Drain_Deadline :=
+              Ada.Real_Time.Clock
+                + Ada.Real_Time.To_Time_Span (Protocol_Close_Grace);
+         end if;
+         Step.Closing_Drain := True;
+         Step.Drain_Remaining := Closing_Drain_Remaining;
+         if Step.Drain_Remaining <= 0.0 then
+            State.Driver.Broken := True;
+            Step.Result := Pump_Protocol_Failed;
+            return;
+         end if;
+         --  Keep the lease until the peer observes GOAWAY and closes, while
+         --  discarding at most one bounded transport chunk per owner-stack
+         --  drive. The grace deadline prevents a silent peer from retaining
+         --  the connection indefinitely and never extends the request budget.
+         Drivers.Receive
+           (IO, State.Driver.Input, Last, IO_Result);
+         case IO_Result is
+            when Drivers.Made_Progress =>
+               Step.Received_Bytes := Last >= State.Driver.Input'First;
+               Step.Result := Pump_Progress;
+            when Drivers.Need_Read =>
+               Step.Result := Pump_Need_Read;
+            when Drivers.Need_Write =>
+               Step.Result := Pump_Need_Write;
+            when Drivers.Peer_Closed =>
+               State.Driver.Broken := True;
+               Step.Result := Pump_Protocol_Failed;
+         end case;
+         return;
+      end if;
+
+      if State.Driver.Input_Head + State.Driver.Input_Count =
+        State.Driver.Input'Length
+        and then State.Driver.Input_Head > 0
+      then
+         Compact_Input;
+      end if;
+      if State.Driver.Input_Head + State.Driver.Input_Count >=
+        State.Driver.Input'Length
+      then
+         Protocol_Failure;
+      end if;
+      First := State.Driver.Input'First
+        + Stream_Element_Offset
+          (State.Driver.Input_Head + State.Driver.Input_Count);
+      Drivers.Receive
+        (IO, State.Driver.Input (First .. State.Driver.Input'Last),
+         Last, IO_Result);
+      case IO_Result is
+         when Drivers.Made_Progress =>
+            if Last >= First then
+               State.Driver.Input_Count := State.Driver.Input_Count
+                 + Natural (Last - First + 1);
+               Step.Received_Bytes := True;
+            end if;
+            Step.Result := Pump_Progress;
+         when Drivers.Need_Read =>
+            Step.Result := Pump_Need_Read;
+         when Drivers.Need_Write =>
+            Step.Result := Pump_Need_Write;
+         when Drivers.Peer_Closed =>
+            Step.Result := Pump_Peer_Closed;
+      end case;
+   exception
+      when Stop =>
+         Step :=
+           (Result => Pump_Progress,
+            Sent_Bytes => False,
+            Received_Bytes => False,
+            Outbound_Pending => True,
+            Closing_Drain => State.Driver.Closing,
+            Drain_Remaining => 0.0);
+      when others =>
+         State.Driver.Broken := True;
+         State.Streams.Fail_All;
+         Step :=
+           (Result => Pump_Protocol_Failed,
+            Sent_Bytes | Received_Bytes | Outbound_Pending |
+              Closing_Drain => False,
+            Drain_Remaining => 0.0);
+   end Drive_Owner_Pump;
+
    procedure Free_State is new Ada.Unchecked_Deallocation
      (Session_State, Session_State_Access);
    procedure Free_Session is new Ada.Unchecked_Deallocation
      (Session, Session_Access);
 
-   procedure Create
-     (Item    : out Session_Access;
-      Channel : not null access Flyology.IO.Connections.Connection) is
+   procedure Create (Item : out Session_Access) is
    begin
       Item := new Session;
       Item.State := new Session_State;
-      Item.Pump := new Pump_Task (Item.State, Channel);
-      Drivers.Signal (Item.State.Outbound);
    exception
       when others =>
          if Item /= null then
-            if Item.Pump /= null then
-               begin
-                  Flyology.IO.Connections.Close (Channel.all);
-               exception
-                  when others => null;
-               end;
-               Item.State.Done.Await_Finished;
-               Free_Pump (Item.Pump);
-            end if;
             if Item.State /= null then
                Free_State (Item.State);
             end if;
@@ -1900,11 +2198,59 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
       if Item = null then
          return;
       end if;
-      Item.State.Done.Await_Finished;
-      Free_Pump (Item.Pump);
       Free_State (Item.State);
       Free_Session (Item);
    end Destroy;
+
+   procedure Try_Claim_Pump
+     (Item    : in out Session;
+      Handle  : Stream_Handle;
+      Claimed : out Boolean) is
+   begin
+      Item.State.Streams.Try_Claim_Pump (Handle, Claimed);
+   end Try_Claim_Pump;
+
+   function Owns_Pump
+     (Item : Session; Handle : Stream_Handle) return Boolean is
+     (Item.State /= null and then Item.State.Streams.Owns_Pump (Handle));
+
+   procedure Release_Pump
+     (Item : in out Session; Handle : Stream_Handle) is
+   begin
+      Item.State.Streams.Release_Pump (Handle);
+   end Release_Pump;
+
+   procedure Pump_Wait_Source
+     (Item      : in out Session;
+      Handle    : Stream_Handle;
+      FD        : out Flyology.IO.Descriptor;
+      Ready_Now : out Boolean) is
+   begin
+      Item.State.Streams.Pump_Wait_Source (Handle, FD, Ready_Now);
+   end Pump_Wait_Source;
+
+   function Has_Response_Observation
+     (Item : Session; Handle : Stream_Handle) return Boolean is
+     (Item.State /= null
+        and then Item.State.Streams.Has_Response_Observation (Handle));
+
+   procedure Drive_Pump
+     (Item   : in out Session;
+      Handle : Stream_Handle;
+      IO     : in out Drivers.Capability;
+      Step   : out Pump_Step) is
+   begin
+      if not Owns_Pump (Item, Handle) then
+         raise Program_Error with
+           "HTTP/2 stream does not own the session pump";
+      end if;
+      Drive_Owner_Pump (Item.State.all, IO, Step);
+   end Drive_Pump;
+
+   function Outbound
+     (Item : aliased in out Session)
+      return not null access Drivers.Outbound_Wakeup is
+     (Item.State.Outbound'Access);
 
    function Is_Usable (Item : Session) return Boolean is
      (Item.State /= null and then Item.State.Streams.Is_Usable);
@@ -1969,6 +2315,10 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    begin
       Item.State.Streams.Poll_Head
         (Handle, Result, Status, Fields, Finished);
+      if Result = Head_Connection_Failed and then Item.State.Driver.Closing
+      then
+         Result := Head_Protocol_Failed;
+      end if;
    end Poll_Head;
 
    procedure Read
@@ -1984,6 +2334,10 @@ package body Flyology.HTTP.HTTP_2_Client_Connection is
    begin
       Item.State.Streams.Read
         (Handle, Data, Last, Finished, Result, Trailers, Wake_Pump);
+      if Result = Body_Connection_Failed and then Item.State.Driver.Closing
+      then
+         Result := Body_Protocol_Failed;
+      end if;
       if Wake_Pump then
          Drivers.Signal (Item.State.Outbound);
       end if;

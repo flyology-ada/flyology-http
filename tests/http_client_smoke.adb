@@ -55,25 +55,37 @@ procedure HTTP_Client_Smoke is
         (Item, Origin,
          (Max_Idle                    => 1,
           Idle_Timeout                => 10.0,
-          Max_Connection_Age          => 60.0,
+          --  The 20,000-exchange reuse checks below isolate bounded stack and
+          --  slot reuse. Pool-age rotation has separate deterministic tests.
+          Max_Connection_Age          => -1.0,
           Max_Requests_Per_Connection => 0));
 
       Client.Set_Method (Value, Flyology.HTTP.Methods.CONNECT);
       declare
          Rejected : Boolean := False;
+         Vacant   : Boolean := False;
+         Response : Client.Response;
       begin
          begin
+            Client.Execute (Item, Value, Response);
+         exception
+            when Constraint_Error =>
+               Rejected := True;
+         end;
+         begin
             declare
-               Unexpected : Client.Response := Client.Execute (Item, Value);
+               Unexpected : constant Flyology.HTTP.Status_Code :=
+                 Client.Status (Response);
                pragma Unreferenced (Unexpected);
             begin
                null;
             end;
          exception
-            when Constraint_Error =>
-               Rejected := True;
+            when Program_Error =>
+               Vacant := True;
          end;
          pragma Assert (Rejected);
+         pragma Assert (Vacant);
       end;
       Client.Set_Method (Value, Flyology.HTTP.Methods.GET);
 
@@ -212,27 +224,42 @@ procedure HTTP_Client_Smoke is
          pragma Assert (Raised);
       end Expect_Head_Error;
 
+      procedure Expect_Head_Size_Error (Target : String) is
+         Raised : Boolean := False;
+      begin
+         Client.Set_Target (Value, Target);
+         begin
+            declare
+               Unexpected : Client.Response := Client.Execute (Item, Value);
+               pragma Unreferenced (Unexpected);
+            begin
+               null;
+            end;
+         exception
+            when Client.Response_Too_Large =>
+               Raised := True;
+         end;
+         pragma Assert (Raised);
+      end Expect_Head_Size_Error;
+
       procedure Expect_Body_Error (Target : String) is
          Raised : Boolean := False;
+         Payload : Flyology.Bytes.Unbounded_Bytes :=
+           Flyology.Bytes.From_Byte_String ("discard me");
       begin
          Client.Set_Target (Value, Target);
          declare
             Response : Client.Response := Client.Execute (Item, Value);
          begin
             begin
-               declare
-                  Payload : constant Flyology.Bytes.Unbounded_Bytes :=
-                    Client.Read_All (Response);
-                  pragma Unreferenced (Payload);
-               begin
-                  null;
-               end;
+               Client.Read_All (Response, Payload);
             exception
                when Flyology.HTTP.Protocol_Error =>
                   Raised := True;
             end;
          end;
          pragma Assert (Raised);
+         pragma Assert (Flyology.Bytes.Length (Payload) = 0);
       end Expect_Body_Error;
    begin
       Client.Configure (Item, Origin);
@@ -254,6 +281,7 @@ procedure HTTP_Client_Smoke is
          pragma Assert (Client.Body_Complete (Response));
       end;
       Expect_Head_Error ("/bad-status");
+      Expect_Head_Size_Error ("/oversized-head");
       Expect_Body_Error ("/short-body");
       Expect_Body_Error ("/bad-chunk");
       Client.Shutdown (Item);
@@ -476,6 +504,15 @@ procedure HTTP_Client_Smoke is
       Sockets.Close_Socket (Peer);
 
       Accept_Peer;
+      Expect_Target ("/oversized-head");
+      Send
+        ("HTTP/1.1 200 OK" & CRLF &
+         "X-Oversized: " &
+         String'(1 .. Flyology.HTTP.Headers.Default_Max_Bytes => 'x') &
+         CRLF & CRLF);
+      Sockets.Close_Socket (Peer);
+
+      Accept_Peer;
       Expect_Target ("/short-body");
       Send
         ("HTTP/1.1 200 OK" & CRLF &
@@ -508,6 +545,26 @@ procedure HTTP_Client_Smoke is
    Port      : Sockets.Port;
    Server_OK : Boolean;
 begin
+   declare
+      Unconfigured : aliased Client.Client (Capacity => 1);
+      Value        : Client.Request;
+      Raised       : Boolean := False;
+   begin
+      begin
+         declare
+            Unexpected : Client.Response :=
+              Client.Execute (Unconfigured, Value);
+            pragma Unreferenced (Unexpected);
+         begin
+            null;
+         end;
+      exception
+         when Program_Error =>
+            Raised := True;
+      end;
+      pragma Assert (Raised);
+   end;
+
    declare
       Empty  : Client.Response;
       Raised : Boolean := False;

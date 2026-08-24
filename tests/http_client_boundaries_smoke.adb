@@ -126,10 +126,18 @@ procedure HTTP_Client_Boundaries_Smoke is
          Buffer : Stream_Element_Array (1 .. 32);
          Last   : Stream_Element_Offset;
       begin
-         loop
-            Sockets.Receive (Peer, Buffer, Last, Timeout => 2.0);
-            exit when Last < Buffer'First;
-         end loop;
+         begin
+            loop
+               Sockets.Receive (Peer, Buffer, Last, Timeout => 2.0);
+               exit when Last < Buffer'First;
+            end loop;
+         exception
+            when Sockets.Socket_Error =>
+               --  A client abandoning a timed-out or cancelled exchange can
+               --  close with unread bytes.  Some kernels report that peer
+               --  termination as a reset instead of a zero-length receive.
+               null;
+         end;
          Sockets.Close_Socket (Peer);
       end Expect_Close;
 

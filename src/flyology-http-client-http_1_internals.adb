@@ -64,133 +64,6 @@ package body HTTP_1_Internals is
       return To_String (Result);
    end Request_Head;
 
-   procedure Send_Streaming_Body
-     (Data   : in out Response_Data;
-      Source : in out Request_Body_Source'Class;
-      Length : Body_Length;
-      Trailers : Flyology.HTTP.Headers.List;
-      Token  : access Flyology.Cancellation.Token)
-   is
-      Buffer    : Ada.Streams.Stream_Element_Array
-        (1 .. Ada.Streams.Stream_Element_Offset (Request_Buffer_Size));
-      Last      : Ada.Streams.Stream_Element_Offset;
-      Finished  : Boolean;
-      Remaining_Bytes : Body_Size := Length.Bytes;
-
-      function Produced return Natural is
-      begin
-         if Last < Buffer'First - 1 or else Last > Buffer'Last then
-            raise Request_Body_Error with
-              "request body source returned an invalid last index";
-         elsif Last < Buffer'First then
-            return 0;
-         end if;
-         return Natural (Last - Buffer'First + 1);
-      end Produced;
-
-      procedure Pull is
-      begin
-         begin
-            Read
-              (Source, Buffer, Last, Finished,
-               Remaining (Data.Started, Data.Timeout), Token);
-         exception
-            when others =>
-               Data.Source_Failed := True;
-               raise;
-         end;
-      end Pull;
-
-      procedure Validate_Pull
-        (Length_Known : Boolean; Remaining : Body_Size)
-      is
-         Action : constant Pull_Action := Classify_Pull
-           (Length_Known => Length_Known,
-            Produced     => Body_Byte_Count (Produced),
-            Remaining    => Body_Byte_Count (Remaining),
-            Finished     => Finished);
-      begin
-         case Action is
-            when Accept_Pull =>
-               null;
-            when Reject_No_Progress =>
-               raise Request_Body_Error with
-                 "request body source made no progress";
-            when Reject_Too_Long =>
-               raise Request_Body_Error with
-                 "request body source exceeded its declared length";
-            when Reject_Too_Short =>
-               raise Request_Body_Error with
-                 "request body source ended before its declared length";
-            when Reject_Not_Finished =>
-               raise Request_Body_Error with
-                 "request body source did not finish at its declared length";
-         end case;
-      end Validate_Pull;
-
-      procedure Send_Data (Count : Natural) is
-      begin
-         if Count > 0 then
-            Connections.Send_All
-              (Data.Connection.Channel,
-               Buffer
-                 (Buffer'First ..
-                    Buffer'First + Ada.Streams.Stream_Element_Offset
-                      (Count - 1)),
-               Remaining (Data.Started, Data.Timeout), Token => Token);
-         end if;
-      end Send_Data;
-   begin
-      if Length.Is_Known then
-         while Remaining_Bytes > 0 loop
-            Pull;
-            declare
-               Count : constant Natural := Produced;
-            begin
-               Validate_Pull (True, Remaining_Bytes);
-               Send_Data (Count);
-               Remaining_Bytes := Remaining_Bytes - Body_Size (Count);
-            end;
-         end loop;
-      else
-         loop
-            Pull;
-            Validate_Pull (False, 0);
-            declare
-               Count : constant Natural := Produced;
-            begin
-               if Count > 0 then
-                  Connections.Send_All
-                    (Data.Connection.Channel,
-                     Byte_Array (Hexadecimal (Count) & CRLF),
-                     Remaining (Data.Started, Data.Timeout),
-                     Token => Token);
-                  Send_Data (Count);
-                  Connections.Send_All
-                    (Data.Connection.Channel, Byte_Array (CRLF),
-                     Remaining (Data.Started, Data.Timeout),
-                     Token => Token);
-               end if;
-            end;
-            exit when Finished;
-         end loop;
-         Connections.Send_All
-           (Data.Connection.Channel, Byte_Array ("0" & CRLF),
-            Remaining (Data.Started, Data.Timeout), Token => Token);
-         for Index in 1 .. Flyology.HTTP.Headers.Count (Trailers) loop
-            Connections.Send_All
-              (Data.Connection.Channel,
-               Byte_Array
-                 (Flyology.HTTP.Headers.Name (Trailers, Index) & ": " &
-                  Flyology.HTTP.Headers.Value (Trailers, Index) & CRLF),
-               Remaining (Data.Started, Data.Timeout), Token => Token);
-         end loop;
-         Connections.Send_All
-           (Data.Connection.Channel, Byte_Array (CRLF),
-            Remaining (Data.Started, Data.Timeout), Token => Token);
-      end if;
-   end Send_Streaming_Body;
-
    procedure Receive_More
      (Data        : in out Response_Data;
       Peer_Closed : out Boolean;
@@ -207,6 +80,14 @@ package body HTTP_1_Internals is
          elsif Whole_Wait < 0.0 then Maximum_Wait
          else Duration'Min (Whole_Wait, Maximum_Wait));
    begin
+      Client_Test_Barrier (3);
+      if Token /= null and then Token.Requested then
+         raise Flyology.Cancellation.Operation_Cancelled;
+      elsif Data.Timeout >= 0.0
+        and then Remaining (Data.Started, Data.Timeout) <= 0.0
+      then
+         raise Flyology.IO.Timeout_Error;
+      end if;
       Connections.Receive
         (Data.Connection.Channel, Buffer, Last,
          Wait, Token => Token);
@@ -216,36 +97,6 @@ package body HTTP_1_Internals is
          Append (Data.Pending, Byte_String (Buffer (Buffer'First .. Last)));
       end if;
    end Receive_More;
-
-   procedure Reset_Attempt (Data : in out Response_Data) is
-   begin
-      Flyology.HTTP.Headers.Clear (Data.Fields);
-      Flyology.HTTP.Headers.Clear (Data.Trailers);
-      Data.Connection := null;
-      Data.Slot_Index := 0;
-      Data.Engine := HTTP_1_Response;
-      Data.HTTP_2_Stream := H2_Connections.No_Stream;
-      Data.HTTP_3_Stream := 0;
-      Flyology.Bytes.Clear (Data.HTTP_3_Pending);
-      Data.HTTP_3_Pending_Offset := 0;
-      Data.HTTP_3_Stream_Ended := False;
-      Data.Status_Value := 200;
-      Data.Reason_Value := Null_Unbounded_String;
-      Data.Protocol_Value := HTTP_1_1_Protocol;
-      Data.Version_Value := HTTP_1_1;
-      Data.Pending := Null_Unbounded_String;
-      Data.Mode := No_Body;
-      Data.Remaining_Body := 0;
-      Data.Chunk_Remaining := 0;
-      Data.Need_Chunk_CRLF := False;
-      Data.Reading_Trailers := False;
-      Data.Complete := False;
-      Data.Reusable := False;
-      Data.Request_Incomplete := False;
-      Data.Saw_Response_Bytes := False;
-      Data.Source_Failed := False;
-      Data.Informational_Count := 0;
-   end Reset_Attempt;
 
    function Trim_OWS (Value : String) return String is
       First : Natural := Value'First;
@@ -475,63 +326,6 @@ package body HTTP_1_Internals is
       Flush_Field;
    end Parse_Response_Head;
 
-   procedure Read_Next_Head
-     (Data         : in out Response_Data;
-      Token        : access Flyology.Cancellation.Token;
-      Maximum_Wait : Duration := Flyology.IO.Infinite)
-   is
-      Closed       : Boolean;
-      Read_Started : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
-
-      function Wait_Remaining return Duration is
-      begin
-         if Maximum_Wait < 0.0 then
-            return Flyology.IO.Infinite;
-         end if;
-         return Flyology.Time_Math.Remaining
-           (Maximum_Wait,
-            Ada.Real_Time.To_Duration
-              (Ada.Real_Time.Clock - Read_Started));
-      end Wait_Remaining;
-   begin
-      loop
-         declare
-            Text : constant String := To_String (Data.Pending);
-            Mark : constant Natural := Ada.Strings.Fixed.Index
-              (Text, CRLF & CRLF);
-         begin
-            if Mark /= 0 then
-               declare
-                  Head_Last : constant Natural := Mark + CRLF'Length - 1;
-               begin
-                  if Head_Last - Text'First + 1 >
-                    Flyology.HTTP.Headers.Default_Max_Bytes
-                  then
-                     raise Response_Too_Large;
-                  end if;
-                  Parse_Response_Head
-                    (Data, Text (Text'First .. Head_Last));
-                  Data.Pending :=
-                    (if Head_Last = Text'Last
-                     then Null_Unbounded_String
-                     else To_Unbounded_String
-                       (Text (Head_Last + CRLF'Length + 1 .. Text'Last)));
-               end;
-               return;
-            elsif Text'Length >=
-              Flyology.HTTP.Headers.Default_Max_Bytes
-            then
-               raise Response_Too_Large;
-            end if;
-         end;
-         Receive_More (Data, Closed, Token, Wait_Remaining);
-         if Closed then
-            raise Protocol_Error with
-              "peer closed during HTTP response head";
-         end if;
-      end loop;
-   end Read_Next_Head;
-
    procedure Accept_Informational (Data : in out Response_Data) is
       Action : constant Informational_Action := Classify_Informational
         (Status           => Data.Status_Value,
@@ -556,82 +350,55 @@ package body HTTP_1_Internals is
       end case;
    end Accept_Informational;
 
-   procedure Read_Final_Head
-     (Data  : in out Response_Data;
-      Token : access Flyology.Cancellation.Token) is
-   begin
-      loop
-         Read_Next_Head (Data, Token);
-         exit when Data.Status_Value not in 100 .. 199;
-         Accept_Informational (Data);
-      end loop;
-   end Read_Final_Head;
-
-   procedure Await_Continue
-     (Data         : in out Response_Data;
-      Wait_Timeout : Duration;
-      Token        : access Flyology.Cancellation.Token;
-      Final_Ready  : out Boolean)
+   procedure Parse_Available_Final_Head
+     (Data     : in out Response_Data;
+      Complete : out Boolean)
    is
-      Wait_Started : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
-
-      function Continue_Remaining return Duration is
-      begin
-         if Wait_Timeout < 0.0 then
-            return Flyology.IO.Infinite;
-         end if;
-         return Flyology.Time_Math.Remaining
-           (Wait_Timeout,
-            Ada.Real_Time.To_Duration
-              (Ada.Real_Time.Clock - Wait_Started));
-      end Continue_Remaining;
-
-      function Read_Within_Continue_Wait return Boolean is
-         Continue_Wait : constant Duration := Continue_Remaining;
-         Whole_Wait    : constant Duration := Remaining
-           (Data.Started, Data.Timeout);
-         Continue_Is_Limit : constant Boolean :=
-           Continue_Wait >= 0.0
-             and then (Whole_Wait < 0.0 or else Continue_Wait < Whole_Wait);
-      begin
-         if Continue_Wait = 0.0 and then Length (Data.Pending) = 0 then
-            return False;
-         end if;
-         begin
-            Read_Next_Head (Data, Token, Continue_Wait);
-            return True;
-         exception
-            when Flyology.IO.Timeout_Error =>
-               if not Continue_Is_Limit then
-                  raise;
-               elsif Length (Data.Pending) = 0 then
-                  return False;
-               else
-                  --  Do not interleave a request body with a partially
-                  --  received response head. Finish it under the whole
-                  --  exchange deadline instead of applying the fallback.
-                  Read_Next_Head (Data, Token);
-                  return True;
-               end if;
-         end;
-      end Read_Within_Continue_Wait;
    begin
-      Final_Ready := False;
+      Complete := False;
       loop
-         exit when not Read_Within_Continue_Wait;
+         declare
+            Text : constant String := To_String (Data.Pending);
+            Mark : constant Natural := Ada.Strings.Fixed.Index
+              (Text, CRLF & CRLF);
+         begin
+            if Mark = 0 then
+               if Text'Length >= Flyology.HTTP.Headers.Default_Max_Bytes then
+                  raise Response_Too_Large;
+               end if;
+               return;
+            end if;
+
+            declare
+               Head_Last : constant Natural := Mark + CRLF'Length - 1;
+            begin
+               if Head_Last - Text'First + 1 >
+                 Flyology.HTTP.Headers.Default_Max_Bytes
+               then
+                  raise Response_Too_Large;
+               end if;
+               Parse_Response_Head
+                 (Data, Text (Text'First .. Head_Last));
+               Data.Pending :=
+                 (if Head_Last + CRLF'Length >= Text'Last
+                  then Null_Unbounded_String
+                  else To_Unbounded_String
+                    (Text (Head_Last + CRLF'Length + 1 .. Text'Last)));
+            end;
+         end;
+
          if Data.Status_Value not in 100 .. 199 then
-            Final_Ready := True;
+            Complete := True;
             return;
          end if;
          Accept_Informational (Data);
-         if Data.Status_Value = 100 then
-            return;
-         end if;
       end loop;
-   end Await_Continue;
+   end Parse_Available_Final_Head;
 
    procedure Select_Body_Mode
-     (Data : in out Response_Data; Request_Method : Method)
+     (Data                : in out Response_Data;
+      Request_Method      : Method;
+      Release_Immediately : Boolean := True)
    is
       Length_Present : Boolean;
       Length_Value   : constant Natural := Content_Length
@@ -700,13 +467,17 @@ package body HTTP_1_Internals is
          Data.Mode := Until_Close_Body;
          Data.Reusable := False;
       end if;
-      if Data.Mode = No_Body then
-         if Length (Data.Pending) > 0 then
-            --  Bytes following a bodyless response may only be a response to a
-            --  pipelined request, which this client never sends.
-            Data.Reusable := False;
-         end if;
+      if Data.Mode = No_Body and then Length (Data.Pending) > 0 then
+         --  Bytes following a bodyless response may only be a response to a
+         --  pipelined request, which this client never sends. This applies to
+         --  both immediate and scoped completion; otherwise a scoped response
+         --  can poison the next pooled request.
+         Data.Reusable := False;
+      end if;
+      if Data.Mode = No_Body and then Release_Immediately then
          Release_Lease (Data, Data.Reusable, Verify => Undelivered_Framing);
+      elsif Data.Mode = No_Body then
+         Data.Verify_On_Reuse := Undelivered_Framing;
       end if;
    end Select_Body_Mode;
 
@@ -1083,6 +854,157 @@ package body HTTP_1_Internals is
       end;
    end Add_Trailer;
 
+   procedure Consume_Available_Content
+     (Data        : in out Response_Data;
+      Output      : out Ada.Streams.Stream_Element_Array;
+      Last        : out Ada.Streams.Stream_Element_Offset;
+      Complete    : out Boolean;
+      Need_Input  : out Boolean;
+      Peer_Closed : Boolean := False)
+   is
+      Used : Natural := 0;
+
+      procedure Need_More (Context : String) is
+      begin
+         if Peer_Closed then
+            raise Protocol_Error with Context;
+         end if;
+         Need_Input := True;
+      end Need_More;
+
+      procedure Take_Line
+        (Line      : out Unbounded_String;
+         Available : out Boolean;
+         Context   : String)
+      is
+         Text : constant String := To_String (Data.Pending);
+         Mark : constant Natural := Ada.Strings.Fixed.Index (Text, CRLF);
+      begin
+         if Mark = 0 then
+            if Text'Length >= Flyology.HTTP.Headers.Default_Max_Bytes then
+               raise Protocol_Error with
+                 "HTTP chunk framing line exceeds configured bound";
+            end if;
+            Line := Null_Unbounded_String;
+            Available := False;
+            Need_More (Context);
+            return;
+         end if;
+         Line := To_Unbounded_String (Text (Text'First .. Mark - 1));
+         Remove_Pending_Prefix
+           (Data, Mark - Text'First + CRLF'Length);
+         Available := True;
+      end Take_Line;
+   begin
+      Output := (others => 0);
+      Last := Output'First - 1;
+      Complete := False;
+      Need_Input := False;
+
+      case Data.Mode is
+         when No_Body =>
+            Complete := True;
+
+         when Fixed_Body =>
+            if Data.Remaining_Body = 0 then
+               Complete := True;
+            elsif Length (Data.Pending) = 0 then
+               Need_More
+                 ("peer closed before Content-Length was received");
+            else
+               Copy_Pending
+                 (Data, Output, Used, Data.Remaining_Body);
+               Data.Remaining_Body := Data.Remaining_Body - Used;
+               if Data.Remaining_Body = 0 then
+                  Complete := True;
+                  if Length (Data.Pending) > 0 then
+                     Data.Reusable := False;
+                  end if;
+               end if;
+            end if;
+
+         when Until_Close_Body =>
+            if Length (Data.Pending) > 0 then
+               Copy_Pending (Data, Output, Used, Natural'Last);
+            elsif Peer_Closed then
+               Complete := True;
+            else
+               Need_Input := True;
+            end if;
+
+         when Chunked_Body =>
+            if Data.Chunk_Remaining > 0 then
+               if Length (Data.Pending) = 0 then
+                  Need_More ("peer closed during HTTP chunk data");
+               else
+                  Copy_Pending
+                    (Data, Output, Used, Data.Chunk_Remaining);
+                  Data.Chunk_Remaining := Data.Chunk_Remaining - Used;
+                  if Data.Chunk_Remaining = 0 then
+                     Data.Need_Chunk_CRLF := True;
+                  end if;
+               end if;
+
+            elsif Data.Need_Chunk_CRLF then
+               if Length (Data.Pending) < CRLF'Length then
+                  Need_More ("peer closed during HTTP chunk framing");
+               else
+                  declare
+                     Text : constant String := To_String (Data.Pending);
+                  begin
+                     if Text (Text'First .. Text'First + 1) /= CRLF then
+                        raise Protocol_Error with
+                          "missing CRLF after HTTP chunk data";
+                     end if;
+                  end;
+                  Remove_Pending_Prefix (Data, CRLF'Length);
+                  Data.Need_Chunk_CRLF := False;
+               end if;
+
+            elsif Data.Reading_Trailers then
+               declare
+                  Line      : Unbounded_String;
+                  Available : Boolean;
+               begin
+                  Take_Line
+                    (Line, Available,
+                     "peer closed during HTTP trailer framing");
+                  if Available then
+                     if Length (Line) = 0 then
+                        Complete := True;
+                        if Length (Data.Pending) > 0 then
+                           Data.Reusable := False;
+                        end if;
+                     else
+                        Add_Trailer (Data, To_String (Line));
+                     end if;
+                  end if;
+               end;
+
+            else
+               declare
+                  Line      : Unbounded_String;
+                  Available : Boolean;
+               begin
+                  Take_Line
+                    (Line, Available,
+                     "peer closed during HTTP chunk framing");
+                  if Available then
+                     Data.Chunk_Remaining := Chunk_Size (To_String (Line));
+                     if Data.Chunk_Remaining = 0 then
+                        Data.Reading_Trailers := True;
+                     end if;
+                  end if;
+               end;
+            end if;
+      end case;
+
+      if Used > 0 then
+         Last := Output'First
+           + Ada.Streams.Stream_Element_Offset (Used) - 1;
+      end if;
+   end Consume_Available_Content;
+
    procedure Read_Response_Body
      (Item     : in out Response;
       Data     : out Ada.Streams.Stream_Element_Array;
@@ -1235,7 +1157,13 @@ package body HTTP_1_Internals is
          if Item.Data /= null and then Item.Data.Connection /= null then
             Release_Lease (Item.Data.all, False);
          end if;
-         Translate_Interruption (Item.Data.Owner, Token);
+         if Item.Data /= null
+           and then Item.Data.Owner /= null
+           and then Item.Data.Owner.Pool.Is_Stopping
+         then
+            raise Client_Closed;
+         end if;
+         raise;
       when others =>
          if Item.Data /= null and then Item.Data.Connection /= null then
             Release_Lease (Item.Data.all, False);

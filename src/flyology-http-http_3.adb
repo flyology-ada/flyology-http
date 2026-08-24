@@ -289,7 +289,8 @@ package body Flyology.HTTP.HTTP_3 is
       Error  : constant Application_Error_Code :=
         (case Reason is
             when Reject_Unprocessed => H3_Request_Rejected,
-            when Cancel_Processing => H3_Request_Cancelled);
+            when Cancel_Processing => H3_Request_Cancelled,
+            when Malformed_Message => H3_Message_Error);
    begin
       Packet := (others => <>);
       if not Is_Initialized (Item) then

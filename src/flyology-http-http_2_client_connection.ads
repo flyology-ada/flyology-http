@@ -3,6 +3,7 @@ with Flyology.Bytes;
 with Flyology.HTTP.Headers;
 with Flyology.IO;
 with Flyology.IO.Connections;
+with Flyology.IO.Connections.Drivers;
 
 --  Owns the connection-scoped HTTP/2 pump and its bounded set of concurrent
 --  client streams.  The public client keeps this transport detail private.
@@ -22,6 +23,7 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
      (Head_Ready,
       Head_Would_Block,
       Head_Connection_Failed,
+      Head_Protocol_Failed,
       Head_Refused,
       Head_Goaway_Unprocessed);
 
@@ -30,16 +32,73 @@ private package Flyology.HTTP.HTTP_2_Client_Connection is
       Body_Would_Block,
       Body_Finished,
       Body_Connection_Failed,
+      Body_Protocol_Failed,
       Body_Stream_Failed);
 
    type Upload_Result is
      (Upload_Accepted, Upload_Would_Block, Upload_Failed);
 
-   --  Allocate a session and start its lightweight transport pump.  Channel
-   --  remains owned by the caller and must outlive Item.
-   procedure Create
-     (Item    : out Session_Access;
-      Channel : not null access Flyology.IO.Connections.Connection);
+   --  Allocate a session whose transport is driven only by client operations
+   --  on their completion-set owner's stack. No task is created.
+   procedure Create (Item : out Session_Access);
+
+   type Pump_Step_Result is
+     (Pump_Progress, Pump_Need_Read, Pump_Need_Write,
+      Pump_Peer_Closed, Pump_Protocol_Failed);
+
+   type Pump_Step is record
+      Result         : Pump_Step_Result := Pump_Progress;
+      Sent_Bytes     : Boolean := False;
+      Received_Bytes : Boolean := False;
+      Outbound_Pending : Boolean := False;
+      Closing_Drain    : Boolean := False;
+      Drain_Remaining  : Duration := 0.0;
+   end record;
+
+   --  Claim the shared session pump for Handle. Exactly one stream operation
+   --  drives the connection at a time; every other stream remains protected
+   --  by the controller and waits on its ordinary stream wake source. Waiting
+   --  streams receive bounded round-robin ownership handoff so a repeatedly
+   --  rescheduled owner cannot starve a sibling through its whole deadline.
+   procedure Try_Claim_Pump
+     (Item    : in out Session;
+      Handle  : Stream_Handle;
+      Claimed : out Boolean);
+
+   function Owns_Pump
+     (Item : Session; Handle : Stream_Handle) return Boolean;
+
+   procedure Release_Pump
+     (Item : in out Session; Handle : Stream_Handle);
+
+   --  Return a wake descriptor for ownership of the shared pump. Ready_Now
+   --  is true only when Handle may claim it or its stream has failed.
+   procedure Pump_Wait_Source
+     (Item      : in out Session;
+      Handle    : Stream_Handle;
+      FD        : out Flyology.IO.Descriptor;
+      Ready_Now : out Boolean);
+
+   --  Return whether a peer response event has been attributed to Handle.
+   --  This is diagnostic admission certainty only; it does not imply a
+   --  complete or semantically valid response.
+   function Has_Response_Observation
+     (Item : Session; Handle : Stream_Handle) return Boolean;
+
+   --  Perform one bounded protocol or transport step. IO must be acquired by
+   --  the claiming outer exchange operation.
+   procedure Drive_Pump
+     (Item   : in out Session;
+      Handle : Stream_Handle;
+      IO     : in out Flyology.IO.Connections.Drivers.Capability;
+      Step   : out Pump_Step);
+
+   --  Return the coalesced protocol-output wakeup used with the connection
+   --  driver's composable Arm_Transport overload.
+   function Outbound
+     (Item : aliased in out Session)
+      return not null access
+        Flyology.IO.Connections.Drivers.Outbound_Wakeup;
 
    --  Close wakes the pump; this call waits until it has stopped and releases
    --  the session storage.  Channel itself is not closed here.
@@ -127,16 +186,8 @@ private
 
    type Session_State;
    type Session_State_Access is access Session_State;
-   task type Pump_Task
-     (State   : not null Session_State_Access;
-      Channel : not null access Flyology.IO.Connections.Connection) is
-      pragma Task_Info (Flyology.Lightweight_Task);
-   end Pump_Task;
-   type Pump_Access is access Pump_Task;
-
    type Session is limited record
       State : Session_State_Access := null;
-      Pump  : Pump_Access := null;
    end record;
 
 end Flyology.HTTP.HTTP_2_Client_Connection;

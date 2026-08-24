@@ -3,13 +3,15 @@
 
 import argparse
 import asyncio
+import json
 import socket
+from pathlib import Path
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aioquic.asyncio import QuicConnectionProtocol, serve
 from aioquic.h3.connection import H3_ALPN, H3Connection
-from aioquic.h3.events import HeadersReceived
+from aioquic.h3.events import DataReceived, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import ProtocolNegotiated, QuicEvent
 from aioquic.tls import CipherSuite
@@ -34,9 +36,39 @@ PRIVATE_KEY = bytes.fromhex(
 
 
 class OracleProtocol(QuicConnectionProtocol):
+    corpus_mode = False
+    lost_response_mode = False
+    malformed_response_mode: str | None = None
+    request_log: Path | None = None
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.http = None
+        self.requests = {}
+        self.completed = set()
+
+    def finish_lost_request(self, stream_id: int) -> None:
+        if stream_id in self.completed:
+            return
+        self.completed.add(stream_id)
+        request = self.requests.get(stream_id, {"headers": [], "body": bytearray()})
+        fields = dict(request["headers"])
+        record = {
+            "request": (
+                fields.get(b":method", b"").decode("latin-1")
+                + " "
+                + fields.get(b":path", b"").decode("latin-1")
+                + " HTTP/3"
+            ),
+            "if_none_match": fields.get(b"if-none-match", b"").decode(
+                "latin-1"
+            ),
+            "body_hex": bytes(request["body"]).hex(),
+        }
+        if self.request_log is not None:
+            with self.request_log.open("a", encoding="utf-8") as log:
+                print(json.dumps(record), file=log, flush=True)
+        self.close(error_code=0, reason_phrase="lost final response")
 
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, ProtocolNegotiated):
@@ -45,17 +77,89 @@ class OracleProtocol(QuicConnectionProtocol):
             return
         for http_event in self.http.handle_event(event):
             if isinstance(http_event, HeadersReceived):
+                if self.malformed_response_mode is not None:
+                    fields = dict(http_event.headers)
+                    if fields.get(b":path") == b"/invalid":
+                        malformed = {
+                            "pseudo-after-field": [
+                                (b"x-regular", b"1"),
+                                (b":status", b"200"),
+                            ],
+                            "connection-specific-field": [
+                                (b":status", b"200"),
+                                (b"connection", b"close"),
+                            ],
+                            "status-101": [(b":status", b"101")],
+                        }[self.malformed_response_mode]
+                        self.http.send_headers(
+                            http_event.stream_id, malformed, end_stream=True
+                        )
+                    else:
+                        self.http.send_headers(
+                            http_event.stream_id,
+                            [(b":status", b"200"),
+                             (b"content-length", b"5")],
+                        )
+                        self.http.send_data(
+                            http_event.stream_id, b"hello", end_stream=True
+                        )
+                    self.transmit()
+                    continue
+                if self.lost_response_mode:
+                    fields = dict(http_event.headers)
+                    if fields.get(b":method") == b"GET":
+                        self.http.send_headers(
+                            http_event.stream_id,
+                            [(b":status", b"200"),
+                             (b"content-length", b"0")],
+                            end_stream=True,
+                        )
+                        self.transmit()
+                        continue
+                    self.requests[http_event.stream_id] = {
+                        "headers": http_event.headers,
+                        "body": bytearray(),
+                    }
+                    if http_event.stream_ended:
+                        self.finish_lost_request(http_event.stream_id)
+                    continue
+                body = b"corpus-fixed-body" if self.corpus_mode else b"hello"
+                fields = [
+                    (b":status", b"200"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ]
+                if self.corpus_mode:
+                    fields.extend(
+                        [
+                            (b"x-corpus-value", b"alpha"),
+                            (b"x-corpus-value", b"beta"),
+                        ]
+                    )
                 self.http.send_headers(
                     http_event.stream_id,
-                    [(b":status", b"200"), (b"content-length", b"5")],
+                    fields,
                 )
                 self.http.send_data(
-                    http_event.stream_id, b"hello", end_stream=True
+                    http_event.stream_id, body, end_stream=True
                 )
                 self.transmit()
+            elif isinstance(http_event, DataReceived) and self.lost_response_mode:
+                request = self.requests.setdefault(
+                    http_event.stream_id, {"headers": [], "body": bytearray()}
+                )
+                request["body"].extend(http_event.data)
+                if http_event.stream_ended:
+                    self.finish_lost_request(http_event.stream_id)
 
 
-async def main(port: int, receive_buffer: int) -> None:
+async def main(
+    port: int,
+    receive_buffer: int,
+    corpus: bool,
+    lost_response: bool,
+    malformed_response: str | None,
+    request_log: Path | None,
+) -> None:
     configuration = QuicConfiguration(
         alpn_protocols=H3_ALPN,
         cipher_suites=[CipherSuite.AES_128_GCM_SHA256],
@@ -64,6 +168,12 @@ async def main(port: int, receive_buffer: int) -> None:
     )
     configuration.certificate = x509.load_der_x509_certificate(CERTIFICATE_DER)
     configuration.private_key = Ed25519PrivateKey.from_private_bytes(PRIVATE_KEY)
+    OracleProtocol.corpus_mode = corpus
+    OracleProtocol.lost_response_mode = lost_response
+    OracleProtocol.malformed_response_mode = malformed_response
+    OracleProtocol.request_log = request_log
+    if request_log is not None:
+        request_log.write_text("", encoding="utf-8")
     server = await serve(
         "127.0.0.1", port,
         configuration=configuration,
@@ -75,8 +185,9 @@ async def main(port: int, receive_buffer: int) -> None:
     actual_receive_buffer = server_socket.getsockopt(
         socket.SOL_SOCKET, socket.SO_RCVBUF
     )
+    actual_port = server_socket.getsockname()[1]
     print(
-        f"aioquic HTTP/3 oracle listening on 127.0.0.1:{port} "
+        f"aioquic HTTP/3 oracle listening on 127.0.0.1:{actual_port} "
         f"receive_buffer={actual_receive_buffer}",
         flush=True,
     )
@@ -90,5 +201,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=4433)
     parser.add_argument("--receive-buffer", type=int, default=4 * 1024 * 1024)
+    parser.add_argument("--corpus", action="store_true")
+    parser.add_argument("--lost-response", action="store_true")
+    parser.add_argument(
+        "--malformed-response",
+        choices=("pseudo-after-field", "connection-specific-field", "status-101"),
+    )
+    parser.add_argument("--log-file", type=Path)
     arguments = parser.parse_args()
-    asyncio.run(main(arguments.port, arguments.receive_buffer))
+    asyncio.run(
+        main(
+            arguments.port,
+            arguments.receive_buffer,
+            arguments.corpus,
+            arguments.lost_response,
+            arguments.malformed_response,
+            arguments.log_file,
+        )
+    )

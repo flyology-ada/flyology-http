@@ -80,6 +80,8 @@ jobs:
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Use the in-tree QUIC prerequisite
+        run: alr pin flyology_quic --use=flyology_quic
       # The WPT URL corpus that gates flyology_iri is third-party data, so it
       # is pinned by commit rather than followed by tag or branch. 32dabc8d is
       # the ada-url/ada revision flyology_iri/BENCHMARKS.md already pins as Ada
@@ -124,6 +126,8 @@ jobs:
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Use the in-tree QUIC prerequisite
+        run: alr pin flyology_quic --use=flyology_quic
       - name: Prove QUIC and HTTP policy units
         env:
           FLYOLOGY_PROOF_LEVEL: "2"
@@ -151,6 +155,8 @@ jobs:
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Use the in-tree QUIC prerequisite
+        run: alr pin flyology_quic --use=flyology_quic
       - name: Install independent HTTP/2 peer
         timeout-minutes: 15
         run: |
@@ -179,7 +185,10 @@ jobs:
       - name: Prepare HTTP/2 tester and runtime
         run: |
           ./scripts/http2-test.sh prepare
+          ./scripts/http-client-differential.sh prepare
           ./scripts/test.sh
+      - name: Run Ada/PycURL client differential
+        run: ./scripts/http-client-differential.sh run
       - name: Run HTTP/2 qualification
         run: |
           if [ "${{ github.event_name }}" = schedule ]; then
@@ -210,6 +219,8 @@ jobs:
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Use the in-tree QUIC prerequisite
+        run: alr pin flyology_quic --use=flyology_quic
       - name: Report independent oracle versions
         run: |
           python3 --version
@@ -243,6 +254,8 @@ jobs:
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Use the in-tree QUIC prerequisite
+        run: alr pin flyology_quic --use=flyology_quic
       - name: Run published h3spec error suite
         run: ./scripts/test-http3-h3spec.sh
       - name: Run bounded HTTP/3 stress campaign
@@ -303,6 +316,8 @@ jobs:
         run: |
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Use the in-tree QUIC prerequisite
+        run: alr pin flyology_quic --use=flyology_quic
       - name: Locate OpenSSL 3 modules
         if: contains(matrix.profile, '-wss')
         run: |

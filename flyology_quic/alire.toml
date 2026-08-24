@@ -1,6 +1,6 @@
 name = "flyology_quic"
 description = "Ada-native QUIC transport for Flyology tasks"
-version = "0.1.1"
+version = "0.1.1-dev"
 
 authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added owner-driven complete client exchange operations for bounded buffers
+  and streaming sinks, with established-child composition, monotonic admission
+  certainty, absolute deadlines, and typed environmental outcomes.
+- Added one executable JSON client corpus for synchronous and composable H1,
+  H2, and H3 scenarios, with binary fixtures, Ada golden checks, PycURL and
+  aioquic differentials, and explicit execution coverage.
+
+### Changed
+
+- Routed synchronous client request admission, connection setup, request
+  upload, and response-head processing through the same composable H1, H2,
+  and H3 engine. Owner-driven H2 and H3 streams share multiplexed sessions
+  without connector or protocol-pump helper tasks.
+- Kept the active development manifests at `flyology_http=0.1.1-dev` and
+  `flyology_quic=0.1.1-dev`; this work creates no stable release tags.
+
+### Fixed
+
+- Added rolling HTTP/3 stream receive credit for complete responses larger
+  than the initial QUIC stream window, including retransmission below the
+  consumed receive base.
+- Prevented ambiguous conditional mutations from automatic replay after
+  request handoff, and preserved stream-local H2/H3 failures without failing
+  unrelated multiplexed exchanges.
+
 ## [0.1.2] - 2026-08-21
 
 ### Added

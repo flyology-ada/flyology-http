@@ -10,6 +10,8 @@
 /docs/gnatdoc/html/
 /tests/bin/
 /tests/obj/
+**/__pycache__/
+*.py[cod]
 /tests/fixtures/tls/server-cert.pem
 /tests/fixtures/tls/server-key.pem
 /showcases/alire/

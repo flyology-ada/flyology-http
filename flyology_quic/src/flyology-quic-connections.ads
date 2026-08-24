@@ -149,6 +149,8 @@ package Flyology.QUIC.Connections is
 
    --  Return the aggregate payload length described by Fragments, capped one
    --  past Max_Stream_Payload so callers can validate without overflow.
+   --  @param Fragments Bounded STREAM frame descriptions
+   --  @return Aggregate described payload length, capped past the maximum
    function Total_Length
      (Fragments : Stream_Fragment_Array) return Natural;
 
@@ -753,5 +755,6 @@ private
    end record;
 
    --  @exclude
+   --  @param Item Connection state to release
    overriding procedure Finalize (Item : in out Connection);
 end Flyology.QUIC.Connections;

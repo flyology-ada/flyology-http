@@ -155,6 +155,30 @@ procedure HTTP2_Client_Soak is
 
    Backend : aliased OpenSSL.OpenSSL_Provider;
 
+   generic
+      Execution : Flyology.Execution_Model;
+   procedure Warm_Execution_Model;
+
+   procedure Warm_Execution_Model is
+      task type Warm_Task is
+         pragma Task_Info (Execution);
+      end Warm_Task;
+
+      task body Warm_Task is
+      begin
+         null;
+      end Warm_Task;
+
+      Worker : Warm_Task;
+      pragma Unreferenced (Worker);
+   begin
+      null;
+   end Warm_Execution_Model;
+
+   procedure Warm_Native is new Warm_Execution_Model (Flyology.Native_Task);
+   procedure Warm_Lightweight is new Warm_Execution_Model
+     (Flyology.Lightweight_Task);
+
    procedure Warm is
       HTTP  : aliased Client.Client (Capacity => 1);
       Value : Client.Request;
@@ -367,6 +391,11 @@ begin
    OpenSSL.Initialize_Client
      (Backend, CA_File => Certificate,
       Library_Directory => Library_Directory);
+   if Model = Flyology.Native_Task then
+      Warm_Native;
+   else
+      Warm_Lightweight;
+   end if;
    Warm;
    declare
       Baseline : constant Interfaces.C.int := Open_FD_Count;

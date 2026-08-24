@@ -126,6 +126,23 @@ is
          Item.Initial.Bidi_Local
       else Item.Initial.Bidi_Remote);
 
+   function Stream_Window
+     (Item : State; ID : Stream_ID_Policy.Stream_ID) return Value_Type
+   is (Initial_Stream_Limit (Item, ID));
+
+   procedure Raise_Stream_Data_Limit
+     (Item  : in out State;
+      ID    : Stream_ID_Policy.Stream_ID;
+      Limit : Value_Type)
+   is
+      Index : constant Optional_Index := Find (Item, ID);
+   begin
+      if Index /= 0 then
+         Item.Streams (Index).Limit :=
+           Value_Type'Max (Item.Streams (Index).Limit, Limit);
+      end if;
+   end Raise_Stream_Data_Limit;
+
    function Opened_Locally
      (ID                : Stream_ID_Policy.Stream_ID;
       Local_Bidi_Opened : Stream_ID_Policy.Stream_Count;
@@ -206,6 +223,7 @@ is
       Created  : Boolean := False;
       Highest  : Value_Type;
       Increase : Value_Type;
+      Maximum_Stream_Data : Value_Type;
    begin
       Status := Check_Receive_State
         (Item, ID, Local_Bidi_Opened, Local_Uni_Opened);
@@ -224,9 +242,11 @@ is
          end if;
          Created := True;
          Highest := 0;
+         Maximum_Stream_Data := Initial_Stream_Limit (Item, ID);
       else
          pragma Assert (Index in Stream_Index);
          Highest := Item.Streams (Index).Highest;
+         Maximum_Stream_Data := Item.Streams (Index).Limit;
       end if;
 
       if Index /= 0
@@ -240,7 +260,7 @@ is
       elsif Fin and then Ending < Highest then
          Status := Stream_Final_Size_Mismatch;
          return;
-      elsif Ending > Initial_Stream_Limit (Item, ID) then
+      elsif Ending > Maximum_Stream_Data then
          Status := Stream_Flow_Exceeded;
          return;
       end if;
@@ -288,6 +308,13 @@ is
                         Previous + Stream_ID_Policy.Stream_Count (Step))),
                   Highest =>
                     (if Step = Opening_Index'Last then Ending else 0),
+                  Limit => Initial_Stream_Limit
+                    (Item,
+                     (if Step = Opening_Index'Last
+                      then ID
+                      else ID_For
+                        (Class,
+                         Previous + Stream_ID_Policy.Stream_Count (Step)))),
                   Final_Set => Step = Opening_Index'Last and then Fin,
                   Final =>
                     (if Step = Opening_Index'Last and then Fin

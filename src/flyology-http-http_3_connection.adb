@@ -145,6 +145,40 @@ package body Flyology.HTTP.HTTP_3_Connection is
       end if;
    end Release_Message;
 
+   procedure Abandon_Message
+     (Item      : in out Connection;
+      Transport : in out QUIC.Connection;
+      ID        : QUIC.Stream_ID)
+   is
+      Receive_Slot : constant Optional_Slot := Find (Item, ID);
+   begin
+      if ID mod 4 = 0
+        and then ID / 4 <= QUIC.Stream_ID (Message_Ordinal'Last)
+      then
+         Item.Released_Messages (Message_Ordinal (ID / 4)) := True;
+      end if;
+      if Receive_Slot /= 0 then
+         Item.Streams (Receive_Slot) := (others => <>);
+         Item.Count := Item.Count - 1;
+      end if;
+      for Index in Slot_Index loop
+         if Item.Sending (Index).Occupied
+           and then Item.Sending (Index).ID = ID
+         then
+            Item.Sending (Index) := (others => <>);
+            Item.Send_Count := Item.Send_Count - 1;
+            exit;
+         end if;
+      end loop;
+      if QUIC.Has_Stream (Transport, ID)
+        and then
+          (QUIC.Is_Complete (Transport, ID)
+             or else QUIC.Was_Reset (Transport, ID))
+      then
+         QUIC.Release_Stream (Transport, ID);
+      end if;
+   end Abandon_Message;
+
    procedure Find_Or_Open
      (Item   : in out Connection;
       ID     : QUIC.Stream_ID;
@@ -327,9 +361,15 @@ package body Flyology.HTTP.HTTP_3_Connection is
               or else QUIC.Was_Reset (Transport, ID)
             then
                QUIC.Release_Stream (Transport, ID);
+               --  Releasing compacts the QUIC stream table, so restart on a
+               --  later bounded Poll rather than indexing the changed table.
+               Status := No_Event;
+               return;
             end if;
-            Status := No_Event;
-            return;
+            --  A locally abandoned stream can remain open at the peer while
+            --  sibling streams make progress.  Its tombstone drains any late
+            --  bytes, but must not starve those siblings.
+            goto Next_Stream;
          end if;
          Find_Or_Open (Item, ID, Slot, Status);
          if Status /= Succeeded then
@@ -382,6 +422,21 @@ package body Flyology.HTTP.HTTP_3_Connection is
                end if;
                QUIC.Consume
                  (Transport, ID, QUIC.Stream_Offset (Result.Consumed));
+            end if;
+            if Item.Local_Role = Client
+              and then Status in Message_Error | Header_Error
+            then
+               --  RFC 9114 assigns malformed HTTP message semantics to this
+               --  response stream. Surface a stream-local failure so another
+               --  multiplexed response remains usable; the client commits
+               --  H3_MESSAGE_ERROR before releasing this state. Server-side
+               --  request diagnostics retain their existing typed status.
+               Item.Streams (Slot).Finished := True;
+               Output.Kind := Stream_Reset;
+               Output.Stream := ID;
+               Output.Application_Error := 16#10E#;
+               Status := Succeeded;
+               return;
             end if;
             if Status = No_Event
               and then QUIC.Is_Complete (Transport, ID)
@@ -444,6 +499,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
                return;
             end if;
          end if;
+         <<Next_Stream>>
       end loop;
       Status := No_Event;
    end Poll;
@@ -584,7 +640,7 @@ package body Flyology.HTTP.HTTP_3_Connection is
       elsif not HTTP_3_Stream_Policy.Is_Request_Stream (Stream) then
          Status := ID_Error;
          return;
-      elsif Application_Error not in 16#10B# | 16#10C# then
+      elsif Application_Error not in 16#10B# | 16#10C# | 16#10E# then
          Status := Transport_Error;
          return;
       elsif Item.Local_Role = Client
@@ -609,6 +665,13 @@ package body Flyology.HTTP.HTTP_3_Connection is
       if Status = Succeeded then
          Item.Sending (Slot).Finished := True;
          Item.Sending (Slot).Cancelled := True;
+         if Item.Local_Role = Client then
+            --  A scoped client owns the complete exchange lifecycle and has
+            --  no later Release_Request call. Retire its local message state
+            --  once RESET_STREAM/STOP_SENDING has been built. The server
+            --  keeps request state until its normal Release_Request step.
+            Abandon_Message (Item, Transport, Stream);
+         end if;
       end if;
    end Build_Request_Cancellation;
 

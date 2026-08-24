@@ -1,5 +1,33 @@
+with Ada.Streams.Stream_IO;
+
 procedure Flyology.HTTP.QPACK_Field_Section_Policy.Smoke is
    use type Ada.Streams.Stream_Element_Array;
+
+   function Fixture
+     (Name : String) return Ada.Streams.Stream_Element_Array
+   is
+      package IO renames Ada.Streams.Stream_IO;
+      File : IO.File_Type;
+   begin
+      IO.Open
+        (File, IO.In_File, "tests/corpus/fixtures/" & Name & ".bin");
+      declare
+         Result : Ada.Streams.Stream_Element_Array
+           (1 .. Ada.Streams.Stream_Element_Offset (IO.Size (File)));
+         Last : Ada.Streams.Stream_Element_Offset;
+      begin
+         IO.Read (File, Result, Last);
+         IO.Close (File);
+         pragma Assert (Last = Result'Last);
+         return Result;
+      exception
+         when others =>
+            if IO.Is_Open (File) then
+               IO.Close (File);
+            end if;
+            raise;
+      end;
+   end Fixture;
 
    Request : Header_Block;
    Wire    : Encode_Result;
@@ -48,7 +76,7 @@ begin
    --  bounded static-only profile must reject its nonzero Required Insert
    --  Count explicitly, rather than interpreting it as a static section.
    pragma Assert
-     (Decode ((16#03#, 16#81#, 16#10#, 16#11#)).Status =
+     (Decode (Fixture ("h3-qpack-dynamic-reference")).Status =
         Unsupported_Dynamic);
 
    pragma Assert (Decode ((16#01#, 16#00#)).Status = Unsupported_Dynamic);
@@ -63,7 +91,7 @@ begin
       and then Field_Name (Parsed.Block.Fields (1)) = ":path"
       and then Field_Value (Parsed.Block.Fields (1)) = "www.example.com");
    pragma Assert
-     (Decode ((16#00#, 16#00#, 16#50#, 16#81#, 16#00#)).Status =
+     (Decode (Fixture ("h3-qpack-invalid-huffman")).Status =
         Invalid_Huffman);
    pragma Assert
      (Decode ((16#00#, 16#00#, 16#FF#, 16#24#)).Status =

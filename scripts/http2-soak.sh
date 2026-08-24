@@ -72,7 +72,13 @@ for model in $models; do
     then
       kill "$peer_pid" 2>/dev/null || :
       wait "$peer_pid" 2>/dev/null || :
-      sed -n '1,160p' "$log_file" >&2
+      printf '%s\n' "HTTP/2 soak peer log (first events):" >&2
+      sed -n '1,40p' "$log_file" >&2
+      printf '%s\n' "HTTP/2 soak peer log (final events):" >&2
+      tail -160 "$log_file" >&2
+      PYTHONDONTWRITEBYTECODE=1 "$python" -c \
+        'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; print("peer summary: connections=%d requests=%d request_ends=%d responses=%d resets=%d timeouts=%d" % (sum(e["event"]=="connected" for e in events), sum(e["event"]=="request" for e in events), sum(e["event"]=="request-end" for e in events), sum(e["event"] in ("response", "cancel-response") for e in events), sum(e["event"]=="client-reset" for e in events), sum(e["event"]=="receive-timeout" for e in events)), file=sys.stderr)' \
+        "$log_file"
       rm -rf "$run_dir"
       exit 1
     fi

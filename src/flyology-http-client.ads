@@ -2,15 +2,20 @@ with Ada.Finalization;
 with Ada.Streams;
 with Ada.Strings.Unbounded;
 with Flyology.Bytes;
+with Flyology.Buffers;
 with Flyology.Cancellation;
 with Flyology.HTTP.Headers;
+with Flyology.IO;
 with Flyology.IO.TLS;
+with Flyology.Operations;
+private with Ada.Real_Time;
 
---  Provides an origin-bound synchronous HTTP client with bounded connection
---  pooling. Lightweight callers suspend on Flyology I/O; native callers block
---  only their pthread. Existing configuration remains HTTP/1.1-only; additive
---  protocol modes enable HTTP/2 and HTTP/3 without exposing transport or
---  stream ownership through the request/response API.
+--  Provides origin-bound synchronous and owner-driven composable HTTP
+--  exchanges with bounded connection pooling. Synchronous Execute drives the
+--  same completion-set operation engine as Scoped exchanges. Lightweight
+--  callers suspend on Flyology I/O; native callers block only their pthread.
+--  Protocol modes enable HTTP/1.1, HTTP/2, and HTTP/3 without exposing
+--  transport or stream ownership through the request/response API.
 package Flyology.HTTP.Client is
 
    --  Maximum request-target bytes retained by a Request. This accommodates
@@ -126,12 +131,11 @@ package Flyology.HTTP.Client is
    --  that a name
    --  resolves to. Returning False skips that address and the client tries the
    --  next one; refusing every resolved address raises Connection_Error and
-   --  opens no socket. Permitted IPv4 and IPv6 addresses are established in
-   --  two bounded concurrent lanes; the first complete TCP connect or QUIC
-   --  handshake wins and interrupts the other lane. Each lane tries further
-   --  addresses of its family after an immediate failure. The filter runs
-   --  serially on the requesting task before either lane starts, inside the
-   --  exchange deadline, and must not block. Only the initial connect is
+   --  opens no socket. The owner-driven exchange tries permitted IPv4 and
+   --  IPv6 addresses serially in resolver order. It advances after an
+   --  immediate connection or handshake failure under the same absolute
+   --  deadline. The filter runs on the requesting task before each attempt
+   --  and must not block. Only the initial connect is
    --  filtered; this client is bound to one origin and never follows a
    --  redirect that leaves it.
    --  @param Host Configured origin host
@@ -523,6 +527,34 @@ package Flyology.HTTP.Client is
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null) return Response;
 
+   --  Execute one request into a reusable response object. Any previous
+   --  response in Result is finalized before the new exchange starts. This
+   --  form avoids successive limited-function return slots in a long-running
+   --  caller scope. Result is uninitialized and reusable if the new exchange
+   --  raises. The exceptions are the same as the function overload above.
+   --  @param Item Shared configured client that outlives the result
+   --  @param Value Request to execute
+   --  @param Result Reusable response destination
+   --  @param Timeout Whole-exchange deadline interval
+   --  @param Token Optional cancellation source
+   --  @exception Client_Closed Client is stopping
+   --  @exception Connection_Error Resolution or connection setup fails
+   --  @exception Constraint_Error Request metadata is unsupported
+   --  @exception Protocol_Error Response framing is malformed or unsupported
+   --  @exception Response_Too_Large Response head exceeds its bound
+   --  @exception Redirect_Error An enabled redirect cannot be followed safely
+   --  @exception Flyology.IO.Timeout_Error Whole-exchange deadline expires
+   --  @exception Flyology.IO.Device_Error Established transport I/O fails
+   --  @exception Flyology.IO.Sockets.Socket_Error Socket transmission fails
+   --  @exception Flyology.IO.TLS.TLS_Error TLS setup or transmission fails
+   --  @exception Flyology.Cancellation.Operation_Cancelled Token is requested
+   procedure Execute
+     (Item    : aliased in out Client;
+      Value   : Request;
+      Result  : in out Response;
+      Timeout : Duration := 30.0;
+      Token   : access Flyology.Cancellation.Token := null);
+
    --  Execute one request while pulling its body from Source. The source's
    --  Declared_Length controls protocol framing. Source is not retained and
    --  is replayed only when it implements Rewindable_Request_Body_Source and
@@ -561,6 +593,446 @@ package Flyology.HTTP.Client is
       Timeout : Duration := 30.0;
       Token   : access Flyology.Cancellation.Token := null) return Response;
 
+   --  Execute a streamed request into a reusable response object. Result is
+   --  uninitialized and reusable if the new exchange raises. The exceptions
+   --  are the same as the streamed function overload above.
+   --  @param Item Shared configured client that outlives the result
+   --  @param Value Request metadata; a retained body is rejected
+   --  @param Source Request body producer used only during this call
+   --  @param Result Reusable response destination
+   --  @param Timeout Whole-exchange deadline interval
+   --  @param Token Optional cancellation source
+   --  @exception Client_Closed Client is stopping
+   --  @exception Connection_Error Resolution or connection setup fails
+   --  @exception Constraint_Error Request metadata is unsupported or already
+   --     contains a retained body
+   --  @exception Request_Body_Error Source violates its progress contract
+   --  @exception Protocol_Error Response framing is malformed or unsupported
+   --  @exception Response_Too_Large Response head exceeds its bound
+   --  @exception Redirect_Error An enabled redirect cannot be followed safely
+   --  @exception Flyology.IO.Timeout_Error Whole-exchange deadline expires
+   --  @exception Flyology.IO.Device_Error Established transport I/O fails
+   --  @exception Flyology.IO.Sockets.Socket_Error Socket transmission fails
+   --  @exception Flyology.IO.TLS.TLS_Error TLS setup or transmission fails
+   --  @exception Flyology.Cancellation.Operation_Cancelled Token is requested
+   procedure Execute
+     (Item    : aliased in out Client;
+      Value   : Request;
+      Source  : in out Request_Body_Source'Class;
+      Result  : in out Response;
+      Timeout : Duration := 30.0;
+      Token   : access Flyology.Cancellation.Token := null);
+
+   --  Absolute monotonic budget shared by a parent operation and one HTTP
+   --  exchange. Construct it before signing or other parent preparation so
+   --  those steps and the later HTTP admission, transport, head, body, and
+   --  drain consume one budget.
+   type Monotonic_Deadline is private;
+
+   --  Deadline without a time limit.
+   No_Deadline : constant Monotonic_Deadline;
+
+   --  Construct an absolute deadline from the current monotonic clock.
+   --  Negative Timeout returns No_Deadline; zero is already due.
+   --  @param Timeout Remaining relative budget in seconds
+   --  @return Absolute monotonic deadline
+   function Deadline_After (Timeout : Duration) return Monotonic_Deadline;
+
+   --  Report whether a finite deadline is due.
+   --  @param Value Deadline to inspect
+   --  @return True when the monotonic clock reached Value
+   function Expired (Value : Monotonic_Deadline) return Boolean;
+
+   --  Monotonic knowledge about possible server admission. This state never
+   --  moves backward. Response_Observed is diagnostic and does not by itself
+   --  make a conditional mutation conclusive.
+   --  @enum Not_Admitted No request head byte, frame, or datagram was handed
+   --     to the kernel or a protocol queue
+   --  @enum Possibly_Admitted At least one request handoff occurred, so the
+   --     server may have accepted the request
+   --  @enum Response_Observed At least one peer response byte or protocol
+   --     response event was observed; only Response_Complete is conclusive
+   type Admission_Certainty is
+     (Not_Admitted, Possibly_Admitted, Response_Observed);
+
+   --  Raw exchange stage retained for diagnostics and deterministic tests.
+   --  Certainty must be consulted separately.
+   --  @enum Not_Started No exchange was started
+   --  @enum Admission_Wait Waiting for a pool lease or creation slot
+   --  @enum Resolving Resolving the configured origin
+   --  @enum Connecting Connecting one resolved address
+   --  @enum Securing Establishing the TLS or QUIC security context
+   --  @enum Sending_Request_Head Encoding or transmitting request metadata
+   --  @enum Sending_Request_Body Pulling or transmitting request body bytes
+   --  @enum Waiting_Response_Head Waiting for a complete final response head
+   --  @enum Receiving_Response_Body Delivering decoded response body bytes
+   --  @enum Draining Cancelling or draining retained protocol work
+   type Exchange_Phase is
+     (Not_Started,
+      Admission_Wait,
+      Resolving,
+      Connecting,
+      Securing,
+      Sending_Request_Head,
+      Sending_Request_Body,
+      Waiting_Response_Head,
+      Receiving_Response_Body,
+      Draining);
+
+   --  Typed terminal HTTP exchange result. Expected environmental outcomes do
+   --  not raise from scoped Finish; exceptions are reserved for programming
+   --  errors and violated provider invariants.
+   --  @enum Response_Complete Complete valid response head and body
+   --  @enum Pre_Admission_Rejected Unsupported request configuration rejected
+   --     before any request handoff
+   --  @enum Cancelled Caller cancellation completed its protocol drain
+   --  @enum Timed_Out Absolute exchange deadline expired
+   --  @enum Client_Unavailable Client is stopped or cannot admit new work
+   --  @enum Connection_Failed Resolution or every address attempt failed
+   --  @enum Transport_Failed Established transport or protocol I/O failed
+   --  @enum Request_Source_Failed Request source violated its contract
+   --  @enum Response_Invalid Response parsing or framing failed
+   --  @enum Response_Body_Too_Large Bounded response destination overflowed
+   --  @enum Response_Sink_Failed Response sink raised while consuming data
+   type Exchange_Result_Kind is
+     (Response_Complete,
+      Pre_Admission_Rejected,
+      Cancelled,
+      Timed_Out,
+      Client_Unavailable,
+      Connection_Failed,
+      Transport_Failed,
+      Request_Source_Failed,
+      Response_Invalid,
+      Response_Body_Too_Large,
+      Response_Sink_Failed);
+
+   --  Optional exact response length requirement.
+   --  @field Known Whether Bytes is exact
+   --  @field Bytes Exact syntactically valid Content-Length when Known
+   type Length_Requirement is record
+      Known : Boolean := False;
+      Bytes : Body_Size := 0;
+   end record;
+
+   --  Maximum sanitized diagnostic detail retained by a scoped exchange.
+   Max_Failure_Detail_Bytes : constant Positive := 512;
+
+   --  Bounded terminal exchange result.
+   type Exchange_Result is private;
+
+   --  Return the typed terminal result.
+   --  @param Item Result to inspect
+   --  @return Typed terminal outcome
+   function Kind (Item : Exchange_Result) return Exchange_Result_Kind;
+   --  Return admission certainty captured at terminal completion.
+   --  @param Item Result to inspect
+   --  @return Monotonic admission certainty
+   function Certainty (Item : Exchange_Result) return Admission_Certainty;
+   --  Return the causal terminal exchange phase. Protocol cleanup does not
+   --  overwrite this value with Draining; use Scoped.Raw_Phase to observe an
+   --  active drain before terminal completion.
+   --  @param Item Result to inspect
+   --  @return Causal terminal diagnostic phase
+   function Phase (Item : Exchange_Result) return Exchange_Phase;
+   --  Return an exact required body length when a trusted Content-Length was
+   --  available before a bounded destination overflowed.
+   --  @param Item Result to inspect
+   --  @return Exact or unknown response body length requirement
+   function Required_Body_Length
+     (Item : Exchange_Result) return Length_Requirement;
+   --  Return bounded sanitized failure detail. It never retains a request
+   --  target, credentials, signed fields, cookies, or request/body bytes.
+   --  @param Item Result to inspect
+   --  @return Bounded safe diagnostic category
+   function Failure_Detail (Item : Exchange_Result) return String;
+
+   --  Immediate response-body consumer. Write receives nonempty bounded slices
+   --  on the completion-set owner's stack. It must not block or retain Data.
+   --  Bytes delivered before a later exchange failure are not rolled back.
+   type Response_Body_Sink is limited interface;
+
+   --  Consume one complete nonempty decoded response slice.
+   --  @param Item Sink state to update
+   --  @param Data Ephemeral decoded response bytes
+   procedure Write
+     (Item : in out Response_Body_Sink;
+      Data : Ada.Streams.Stream_Element_Array) is abstract;
+
+   --  Result of one immediate request-source step.
+   --  @enum Source_Progress Data contains a nonempty produced slice
+   --  @enum Source_Finished Source reached its declared end
+   --  @enum Source_Needs_Read Source requires readable readiness
+   --  @enum Source_Needs_Write Source requires writable readiness
+   type Source_Step_Kind is
+     (Source_Progress,
+      Source_Finished,
+      Source_Needs_Read,
+      Source_Needs_Write);
+
+   --  Source wait results accepted by Source_Wait_Source.
+   subtype Source_Wait_Kind is Source_Step_Kind range
+     Source_Needs_Read .. Source_Needs_Write;
+
+   --  Definite set-independent streaming upload capability. It never owns a
+   --  completion-set slot; the visible HTTP exchange owns the only slot and
+   --  borrows the source through terminal Finish or cancellation drain.
+   type Operation_Request_Body_Source is limited interface;
+
+   --  Return the source's stable exact or unknown length.
+   --  @param Item Source to inspect
+   --  @return Stable declared body length
+   function Declared_Length
+     (Item : Operation_Request_Body_Source) return Body_Length is abstract;
+
+   --  Perform one nonblocking bounded source step. Source_Progress must return
+   --  a nonempty slice. Every other result returns Last = Data'First - 1.
+   --  Cumulative progress must equal a known Declared_Length exactly.
+   --  @param Item Source to advance
+   --  @param Data Caller storage for one produced slice
+   --  @param Last Last produced element or Data'First minus one
+   --  @param Result Immediate source result
+   procedure Read_Now
+     (Item   : in out Operation_Request_Body_Source;
+      Data   : out Ada.Streams.Stream_Element_Array;
+      Last   : out Ada.Streams.Stream_Element_Offset;
+      Result : out Source_Step_Kind) is abstract;
+
+   --  Query the level-triggered or latched readiness source required after
+   --  Read_Now requests a wait. This is one bounded nonblocking step and does
+   --  not consume an unreported readiness transition. When Ready_Now is
+   --  False, Descriptor is valid and a transition after this call remains
+   --  observable through Descriptor until the next Read_Now. When Ready_Now
+   --  is True, Descriptor is ignored. The client combines a returned
+   --  descriptor with transport, outbound, shutdown, and cancellation
+   --  readiness so an early final response cannot be hidden by a blocked
+   --  upload source. It disarms that combined wait before the next Read_Now
+   --  or Release_Source.
+   --  @param Item Source whose readiness is queried
+   --  @param Required Read or write readiness requested by Read_Now
+   --  @param Descriptor Latched readiness descriptor when Ready_Now is false
+   --  @param Ready_Now Whether the source can be polled again immediately
+   procedure Source_Wait_Source
+     (Item        : in out Operation_Request_Body_Source;
+      Required    : Source_Wait_Kind;
+      Descriptor  : out Flyology.IO.Descriptor;
+      Ready_Now   : out Boolean) is abstract;
+
+   --  Idempotently release every source borrow. The client calls this exactly
+   --  once after each successful source attachment and before terminal
+   --  publication on every path.
+   --  @param Item Source whose borrow is released
+   procedure Release_Source
+     (Item : in out Operation_Request_Body_Source) is abstract;
+
+   --  Full request/response exchange driven on its completion-set owner's
+   --  stack. The operation terminalizes only after the complete response body
+   --  is delivered and every transport, stream, pool, source, sink, token, and
+   --  request borrow is drained or detached.
+   type Exchange_Operation is new Flyology.Operations.Operation with private;
+
+   --  Constructors and typed completion for full scoped client exchanges.
+   package Scoped is
+
+      --  Start a retained-body exchange into an acquired writable buffer.
+      --  Validation and completion-slot reservation precede ownership
+      --  transfer. A typed Pre_Admission_Rejected result leaves Destination
+      --  unchanged; any initiating exception restores it before returning.
+      --  @param Set Owner completion set
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Destination Acquired writable response buffer moved on start
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      --  @return Started full-exchange operation
+      function Exchange_To_Buffer
+        (Set      : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item     : not null access Client;
+         Value    : not null access constant Request;
+         Destination : in out Flyology.Buffers.Unique_Buffer;
+         Deadline : Monotonic_Deadline;
+         Token    : access Flyology.Cancellation.Token := null)
+         return Exchange_Operation
+        with Pre => Flyology.Buffers.Has_Buffer (Destination);
+
+      --  Start a streamed-body exchange into an acquired writable buffer.
+      --  @param Set Owner completion set
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Source Request source borrowed through terminal drain
+      --  @param Destination Acquired writable response buffer moved on start
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      --  @return Started full-exchange operation
+      function Exchange_To_Buffer
+        (Set      : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item     : not null access Client;
+         Value    : not null access constant Request;
+         Source   : not null access Operation_Request_Body_Source'Class;
+         Destination : in out Flyology.Buffers.Unique_Buffer;
+         Deadline : Monotonic_Deadline;
+         Token    : access Flyology.Cancellation.Token := null)
+         return Exchange_Operation
+        with Pre => Flyology.Buffers.Has_Buffer (Destination);
+
+      --  Start a retained-body exchange whose decoded response is delivered to
+      --  an immediate sink. Sink effects before failure are not rolled back.
+      --  @param Set Owner completion set
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Sink Immediate response consumer borrowed through drain
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      --  @return Started full-exchange operation
+      function Exchange_To_Sink
+        (Set      : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item     : not null access Client;
+         Value    : not null access constant Request;
+         Sink     : not null access Response_Body_Sink'Class;
+         Deadline : Monotonic_Deadline;
+         Token    : access Flyology.Cancellation.Token := null)
+         return Exchange_Operation;
+
+      --  Start a streamed-body exchange whose decoded response is delivered to
+      --  an immediate sink.
+      --  @param Set Owner completion set
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Source Request source borrowed through terminal drain
+      --  @param Sink Immediate response consumer borrowed through drain
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      --  @return Started full-exchange operation
+      function Exchange_To_Sink
+        (Set      : not null access
+           Flyology.Operations.Completion_Set'Class;
+         Item     : not null access Client;
+         Value    : not null access constant Request;
+         Source   : not null access Operation_Request_Body_Source'Class;
+         Sink     : not null access Response_Body_Sink'Class;
+         Deadline : Monotonic_Deadline;
+         Token    : access Flyology.Cancellation.Token := null)
+         return Exchange_Operation;
+
+      --  Start or restart the retained-body/bounded-response form in an
+      --  established child suitable for Operations.Continue_After.
+      --  @param Operation Inactive established child to start
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Destination Acquired writable response buffer moved on start
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      procedure Start
+        (Operation : in out Exchange_Operation;
+         Item      : not null access Client;
+         Value     : not null access constant Request;
+         Destination : in out Flyology.Buffers.Unique_Buffer;
+         Deadline  : Monotonic_Deadline;
+         Token     : access Flyology.Cancellation.Token := null)
+        with Pre => Flyology.Buffers.Has_Buffer (Destination)
+          and then not Flyology.Operations.Is_Active (Operation)
+          and then not Flyology.Operations.Is_Terminal (Operation);
+
+      --  Start or restart the streamed-body/bounded-response form.
+      --  @param Operation Inactive established child to start
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Source Request source borrowed through terminal drain
+      --  @param Destination Acquired writable response buffer moved on start
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      procedure Start
+        (Operation : in out Exchange_Operation;
+         Item      : not null access Client;
+         Value     : not null access constant Request;
+         Source    : not null access Operation_Request_Body_Source'Class;
+         Destination : in out Flyology.Buffers.Unique_Buffer;
+         Deadline  : Monotonic_Deadline;
+         Token     : access Flyology.Cancellation.Token := null)
+        with Pre => Flyology.Buffers.Has_Buffer (Destination)
+          and then not Flyology.Operations.Is_Active (Operation)
+          and then not Flyology.Operations.Is_Terminal (Operation);
+
+      --  Start or restart the retained-body/sink form.
+      --  @param Operation Inactive established child to start
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Sink Immediate response consumer borrowed through drain
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      procedure Start
+        (Operation : in out Exchange_Operation;
+         Item      : not null access Client;
+         Value     : not null access constant Request;
+         Sink      : not null access Response_Body_Sink'Class;
+         Deadline  : Monotonic_Deadline;
+         Token     : access Flyology.Cancellation.Token := null)
+        with Pre => not Flyology.Operations.Is_Active (Operation)
+          and then not Flyology.Operations.Is_Terminal (Operation);
+
+      --  Start or restart the streamed-body/sink form.
+      --  @param Operation Inactive established child to start
+      --  @param Item Configured origin client borrowed through terminal drain
+      --  @param Value Request metadata borrowed through terminal drain
+      --  @param Source Request source borrowed through terminal drain
+      --  @param Sink Immediate response consumer borrowed through drain
+      --  @param Deadline Absolute whole-exchange deadline
+      --  @param Token Optional cancellation token borrowed through drain
+      procedure Start
+        (Operation : in out Exchange_Operation;
+         Item      : not null access Client;
+         Value     : not null access constant Request;
+         Source    : not null access Operation_Request_Body_Source'Class;
+         Sink      : not null access Response_Body_Sink'Class;
+         Deadline  : Monotonic_Deadline;
+         Token     : access Flyology.Cancellation.Token := null)
+        with Pre => not Flyology.Operations.Is_Active (Operation)
+          and then not Flyology.Operations.Is_Terminal (Operation);
+
+      --  Return current monotonic admission knowledge before typed Finish.
+      --  @param Operation Started exchange to inspect
+      --  @return Current admission certainty
+      function Admission
+        (Operation : Exchange_Operation) return Admission_Certainty;
+
+      --  Return the current raw driver phase before typed Finish.
+      --  @param Operation Started exchange to inspect
+      --  @return Current diagnostic phase
+      function Raw_Phase
+        (Operation : Exchange_Operation) return Exchange_Phase;
+
+      --  Consume a sink exchange. Response_Complete transfers a body-complete,
+      --  lease-free metadata Response. Other expected outcomes leave Reply
+      --  uninitialized and are reported in Result without raising.
+      --  @param Operation Terminal sink exchange to consume
+      --  @param Result Typed terminal result
+      --  @param Reply Detached complete response metadata on success
+      procedure Finish
+        (Operation : in out Exchange_Operation;
+         Result    : out Exchange_Result;
+         Reply     : out Response);
+
+      --  Consume a bounded-buffer exchange. When the operation owns a detached
+      --  token, Destination must be vacant and from the same pool; this is
+      --  validated
+      --  before the terminal result is consumed. Finish always restores that
+      --  exact token. Only Response_Complete commits received length; every
+      --  other result restores length zero. A pre-admission rejection that did
+      --  not move Destination leaves it unchanged.
+      --  @param Operation Terminal bounded exchange to consume
+      --  @param Result Typed terminal result
+      --  @param Reply Detached complete response metadata on success
+      --  @param Destination Vacant same-pool handle for token restoration
+      procedure Finish
+        (Operation : in out Exchange_Operation;
+         Result    : out Exchange_Result;
+         Reply     : out Response;
+         Destination : in out Flyology.Buffers.Unique_Buffer);
+   end Scoped;
+
    --  Return the final response status.
    --  @param Item Response to inspect
    --  @return Three-digit status
@@ -576,7 +1048,7 @@ package Flyology.HTTP.Client is
 
    --  Return the negotiated protocol.
    --  @param Item Response to inspect
-   --  @return HTTP_1_1_Protocol or HTTP_2_Protocol
+   --  @return HTTP_1_1_Protocol, HTTP_2_Protocol, or HTTP_3_Protocol
    --  @exception Program_Error Item is not initialized by Execute
    function Negotiated_Protocol (Item : Response) return Protocol;
 
@@ -713,6 +1185,29 @@ package Flyology.HTTP.Client is
       Token   : access Flyology.Cancellation.Token := null)
       return Flyology.Bytes.Unbounded_Bytes;
 
+   --  Read the complete remaining body into reusable owned storage. Result is
+   --  cleared before reading and is empty if the operation raises. This form
+   --  avoids successive function-result temporaries in a long-running caller
+   --  scope.
+   --  @param Item Active response
+   --  @param Result Reusable owned body destination
+   --  @param Maximum Maximum decoded bytes
+   --  @param Token Optional cancellation source borrowed for this call
+   --  @exception Program_Error Item is not initialized by Execute
+   --  @exception Response_Too_Large Maximum would be exceeded
+   --  @exception Client_Closed Client shutdown interrupts the exchange
+   --  @exception Protocol_Error Response body framing is malformed
+   --  @exception Flyology.IO.Timeout_Error Whole-exchange deadline expires
+   --  @exception Flyology.IO.Device_Error Established transport I/O fails
+   --  @exception Flyology.IO.Sockets.Socket_Error Socket reception fails
+   --  @exception Flyology.IO.TLS.TLS_Error TLS reception fails
+   --  @exception Flyology.Cancellation.Operation_Cancelled Token is requested
+   procedure Read_All
+     (Item    : in out Response;
+      Result  : in out Flyology.Bytes.Unbounded_Bytes;
+      Maximum : Natural := 1_024 * 1_024;
+      Token   : access Flyology.Cancellation.Token := null);
+
    --  Return coherent exchange and transport diagnostics without starting I/O.
    --  @param Item Client to inspect
    --  @return Current and cumulative counters
@@ -751,6 +1246,12 @@ private
    procedure Validate_Response_Bytes_For_Testing
      (Value : Ada.Streams.Stream_Element_Array);
 
+   --  @exclude
+   --  @param Item Client whose later HTTP/2 exchanges use the probe
+   --  @param Grace Bounded post-response readiness-probe interval
+   procedure Set_HTTP_2_Settlement_Grace_For_Testing
+     (Item : in out Client; Grace : Duration);
+
    type Client_Control is new Ada.Finalization.Limited_Controlled with record
       State : Client_State_Access := null;
    end record;
@@ -774,6 +1275,45 @@ private
 
    Unknown_Length : constant Body_Length :=
      (Is_Known => False, Bytes => 0);
+
+   type Monotonic_Deadline is record
+      Is_Limited : Boolean := False;
+      Value      : Ada.Real_Time.Time := Ada.Real_Time.Time_Last;
+   end record;
+
+   No_Deadline : constant Monotonic_Deadline :=
+     (Is_Limited => False, Value => Ada.Real_Time.Time_Last);
+
+   type Exchange_Result is record
+      Result_Kind : Exchange_Result_Kind := Pre_Admission_Rejected;
+      Admission   : Admission_Certainty := Not_Admitted;
+      Last_Phase  : Exchange_Phase := Not_Started;
+      Required    : Length_Requirement := (others => <>);
+      Detail      : Ada.Strings.Unbounded.Unbounded_String;
+   end record;
+
+   type Exchange_State (<>);
+   type Exchange_State_Access is access Exchange_State;
+
+   type Exchange_Operation is new Flyology.Operations.Operation with record
+      State : Exchange_State_Access := null;
+   end record;
+
+   --  @exclude
+   --  @param Item Owner-driven exchange state
+   --  @param Event Completion-set driver event
+   overriding procedure Drive
+     (Item  : in out Exchange_Operation;
+      Event : Flyology.Operations.Driver_Event);
+
+   --  @exclude
+   --  @param Item Owner-driven exchange to cancel and drain
+   overriding procedure Request_Cancellation
+     (Item : in out Exchange_Operation);
+
+   --  @exclude
+   --  @param Item Owner-driven exchange state to drain and release
+   overriding procedure Finalize (Item : in out Exchange_Operation);
 
    type Client (Capacity : Positive := 4) is limited record
       Control : Client_Control;

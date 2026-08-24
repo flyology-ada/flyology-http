@@ -814,25 +814,85 @@ package body Flyology.QUIC.Application_Space is
           Application_Frame_Policy.Encode_Max_Streams
             (Bidirectional, Maximum_Streams);
       Plaintext : Ada.Streams.Stream_Element_Array
-        (1 .. Ada.Streams.Stream_Element_Offset
-                (Data_Frame.Length + Streams_Frame.Length));
+        (1 .. Ada.Streams.Stream_Element_Offset (Max_Stream_Payload)) :=
+          (others => 0);
+      Cursor : Natural range 0 .. Max_Stream_Payload := 0;
+
+      procedure Append
+        (Data   : Ada.Streams.Stream_Element_Array;
+         Length : Natural)
+      with Pre => Length <= Data'Length
+        and then Cursor + Length <= Max_Stream_Payload,
+           Post => Cursor = Cursor'Old + Length;
+
+      procedure Append
+        (Data   : Ada.Streams.Stream_Element_Array;
+         Length : Natural) is
+      begin
+         if Length > 0 then
+            Plaintext
+              (Ada.Streams.Stream_Element_Offset (Cursor + 1)
+                 .. Ada.Streams.Stream_Element_Offset (Cursor + Length)) :=
+              Data
+                (Data'First
+                   .. Data'First + Ada.Streams.Stream_Element_Offset
+                        (Length - 1));
+            Cursor := Cursor + Length;
+         end if;
+      end Append;
    begin
-      Plaintext (1 .. Ada.Streams.Stream_Element_Offset (Data_Frame.Length)) :=
-        Data_Frame.Data
-          (1 .. Ada.Streams.Stream_Element_Offset (Data_Frame.Length));
-      Plaintext
-        (Ada.Streams.Stream_Element_Offset (Data_Frame.Length + 1)
-           .. Plaintext'Last) :=
-          Streams_Frame.Data
-            (1 .. Ada.Streams.Stream_Element_Offset (Streams_Frame.Length));
+      Append (Data_Frame.Data, Data_Frame.Length);
+      Append (Streams_Frame.Data, Streams_Frame.Length);
+      for Index in 1 .. Stream_Table_Policy.Stream_Count (Item.Streams) loop
+         pragma Loop_Invariant (Cursor <= Max_Stream_Payload);
+         declare
+            ID : constant Varint_Policy.Value_Type :=
+              Stream_Table_Policy.Stream_At (Item.Streams, Index);
+            Consumed : constant Varint_Policy.Value_Type :=
+              Stream_Table_Policy.Consumed_Offset (Item.Streams, ID);
+            Window : constant Varint_Policy.Value_Type :=
+              Receive_Flow_Control_Policy.Stream_Window
+                (Item.Receive_Flow, ID);
+            Maximum : constant Varint_Policy.Value_Type :=
+              (if Window > Varint_Policy.Value_Type'Last - Consumed
+               then Varint_Policy.Value_Type'Last
+               else Consumed + Window);
+            Frame : constant
+              Application_Frame_Policy.Max_Stream_Data_Encode_Result :=
+                Application_Frame_Policy.Encode_Max_Stream_Data
+                  (ID, Maximum);
+         begin
+            Append (Frame.Data, Frame.Length);
+         end;
+      end loop;
       Build_Tracked_Frame_Packet
-        (Item, Plaintext, Now, Permit_Probe => False, Retain_Frame => True,
+        (Item,
+         Plaintext (1 .. Ada.Streams.Stream_Element_Offset (Cursor)),
+         Now, Permit_Probe => False, Retain_Frame => True,
          Packet => Packet, Result => Result);
       if Result.Status = Sent then
          Receive_Flow_Control_Policy.Raise_Connection_Limit
            (Item.Receive_Flow, Maximum_Data);
          Receive_Flow_Control_Policy.Raise_Stream_Limit
            (Item.Receive_Flow, Bidirectional, Maximum_Streams);
+         for Index in 1 .. Stream_Table_Policy.Stream_Count (Item.Streams) loop
+            declare
+               ID : constant Varint_Policy.Value_Type :=
+                 Stream_Table_Policy.Stream_At (Item.Streams, Index);
+               Consumed : constant Varint_Policy.Value_Type :=
+                 Stream_Table_Policy.Consumed_Offset (Item.Streams, ID);
+               Window : constant Varint_Policy.Value_Type :=
+                 Receive_Flow_Control_Policy.Stream_Window
+                   (Item.Receive_Flow, ID);
+               Maximum : constant Varint_Policy.Value_Type :=
+                 (if Window > Varint_Policy.Value_Type'Last - Consumed
+                  then Varint_Policy.Value_Type'Last
+                  else Consumed + Window);
+            begin
+               Receive_Flow_Control_Policy.Raise_Stream_Data_Limit
+                 (Item.Receive_Flow, ID, Maximum);
+            end;
+         end loop;
       end if;
    end Build_Receive_Credit_Packet;
 
@@ -1159,21 +1219,6 @@ package body Flyology.QUIC.Application_Space is
          when Receive_Flow_Control_Policy.Stream_Final_Size_Mismatch =>
            Stream_Final_Size_Error);
 
-   procedure Process_Stream_Frames_Transactionally
-     (Item      : in out Stream_Table_Policy.Stream_Table;
-      Plaintext : Ada.Streams.Stream_Element_Array;
-      Result    : out Stream_Table_Policy.Process_Result)
-   is
-      Candidate : Stream_Table_Policy.Stream_Table := Item;
-   begin
-      Stream_Table_Policy.Process_Plaintext
-        (Candidate, Plaintext, Result);
-      if Result.Status /= Stream_Table_Policy.Processed then
-         return;
-      end if;
-      Item := Candidate;
-   end Process_Stream_Frames_Transactionally;
-
    procedure Process_Packet
      (Item                : in out State;
       Packet              : Ada.Streams.Stream_Element_Array;
@@ -1495,18 +1540,14 @@ package body Flyology.QUIC.Application_Space is
          Cursor := Cursor + Frame.Consumed;
       end loop;
 
-      if Active_Stream_Frame_Count = 1 then
-         --  Insert and reset operations validate before mutation, so one
-         --  active stream frame can commit directly after every other frame
-         --  in the packet has passed validation.
+      if Active_Stream_Frame_Count > 0 then
+         --  Every frame has passed parsing, stream-admission, flow-control,
+         --  and control-frame validation before reassembly starts.  A later
+         --  reassembly conflict is connection-fatal, so partially applied
+         --  stream state cannot be observed by another packet or exchange.
+         --  Keeping the table in place avoids a Max_Streams-sized rollback
+         --  copy on the owner task stack.
          Stream_Table_Policy.Process_Plaintext
-           (Candidate_Streams,
-            Stream_Plaintext (1 .. Stream_Plaintext_Length), Streams);
-      elsif Active_Stream_Frame_Count > 0 then
-         --  Preserve packet-level atomicity when more than one stream can be
-         --  changed. This slow path is bounded but deliberately pays for a
-         --  full table copy.
-         Process_Stream_Frames_Transactionally
            (Candidate_Streams,
             Stream_Plaintext (1 .. Stream_Plaintext_Length), Streams);
       else

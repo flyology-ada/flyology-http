@@ -104,14 +104,16 @@ procedure HTTP_Client_Pool_Model is
          pragma Assert (Status = Sockets.Completed);
       end Accept_Peer;
 
-      function Receive_Head return String is
+      function Receive_Head (Target : String) return String is
          Buffer : Stream_Element_Array (1 .. 2_048);
          Last   : Stream_Element_Offset;
          Result : Unbounded_String;
       begin
          loop
             Sockets.Receive (Peer, Buffer, Last, Timeout => 3.0);
-            pragma Assert (Last >= Buffer'First);
+            pragma Assert
+              (Last >= Buffer'First,
+               "peer closed before request head for " & Target);
             for Index in Buffer'First .. Last loop
                Append (Result, Character'Val (Buffer (Index)));
             end loop;
@@ -122,7 +124,7 @@ procedure HTTP_Client_Pool_Model is
       end Receive_Head;
 
       procedure Expect (Target : String) is
-         Head : constant String := Receive_Head;
+         Head : constant String := Receive_Head (Target);
       begin
          pragma Assert
            (Ada.Strings.Fixed.Index

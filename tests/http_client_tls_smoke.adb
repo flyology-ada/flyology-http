@@ -5,6 +5,7 @@ with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology;
+with Flyology.Buffers;
 with Flyology.Bytes;
 with Flyology.Cancellation;
 with Flyology.HTTP;
@@ -15,18 +16,23 @@ with Flyology.IO.Connections.TLS;
 with Flyology.IO.Sockets;
 with Flyology.IO.TLS;
 with Flyology.IO.TLS.OpenSSL;
+with Flyology.Operations;
 with Interfaces.C;
 
 procedure HTTP_Client_TLS_Smoke is
    package Client renames Flyology.HTTP.Client;
+   package Buffers renames Flyology.Buffers;
    package Connections renames Flyology.IO.Connections;
    package Connection_TLS renames Flyology.IO.Connections.TLS;
    package OpenSSL renames Flyology.IO.TLS.OpenSSL;
    package Sockets renames Flyology.IO.Sockets;
    package TLS renames Flyology.IO.TLS;
+   package Operations renames Flyology.Operations;
 
    use Ada.Streams;
    use Ada.Strings.Unbounded;
+   use type Client.Admission_Certainty;
+   use type Client.Exchange_Result_Kind;
    use type Interfaces.C.int;
    use type Sockets.Selector_Status;
 
@@ -206,7 +212,7 @@ procedure HTTP_Client_TLS_Smoke is
 
          task body Client_Task is
             Item  : aliased Client.Client (Capacity => 1);
-            Value : Client.Request;
+            Value : aliased Client.Request;
          begin
             declare
                Client_Backend : aliased OpenSSL.OpenSSL_Provider;
@@ -223,11 +229,39 @@ procedure HTTP_Client_TLS_Smoke is
             end;
             Client.Set_Target (Value, "/secure");
             declare
-               Reply : Client.Response := Client.Execute (Item, Value);
+               Pool : aliased Buffers.Pool
+                 (Block_Size => 64, Capacity => 1);
+               Destination : Buffers.Unique_Buffer (Pool'Access);
+               Set : aliased Operations.Completion_Set (3);
+               Result : Client.Exchange_Result;
+               Reply : Client.Response;
+               Content : Unbounded_String;
+
+               procedure Capture (Data : Stream_Element_Array) is
+               begin
+                  for Element of Data loop
+                     Append (Content, Character'Val (Element));
+                  end loop;
+               end Capture;
             begin
+               Buffers.Acquire (Destination);
+               declare
+                  Operation : Client.Exchange_Operation :=
+                    Client.Scoped.Exchange_To_Buffer
+                      (Set'Access, Item'Access, Value'Access, Destination,
+                       Client.Deadline_After (3.0));
+               begin
+                  Operations.Wait_All (Set);
+                  Client.Scoped.Finish
+                    (Operation, Result, Reply, Destination);
+               end;
                pragma Assert
-                 (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
-                    "secure");
+                 (Client.Kind (Result) = Client.Response_Complete);
+               pragma Assert
+                 (Client.Certainty (Result) = Client.Response_Observed);
+               Buffers.With_Readable_Data (Destination, Capture'Access);
+               pragma Assert (To_String (Content) = "secure");
+               Buffers.Release (Destination);
             end;
             Client.Set_Target (Value, "/again");
             declare

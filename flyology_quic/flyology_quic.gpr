@@ -55,6 +55,8 @@ library project Flyology_QUIC is
       for Output_Dir ("html") use "docs/api";
       for Excluded_Project_Files use
         (external ("FLYOLOGY_ROOT", "") & "/flyology.gpr",
+         external ("FLYOLOGY_ALLOCATORS_ALIRE_PREFIX", "")
+         & "/flyology_allocators.gpr",
          "config/flyology_quic_config.gpr");
    end Documentation;
 end Flyology_QUIC;

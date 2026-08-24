@@ -4,9 +4,23 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 alr=$("$project_root/scripts/find-alr.sh")
 test_subdir=http-client-conformance
+test_rts="$project_root/build/alire-rts"
 
 cd "$project_root"
 "$alr" build
+flyology_root=$("$project_root/scripts/resolve-flyology-root.sh")
+"$alr" exec -- env \
+  FLYOLOGY_RTS_DIR="$test_rts" \
+  FLYOLOGY_DEFAULT=native \
+  FLYOLOGY_LOOP_POOL_SIZE=1 \
+  "$flyology_root/scripts/prepare-rts.sh" >/dev/null
+if [ ! -f "$test_rts/.flyology-rts-root" ] \
+  || ! grep -q 'Flyology prepared RTS version' \
+    "$test_rts/.flyology-rts-root"
+then
+  printf '%s\n' 'HTTP client conformance RTS preparation failed' >&2
+  exit 1
+fi
 
 run_gprbuild () {
   if [ "$(uname -s)" = Darwin ]; then
@@ -25,9 +39,9 @@ run_gprbuild () {
 }
 
 run_gprbuild \
-  --RTS="$project_root/build/alire-rts" \
+  --RTS="$test_rts" \
   --subdirs="$test_subdir" \
-  -f -p -P tests/runtime_smoke.gpr \
+  -f -p -P tests/http_tests.gpr \
   http_client_smoke.adb http_client_addressing.adb \
   http_client_authentication.adb \
   http_client_boundaries_smoke.adb \
@@ -58,9 +72,9 @@ run_gprbuild \
 FLYOLOGY_CONNECTION_TEST_HOOKS=true
 export FLYOLOGY_CONNECTION_TEST_HOOKS
 run_gprbuild \
-  --RTS="$project_root/build/alire-rts" \
+  --RTS="$test_rts" \
   --subdirs=http-client-connection-hooks \
-  -f -p -P tests/runtime_smoke.gpr \
+  -f -p -P tests/http_tests.gpr \
   http_client_pool_races.adb http_client_deadline_matrix.adb \
   http_client_fragmentation.adb
 unset FLYOLOGY_CONNECTION_TEST_HOOKS
@@ -71,9 +85,9 @@ unset FLYOLOGY_CONNECTION_TEST_HOOKS
 lifetime_log="$project_root/build/tests/http-client-response-lifetime.log"
 mkdir -p "$(dirname -- "$lifetime_log")"
 if run_gprbuild \
-  --RTS="$project_root/build/alire-rts" \
+  --RTS="$test_rts" \
   --subdirs=http-client-compile-fail \
-  -c -p -P tests/runtime_smoke.gpr \
+  -c -p -P tests/http_tests.gpr \
   http_client_response_lifetime_fail.adb >"$lifetime_log" 2>&1
 then
   printf '%s\n' "HTTP response escaped its client's lifetime" >&2
@@ -90,9 +104,9 @@ fi
 
 source_lifetime_log="$project_root/build/tests/http-client-body-source-lifetime.log"
 if run_gprbuild \
-  --RTS="$project_root/build/alire-rts" \
+  --RTS="$test_rts" \
   --subdirs=http-client-compile-fail \
-  -c -p -P tests/runtime_smoke.gpr \
+  -c -p -P tests/http_tests.gpr \
   http_client_body_source_lifetime_fail.adb >"$source_lifetime_log" 2>&1
 then
   printf '%s\n' "HTTP body source escaped its borrowed payload lifetime" >&2

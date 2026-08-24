@@ -68,6 +68,25 @@ procedure HTTP_Client_Addressing is
       function Passed return Boolean is (OK);
    end Outcome;
 
+   protected type Completion_Gate is
+      procedure Signal;
+      entry Wait;
+   private
+      Signalled : Boolean := False;
+   end Completion_Gate;
+
+   protected body Completion_Gate is
+      procedure Signal is
+      begin
+         Signalled := True;
+      end Signal;
+
+      entry Wait when Signalled is
+      begin
+         null;
+      end Wait;
+   end Completion_Gate;
+
    procedure Close_If_Open (Socket : in out Sockets.Socket_Type) is
    begin
       if Sockets.Is_Open (Socket) then
@@ -110,6 +129,7 @@ procedure HTTP_Client_Addressing is
       IPv4_Address  : Sockets.Endpoint;
       IPv6_Address  : Sockets.Endpoint;
       Result        : Outcome;
+      Server_Finished : Completion_Gate;
    begin
       Sockets.Create_Socket (IPv4_Listener, Sockets.IPv4);
       Sockets.Bind_Socket
@@ -187,6 +207,7 @@ procedure HTTP_Client_Addressing is
                "[::1]:" & Decimal (Natural (IPv6_Address.Port)));
             Close_If_Open (IPv4_Listener);
             Close_If_Open (IPv6_Listener);
+            Server_Finished.Signal;
             Result.Report (True);
          exception
             when Occurrence : others =>
@@ -196,6 +217,7 @@ procedure HTTP_Client_Addressing is
                Close_If_Open (Peer);
                Close_If_Open (IPv4_Listener);
                Close_If_Open (IPv6_Listener);
+               Server_Finished.Signal;
                Result.Report (False);
          end Server_Task;
 
@@ -328,6 +350,10 @@ procedure HTTP_Client_Addressing is
             Fetch
               ("http://[::1]:" &
                Decimal (Natural (IPv6_Address.Port)), "/ipv6");
+            --  Stabilize the process-wide descriptor baseline after the peer
+            --  has closed both listener sockets.  Otherwise the assertion in
+            --  Exhaust_All_Addresses races the server's final close.
+            Server_Finished.Wait;
             Exhaust_All_Addresses;
             Result.Report (True);
          exception
