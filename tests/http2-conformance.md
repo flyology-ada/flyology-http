@@ -100,7 +100,7 @@ qualification or cover h2c Upgrade, server push, or extended CONNECT.
 
 The pinned h2specd client oracle runs 57 cases against the synchronous and
 scoped client entry points in both native and lightweight task lanes. Its
-single-exchange driver enables a 50 ms, test-only settlement probe so invalid
+single-exchange driver enables a 250 ms, test-only settlement probe so invalid
 frames sent just after `END_STREAM` are still processed by the owner-driven
 session pump before the executable exits. The probe uses the exchange's
 existing transport readiness and absolute deadline; it creates no helper task

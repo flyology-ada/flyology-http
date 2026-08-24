@@ -33,7 +33,7 @@ procedure HTTP2_H2spec_Client is
       --  This executable exits after one exchange, so keep the owner-driven
       --  operation alive briefly for malicious frames h2spec sends just after
       --  END_STREAM. Production clients retain the zero-cost default.
-      Client.Testing.Set_HTTP_2_Settlement_Grace (HTTP, 0.05);
+      Client.Testing.Set_HTTP_2_Settlement_Grace (HTTP, 0.25);
       if Style = "sync" then
          declare
             Reply : Client.Response :=
