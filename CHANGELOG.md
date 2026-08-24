@@ -22,11 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upload, and response-head processing through the same composable H1, H2,
   and H3 engine. Owner-driven H2 and H3 streams share multiplexed sessions
   without connector or protocol-pump helper tasks.
-- Kept the active development manifests at `flyology_http=0.1.1-dev` and
-  `flyology_quic=0.1.1-dev`; this work creates no stable release tags.
+- Advanced the active development manifests to `flyology_http=0.1.3-dev` and
+  `flyology_quic=0.1.3-dev`. Stable HTTP `0.1.2` and QUIC `0.1.1` retire the
+  previous development cores; this work creates no stable release tags.
 
 ### Fixed
 
+- Kept the scoped HTTP/2 owner pump alive for the configured test settlement
+  probe after a stream-local failure, so immediately following connection
+  violations are answered before a short-lived conformance client exits.
 - Added rolling HTTP/3 stream receive credit for complete responses larger
   than the initial QUIC stream window, including retransmission below the
   consumed receive base.

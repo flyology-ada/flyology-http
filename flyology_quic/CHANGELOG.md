@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Advanced the active development manifest to `flyology_quic=0.1.3-dev` in
+  lockstep with Flyology HTTP; this work creates no stable release tag.
+
 ## [0.1.1] - 2026-08-21
 
 ### Added
