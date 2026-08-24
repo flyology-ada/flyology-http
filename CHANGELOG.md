@@ -22,8 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upload, and response-head processing through the same composable H1, H2,
   and H3 engine. Owner-driven H2 and H3 streams share multiplexed sessions
   without connector or protocol-pump helper tasks.
-- Kept the active development manifests at `flyology_http=0.1.1-dev` and
-  `flyology_quic=0.1.1-dev`; this work creates no stable release tags.
+- Advanced the active development manifests to `flyology_http=0.1.3-dev` and
+  `flyology_quic=0.1.3-dev`. Stable HTTP `0.1.2` and QUIC `0.1.1` retire the
+  previous development cores; this work creates no stable release tags.
 
 ### Fixed
 
