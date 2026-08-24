@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Kept the scoped HTTP/2 owner pump alive for the configured test settlement
+  probe after a stream-local failure, so immediately following connection
+  violations are answered before a short-lived conformance client exits.
 - Added rolling HTTP/3 stream receive credit for complete responses larger
   than the initial QUIC stream window, including retransmission below the
   consumed receive base.

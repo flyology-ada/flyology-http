@@ -4380,6 +4380,7 @@ package body Flyology.HTTP.Client is
             Release_HTTP_2_Pump;
             State.HTTP_2_Finished := True;
             State.HTTP_2_Cancelling := False;
+            State.HTTP_2_Settlement_Waited := False;
             if State.Pending_Result = Response_Complete then
                Finish_Success (Item);
             else
@@ -4461,7 +4462,20 @@ package body Flyology.HTTP.Client is
                elsif State.HTTP_2_Cancelling
                  and then not Step.Outbound_Pending
                then
-                  Finish_Cancellation;
+                  --  The h2spec single-exchange probe can send a connection
+                  --  violation immediately after a stream-local reset.  The
+                  --  production default remains zero-cost, but when the
+                  --  explicit test grace is enabled keep the owner-driven
+                  --  pump alive for one bounded read before releasing the
+                  --  failed stream and closing its short-lived client.
+                  if not State.HTTP_2_Settlement_Waited
+                    and then State.Client_Item.Control.State
+                      .HTTP_2_Settlement_Grace > 0.0
+                  then
+                     Arm_Settlement_Probe;
+                  else
+                     Finish_Cancellation;
+                  end if;
                elsif State.HTTP_2_Settling
                  and then not Step.Outbound_Pending
                then
