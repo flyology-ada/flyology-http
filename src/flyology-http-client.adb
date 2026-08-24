@@ -318,6 +318,7 @@ package body Flyology.HTTP.Client is
       Transport      : Connect_Transport := Internet_Transport;
       Unix_Path      : Unbounded_String;
       Resolver       : Resolver_Configuration_Access := null;
+      HTTP_2_Settlement_Grace : Duration := 0.0;
       Is_Configured : Boolean := False;
    end record;
 
@@ -522,6 +523,7 @@ package body Flyology.HTTP.Client is
       HTTP_2_Source_Wait : Source_Wait_Kind := Source_Needs_Read;
       HTTP_2_Cancelling : Boolean := False;
       HTTP_2_Settling   : Boolean := False;
+      HTTP_2_Settlement_Waited : Boolean := False;
       HTTP_2_Flush_Pending : Boolean := False;
       HTTP_2_Retryable_Refusal : Boolean := False;
       Metadata           : Response_Data;
@@ -1305,6 +1307,7 @@ package body Flyology.HTTP.Client is
       Operation.State.HTTP_2_Source_Wait := Source_Needs_Read;
       Operation.State.HTTP_2_Cancelling := False;
       Operation.State.HTTP_2_Settling := False;
+      Operation.State.HTTP_2_Settlement_Waited := False;
       Operation.State.HTTP_2_Flush_Pending := False;
       Operation.State.HTTP_2_Retryable_Refusal := False;
       Operation.State.HTTP_3_Stage := HTTP_3_Handshake;
@@ -3853,6 +3856,7 @@ package body Flyology.HTTP.Client is
                --  receive-credit output reaches the peer before this stream
                --  releases its pump claim.
                State.HTTP_2_Settling := True;
+               State.HTTP_2_Settlement_Waited := False;
                State.Driver_State := HTTP_2_Waiting_For_Pump;
                Reschedule;
             else
@@ -4392,8 +4396,24 @@ package body Flyology.HTTP.Client is
          begin
             Release_HTTP_2_Pump;
             State.HTTP_2_Settling := False;
+            State.HTTP_2_Settlement_Waited := False;
             Finish_Success (Item);
          end Finish_Settlement;
+
+         procedure Arm_Settlement_Probe is
+            Wait : Duration :=
+              State.Client_Item.Control.State.HTTP_2_Settlement_Grace;
+         begin
+            State.HTTP_2_Settlement_Waited := True;
+            Connection_Drivers.Arm_Transport
+              (State.IO, Item, Connection_Drivers.Need_Read,
+               H2_Connections.Outbound
+                 (State.Connection.HTTP_2.all).all);
+            if State.Deadline.Is_Limited then
+               Wait := Duration'Min (Wait, Remaining (State.Deadline));
+            end if;
+            Flyology.Operations.Drivers.Arm_Deadline (Item, Wait);
+         end Arm_Settlement_Probe;
 
          procedure Arm_Closing_Drain
            (Required : Connection_Drivers.Step_Result) is
@@ -4445,7 +4465,14 @@ package body Flyology.HTTP.Client is
                elsif State.HTTP_2_Settling
                  and then not Step.Outbound_Pending
                then
-                  Finish_Settlement;
+                  if not State.HTTP_2_Settlement_Waited
+                    and then State.Client_Item.Control.State
+                      .HTTP_2_Settlement_Grace > 0.0
+                  then
+                     Arm_Settlement_Probe;
+                  else
+                     Finish_Settlement;
+                  end if;
                elsif State.HTTP_2_Cancelling
                  and then Expired (State.Deadline)
                then
@@ -5804,6 +5831,15 @@ package body Flyology.HTTP.Client is
       HTTP_1_Internals.Validate_Response (Value);
    end Validate_Response_Bytes_For_Testing;
 
+   procedure Set_HTTP_2_Settlement_Grace_For_Testing
+     (Item : in out Client; Grace : Duration) is
+   begin
+      if Item.Control.State = null then
+         raise Program_Error with "client is not configured";
+      end if;
+      Item.Control.State.HTTP_2_Settlement_Grace := Grace;
+   end Set_HTTP_2_Settlement_Grace_For_Testing;
+
    procedure Observe_HTTP_3_Alternative
      (Item : in out Client; Fields : Flyology.HTTP.Headers.List)
    is
@@ -6815,6 +6851,10 @@ package body Flyology.HTTP.Client is
 
       procedure Settle_HTTP_2_Control is
          Claimed : Boolean;
+         Probed  : Boolean := False;
+         Grace   : constant Duration :=
+           (if Item.Data.Owner = null then 0.0
+            else Item.Data.Owner.HTTP_2_Settlement_Grace);
 
          procedure Pump (IO : in out Connection_Drivers.Capability) is
             Step : H2_Connections.Pump_Step;
@@ -6840,12 +6880,22 @@ package body Flyology.HTTP.Client is
                      when H2_Connections.Pump_Progress =>
                         null;
                      when H2_Connections.Pump_Need_Read =>
-                        exit when not Step.Outbound_Pending;
+                        if not Step.Outbound_Pending
+                          and then (Probed or else Grace <= 0.0)
+                        then
+                           exit;
+                        end if;
+                        if not Step.Outbound_Pending then
+                           Probed := True;
+                        end if;
                         Connection_Drivers.Wait
                           (IO,
                            H2_Connections.Outbound
                              (Item.Data.Connection.HTTP_2.all).all,
                            Connection_Drivers.Duplex_Interest,
+                           Timeout =>
+                             (if Step.Outbound_Pending
+                              then Flyology.IO.Infinite else Grace),
                            Result => Waited);
                      when H2_Connections.Pump_Need_Write =>
                         Interest :=

@@ -1246,6 +1246,12 @@ private
    procedure Validate_Response_Bytes_For_Testing
      (Value : Ada.Streams.Stream_Element_Array);
 
+   --  @exclude
+   --  @param Item Client whose later HTTP/2 exchanges use the probe
+   --  @param Grace Bounded post-response readiness-probe interval
+   procedure Set_HTTP_2_Settlement_Grace_For_Testing
+     (Item : in out Client; Grace : Duration);
+
    type Client_Control is new Ada.Finalization.Limited_Controlled with record
       State : Client_State_Access := null;
    end record;

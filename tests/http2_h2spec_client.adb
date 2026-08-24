@@ -4,6 +4,7 @@ with Flyology.Buffers;
 with Flyology.Bytes;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
+with Flyology.HTTP.Client.Testing;
 with Flyology.Operations;
 
 procedure HTTP2_H2spec_Client is
@@ -29,6 +30,10 @@ procedure HTTP2_H2spec_Client is
       Client.Configure
         (HTTP, Flyology.HTTP.Parse_Origin (URL),
          Client.HTTP_2_Prior_Knowledge);
+      --  This executable exits after one exchange, so keep the owner-driven
+      --  operation alive briefly for malicious frames h2spec sends just after
+      --  END_STREAM. Production clients retain the zero-cost default.
+      Client.Testing.Set_HTTP_2_Settlement_Grace (HTTP, 0.05);
       if Style = "sync" then
          declare
             Reply : Client.Response :=
