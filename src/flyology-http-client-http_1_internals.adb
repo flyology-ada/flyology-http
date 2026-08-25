@@ -80,7 +80,9 @@ package body HTTP_1_Internals is
          elsif Whole_Wait < 0.0 then Maximum_Wait
          else Duration'Min (Whole_Wait, Maximum_Wait));
    begin
-      Client_Test_Barrier (3);
+      if Connection_Test_Hooks.Enabled then
+         Connection_Test_Hooks.Barrier (3);
+      end if;
       if Token /= null and then Token.Requested then
          raise Flyology.Cancellation.Operation_Cancelled;
       elsif Data.Timeout >= 0.0
