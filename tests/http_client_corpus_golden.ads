@@ -70,7 +70,7 @@ package HTTP_Client_Corpus_Golden is
       H3_Critical_Stream_Closed);
    type Protocol_Kind is (H1, H2, H3);
    type API_Style is
-     (Sync_Head, Scoped_Buffer, Scoped_Sink, Established_Child);
+     (Sync_Head, Composable_Buffer, Composable_Sink, Established_Child);
    type Result_Kind is
      (Cancelled,
       Client_Unavailable,
@@ -141,7 +141,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       No_Body_204 =>
         (Protocols => (others => True),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -175,7 +175,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Informational_Then_Final =>
         (Protocols => (others => True),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -192,7 +192,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       No_Body_205 =>
         (Protocols => (others => True),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -209,7 +209,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Head_No_Body =>
         (Protocols => (others => True),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -226,7 +226,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Not_Modified_No_Body =>
         (Protocols => (others => True),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -243,7 +243,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Known_Capacity_Overflow =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, others => False),
+         APIs => (Composable_Buffer => True, others => False),
          Expected =>
            (Kind => Response_Body_Too_Large,
             Certainty => Response_Observed,
@@ -260,7 +260,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Exact_Capacity_Boundary =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -277,7 +277,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Unknown_Capacity_Overflow =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, others => False),
+         APIs => (Composable_Buffer => True, others => False),
          Expected =>
            (Kind => Response_Body_Too_Large,
             Certainty => Response_Observed,
@@ -294,7 +294,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Truncated_Fixed_Body =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -311,7 +311,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Overlong_Multiplexed_Body =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -328,7 +328,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Conflicting_Content_Length =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -345,7 +345,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Body_Forbidden_Data =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -379,7 +379,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Malformed_Stream_Isolation =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, others => False),
+         APIs => (Composable_Buffer => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -396,7 +396,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Cancel_Before_Admission =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Cancelled,
             Certainty => Not_Admitted,
@@ -413,7 +413,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Cancel_After_Admission =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Cancelled,
             Certainty => Possibly_Admitted,
@@ -430,7 +430,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Expired_At_Start =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Timed_Out,
             Certainty => Not_Admitted,
@@ -464,7 +464,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Request_Invalid_Expect =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Pre_Admission_Rejected,
             Certainty => Not_Admitted,
@@ -481,7 +481,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Sink_Partial_Then_Failure =>
         (Protocols => (others => True),
-         APIs => (Scoped_Sink => True, others => False),
+         APIs => (Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Sink_Failed,
             Certainty => Response_Observed,
@@ -498,7 +498,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Sink_Exception =>
         (Protocols => (others => True),
-         APIs => (Scoped_Sink => True, others => False),
+         APIs => (Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Sink_Failed,
             Certainty => Response_Observed,
@@ -515,7 +515,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Source_Needs_With_Bytes =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Request_Source_Failed,
             Certainty => Possibly_Admitted,
@@ -532,7 +532,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Source_Short =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Request_Source_Failed,
             Certainty => Possibly_Admitted,
@@ -549,7 +549,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Source_Long =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Request_Source_Failed,
             Certainty => Possibly_Admitted,
@@ -566,7 +566,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Source_Zero_Progress =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Request_Source_Failed,
             Certainty => Possibly_Admitted,
@@ -583,7 +583,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Source_Exception =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Request_Source_Failed,
             Certainty => Possibly_Admitted,
@@ -600,7 +600,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Deadline_Admission_Wait =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Timed_Out,
             Certainty => Not_Admitted,
@@ -617,7 +617,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Timeout_After_Admission =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Timed_Out,
             Certainty => Possibly_Admitted,
@@ -634,7 +634,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Pool_Capacity_Wait =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -702,7 +702,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Abandonment_Drain =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Cancelled,
             Certainty => Possibly_Admitted,
@@ -719,7 +719,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Slot_Reuse_Loop =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -736,7 +736,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Multiple_Informational_Then_Final =>
         (Protocols => (others => True),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -753,7 +753,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Switching_Protocols_101 =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -770,7 +770,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Identical_Content_Length_List =>
         (Protocols => (H1 => True, others => False),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -787,7 +787,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Content_Length_Leading_Plus =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -804,7 +804,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Content_Length_Overflow =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -821,7 +821,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Transfer_Encoding_With_Content_Length =>
         (Protocols => (H1 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -838,7 +838,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Chunk_Extensions =>
         (Protocols => (H1 => True, others => False),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -855,7 +855,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Chunk_Trailers_Separated =>
         (Protocols => (H1 => True, others => False),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -872,7 +872,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Invalid_Chunk_Size =>
         (Protocols => (H1 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -889,7 +889,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Truncated_Chunked_Body =>
         (Protocols => (H1 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -906,7 +906,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Close_Delimited_Body =>
         (Protocols => (H1 => True, others => False),
-         APIs => (Sync_Head => True, Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Sync_Head => True, Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -923,7 +923,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Partial_Response_Head_Then_Drop =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -940,7 +940,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Head_Response_With_Data =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -957,7 +957,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Status_205_With_Data =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -974,7 +974,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Informational_End_Stream =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -991,7 +991,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Trailer_Pseudo_Header =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1008,7 +1008,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Trailers_Without_End_Stream =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1025,7 +1025,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Missing_Response_Status =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1042,7 +1042,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Duplicate_Response_Status =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1059,7 +1059,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Pseudo_Header_After_Field =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1076,7 +1076,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Connection_Specific_Response_Field =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1093,7 +1093,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Te_Response_Not_Trailers =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1110,7 +1110,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Stream_Reset_Before_Response_Head =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Transport_Failed,
             Certainty => Possibly_Admitted,
@@ -1127,7 +1127,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Stream_Reset_After_Response_Head =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Response_Invalid,
             Certainty => Response_Observed,
@@ -1144,7 +1144,7 @@ Complete_Fixed =>
             Sibling_Kind => Response_Complete)),
       Unknown_Frame_Interleaved =>
         (Protocols => (H2 => True, H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Response_Complete,
             Certainty => Response_Observed,
@@ -1195,7 +1195,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Cancel_After_Response_Head =>
         (Protocols => (others => True),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, Established_Child => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, Established_Child => True, others => False),
          Expected =>
            (Kind => Cancelled,
             Certainty => Response_Observed,
@@ -1212,7 +1212,7 @@ Complete_Fixed =>
             Sibling_Kind => Cancelled)),
       Qpack_Dynamic_Reference_At_Zero_Capacity =>
         (Protocols => (H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Transport_Failed,
             Certainty => Response_Observed,
@@ -1229,7 +1229,7 @@ Complete_Fixed =>
             Sibling_Kind => Transport_Failed)),
       Qpack_Decompression_Failure =>
         (Protocols => (H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Transport_Failed,
             Certainty => Response_Observed,
@@ -1246,7 +1246,7 @@ Complete_Fixed =>
             Sibling_Kind => Transport_Failed)),
       H3_Critical_Stream_Closed =>
         (Protocols => (H3 => True, others => False),
-         APIs => (Scoped_Buffer => True, Scoped_Sink => True, others => False),
+         APIs => (Composable_Buffer => True, Composable_Sink => True, others => False),
          Expected =>
            (Kind => Transport_Failed,
             Certainty => Possibly_Admitted,

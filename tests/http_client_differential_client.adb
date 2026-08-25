@@ -131,12 +131,12 @@ procedure HTTP_Client_Differential_Client is
                Buffers.Acquire (Destination);
                declare
                   Operation : Client.Exchange_Operation :=
-                    Client.Scoped.Exchange_To_Buffer
+                    Client.Exchange_To_Buffer
                       (Set'Access, HTTP'Access, Primer'Access, Destination,
                        Client.Deadline_After (3.0));
                begin
                   Operations.Wait_All (Set);
-                  Client.Scoped.Finish
+                  Client.Finish
                     (Operation, Result, Reply, Destination);
                end;
                if Client.Kind (Result) /= Client.Response_Complete
@@ -160,7 +160,7 @@ procedure HTTP_Client_Differential_Client is
             (if Protocol_Name = "h2" then Client.HTTP_2_Prior_Knowledge
              else Client.HTTP_1_Only));
       end if;
-      if Style in "sync-lost" | "scoped-lost" then
+      if Style in "sync-lost" | "composable-lost" then
          Prime_Reused_Transport;
          Client.Set_Method (Ask, Flyology.HTTP.Methods.PUT);
          Client.Set_Target (Ask, "/immutable-commit");
@@ -175,7 +175,7 @@ procedure HTTP_Client_Differential_Client is
          begin
             Emit (Reply, Flyology.Bytes.To_Array (Content));
          end;
-      elsif Style = "scoped" then
+      elsif Style = "composable" then
          declare
             Pool : aliased Buffers.Pool
               (Block_Size => 65_536, Capacity => 1);
@@ -193,12 +193,12 @@ procedure HTTP_Client_Differential_Client is
             Buffers.Acquire (Destination);
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Ask'Access, Destination,
                     Client.Deadline_After (3.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish
+               Client.Finish
                  (Operation, Result, Reply, Destination);
             end;
             if Client.Kind (Result) /= Client.Response_Complete then
@@ -225,7 +225,7 @@ procedure HTTP_Client_Differential_Client is
                  Flyology.HTTP.Protocol_Error =>
                Ada.Text_IO.Put_Line ("outcome=failed");
          end;
-      elsif Style = "scoped-lost" then
+      elsif Style = "composable-lost" then
          declare
             Pool : aliased Buffers.Pool
               (Block_Size => 65_536, Capacity => 1);
@@ -238,13 +238,13 @@ procedure HTTP_Client_Differential_Client is
             Buffers.Acquire (Destination);
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Ask'Access, Destination,
                     Client.Deadline_After (3.0));
             begin
                Operations.Wait_All (Set);
-               Admission_Before := Client.Scoped.Admission (Operation);
-               Client.Scoped.Finish
+               Admission_Before := Client.Admission (Operation);
+               Client.Finish
                  (Operation, Result, Reply, Destination);
             end;
             if Client.Kind (Result) = Client.Response_Complete
@@ -264,7 +264,7 @@ procedure HTTP_Client_Differential_Client is
             Ada.Text_IO.Put_Line ("body_length=0");
             Buffers.Release (Destination);
          end;
-      elsif Style = "scoped-h3-isolation" then
+      elsif Style = "composable-h3-isolation" then
          declare
             Pool : aliased Buffers.Pool
               (Block_Size => 64, Capacity => 2);
@@ -284,19 +284,19 @@ procedure HTTP_Client_Differential_Client is
             Buffers.Acquire (Valid_Body);
             declare
                Invalid_Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Invalid_Request'Access,
                     Invalid_Body, Client.Deadline_After (5.0));
                Valid_Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Valid_Request'Access,
                     Valid_Body, Client.Deadline_After (5.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish
+               Client.Finish
                  (Invalid_Operation, Invalid_Result, Invalid_Reply,
                   Invalid_Body);
-               Client.Scoped.Finish
+               Client.Finish
                  (Valid_Operation, Valid_Result, Valid_Reply, Valid_Body);
             end;
             if Client.Kind (Invalid_Result) /= Client.Response_Invalid
@@ -353,7 +353,7 @@ begin
    then
       raise Program_Error with
         "usage: http_client_differential_client " &
-        "{sync|scoped|sync-lost|scoped-lost|scoped-h3-isolation} " &
+        "{sync|composable|sync-lost|composable-lost|composable-h3-isolation} " &
         "{native|lightweight} {h1|h2|h3} URL";
    end if;
    declare

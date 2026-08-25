@@ -211,7 +211,7 @@ than an operation-specific steady-state cost, but the report retains the
 outliers instead of discarding them.
 
 The benchmark exercises the preserved synchronous server path. The additive
-scoped operations therefore add no per-request allocation or dispatch to this
+composable operations therefore add no per-request allocation or dispatch to this
 steady-state workload. The only shared synchronous changes are bounded parser
 transition helpers and unconditional initialization of the peer-closure
 status. This comparison is intermediate evidence for `1810fc6`; the final

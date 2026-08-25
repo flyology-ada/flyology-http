@@ -5,14 +5,14 @@
     {
       "cases": ["complete-fixed"],
       "protocols": ["h1", "h2", "h3"],
-      "api_styles": ["sync-head", "scoped-buffer"],
+      "api_styles": ["sync-head", "composable-buffer"],
       "models": ["native", "lightweight"],
       "runner": "scripts/http-client-differential.sh"
     },
     {
       "cases": ["lost-final-response", "stale-after-handoff-no-replay"],
       "protocols": ["h1", "h2", "h3"],
-      "api_styles": ["sync-head", "scoped-buffer"],
+      "api_styles": ["sync-head", "composable-buffer"],
       "models": ["native", "lightweight"],
       "runner": "scripts/http-client-differential.sh"
     },
@@ -21,63 +21,63 @@
       "protocols": ["h1"],
       "api_styles": ["established-child"],
       "models": ["native", "lightweight"],
-      "runner": "tests/http_client_scoped_stale_reuse.adb"
+      "runner": "tests/http_client_composable_stale_reuse.adb"
     },
     {
       "cases": ["parent-continue-after"],
       "protocols": ["h1", "h2", "h3"],
       "api_styles": ["established-child"],
       "models": ["native", "lightweight"],
-      "runner": "tests/http_client_scoped_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_scoped_smoke.adb"
+      "runner": "tests/http_client_composable_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_composable_smoke.adb"
     },
     {
       "cases": ["abandonment-drain", "cancel-after-admission"],
       "protocols": ["h1", "h2", "h3"],
-      "api_styles": ["scoped-buffer"],
+      "api_styles": ["composable-buffer"],
       "models": ["native", "lightweight"],
-      "runner": "tests/http_client_scoped_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_scoped_smoke.adb"
+      "runner": "tests/http_client_composable_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_composable_smoke.adb"
     },
     {
       "cases": ["blocked-source-early-final"],
       "protocols": ["h1", "h2", "h3"],
-      "api_styles": ["scoped-buffer"],
+      "api_styles": ["composable-buffer"],
       "models": ["native", "lightweight"],
-      "runner": "tests/http_client_scoped_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_scoped_smoke.adb"
+      "runner": "tests/http_client_composable_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_composable_smoke.adb"
     },
     {
       "cases": ["source-needs-with-bytes", "source-short", "source-long", "source-zero-progress", "source-exception"],
       "protocols": ["h1", "h2", "h3"],
-      "api_styles": ["scoped-buffer"],
+      "api_styles": ["composable-buffer"],
       "models": ["native", "lightweight"],
-      "runner": "tests/http_client_scoped_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_scoped_smoke.adb"
+      "runner": "tests/http_client_composable_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_composable_smoke.adb"
     },
     {
       "cases": ["sink-partial-then-failure", "sink-exception"],
       "protocols": ["h1", "h2", "h3"],
-      "api_styles": ["scoped-sink"],
+      "api_styles": ["composable-sink"],
       "models": ["native", "lightweight"],
-      "runner": "tests/http_client_scoped_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_scoped_smoke.adb"
+      "runner": "tests/http_client_composable_smoke.adb;tests/http2_client_integration.adb;tests/http3_client_composable_smoke.adb"
     },
     {
       "cases": ["malformed-stream-isolation"],
       "protocols": ["h2"],
-      "api_styles": ["scoped-buffer"],
+      "api_styles": ["composable-buffer"],
       "models": ["native", "lightweight"],
       "runner": "tests/http2_client_integration.adb;tests/flyology-http-http_3_client_connection-smoke.adb"
     },
     {
       "cases": ["malformed-stream-isolation", "pseudo-header-after-field", "connection-specific-response-field", "switching-protocols-101"],
       "protocols": ["h3"],
-      "api_styles": ["scoped-buffer"],
+      "api_styles": ["composable-buffer"],
       "models": ["native", "lightweight"],
       "runner": "scripts/http-client-differential.sh;tests/oracle/aioquic_h3_server.py"
     },
     {
       "cases": ["known-capacity-overflow", "expired-at-start", "cancel-before-admission", "slot-reuse-loop"],
       "protocols": ["h1"],
-      "api_styles": ["scoped-buffer"],
+      "api_styles": ["composable-buffer"],
       "models": ["native", "lightweight"],
-      "runner": "tests/http_client_scoped_smoke.adb"
+      "runner": "tests/http_client_composable_smoke.adb"
     }
   ]
 }

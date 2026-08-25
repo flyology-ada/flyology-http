@@ -42,7 +42,7 @@ def render_spec(document: dict) -> str:
     protocol_names = {value: value.upper() for value in ("h1", "h2", "h3")}
     api_names = {
         value: ada_name(value)
-        for value in ("sync-head", "scoped-buffer", "scoped-sink", "established-child")
+        for value in ("sync-head", "composable-buffer", "composable-sink", "established-child")
     }
     result_values = sorted({
         "response-complete",
