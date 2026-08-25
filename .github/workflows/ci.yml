@@ -104,6 +104,38 @@ jobs:
       - name: Check the WPT gate wiring
         run: ./flyology_iri/scripts/wpt-gate-test.sh
 
+  hook-elision:
+    name: Test-hook elision (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out sources
+        timeout-minutes: 5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        timeout-minutes: 15
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        timeout-minutes: 5
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Use the in-tree QUIC prerequisite
+        run: alr pin flyology_quic --use=flyology_quic
+      - name: Check both hook selections and every optimization mode
+        timeout-minutes: 20
+        run: ./scripts/check-test-hook-elision.sh
+
   proof:
     name: SPARK proof
     runs-on: ubuntu-latest

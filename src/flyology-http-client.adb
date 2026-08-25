@@ -6,6 +6,7 @@ with System.Address_To_Access_Conversions;
 with System.Storage_Elements;
 with Flyology.Buffers.Drivers;
 with Flyology.HTTP.Client_Policy;
+with Flyology.HTTP.Client_Connection_Test_Hooks;
 with Flyology.HTTP.HTTP_2_Client_Connection;
 with Flyology.HTTP.HTTP_2_Requests;
 with Flyology.HTTP.HTTP_3;
@@ -20,9 +21,6 @@ with Flyology.Time_Math;
 with Flyology.IO.TLS.ALPN;
 with Flyology.Wake_Sources;
 with Flyology.QUIC.Connections;
-#if FLYOLOGY_CONNECTION_TEST_HOOKS then
-with Interfaces.C;
-#end if;
 
 package body Flyology.HTTP.Client is
    use Ada.Strings.Unbounded;
@@ -35,48 +33,9 @@ package body Flyology.HTTP.Client is
    use type Flyology.Operations.Driver_Event;
    use type System.Storage_Elements.Storage_Offset;
 
-#if FLYOLOGY_CONNECTION_TEST_HOOKS then
-   function Test_Barrier_Arrive
-     (Point : Interfaces.C.int) return Interfaces.C.int
-     with Import,
-          Convention => C,
-          External_Name => "flyology_test_connection_barrier_arrive";
-   function Test_Barrier_Released
-     (Point : Interfaces.C.int) return Interfaces.C.int
-     with Import,
-          Convention => C,
-          External_Name => "flyology_test_connection_barrier_released";
-   function Test_Receive_Limit
-     (Requested : Interfaces.C.int) return Interfaces.C.int
-     with Import,
-          Convention => C,
-          External_Name => "flyology_http_test_connection_receive_limit";
-   procedure Test_Receive_Observed
-     with Import,
-          Convention => C,
-          External_Name => "flyology_http_test_connection_receive_observed";
-
-   procedure Client_Test_Barrier (Point : Natural) is
-      Position : constant Interfaces.C.int := Interfaces.C.int (Point);
-   begin
-      if Test_Barrier_Arrive (Position) /= 0 then
-         while Test_Barrier_Released (Position) = 0 loop
-            delay 0.0;
-         end loop;
-      end if;
-   end Client_Test_Barrier;
-
-   function Client_Test_Receive_Limit (Requested : Positive) return Positive
-   is (Positive (Test_Receive_Limit (Interfaces.C.int (Requested))));
-   procedure Client_Test_Receive_Observed renames Test_Receive_Observed;
-#else
-   procedure Client_Test_Barrier (Point : Natural) is null;
-   function Client_Test_Receive_Limit (Requested : Positive) return Positive
-   is (Requested);
-   procedure Client_Test_Receive_Observed is null;
-#end if;
-
    package Connections renames Flyology.IO.Connections;
+   package Connection_Test_Hooks renames
+     Flyology.HTTP.Client_Connection_Test_Hooks;
    package Connection_Drivers renames
      Flyology.IO.Connections.Drivers;
    package H2_Connections renames
@@ -3250,7 +3209,9 @@ package body Flyology.HTTP.Client is
                   --  The test seam widens this exact handoff boundary. Recheck
                   --  caller interruption afterward before creating a socket
                   --  or starting the retained connect/QUIC child.
-                  Client_Test_Barrier (16);
+                  if Connection_Test_Hooks.Enabled then
+                     Connection_Test_Hooks.Barrier (16);
+                  end if;
                   if State.Token_Item /= null
                     and then State.Token_Item.Requested
                   then
@@ -3339,7 +3300,9 @@ package body Flyology.HTTP.Client is
             begin
                if not Is_Numeric then
                   State.Result.Last_Phase := Resolving;
-                  Client_Test_Barrier (15);
+                  if Connection_Test_Hooks.Enabled then
+                     Connection_Test_Hooks.Barrier (15);
+                  end if;
                   if State.Token_Item /= null
                     and then State.Token_Item.Requested
                   then
@@ -3393,7 +3356,9 @@ package body Flyology.HTTP.Client is
                   State.Result.Admission := Possibly_Admitted;
                   State.Output_Cursor := State.Output_Cursor
                     + Natural (Last - Data'First + 1);
-                  Client_Test_Barrier (2);
+                  if Connection_Test_Hooks.Enabled then
+                     Connection_Test_Hooks.Barrier (2);
+                  end if;
                   if State.Token_Item /= null
                     and then State.Token_Item.Requested
                   then
@@ -3714,9 +3679,13 @@ package body Flyology.HTTP.Client is
          Last   : Ada.Streams.Stream_Element_Offset;
          Result : Connection_Drivers.Step_Result;
          Limit  : constant Positive :=
-           Client_Test_Receive_Limit (State.Buffer'Length);
+           (if Connection_Test_Hooks.Enabled then
+               Connection_Test_Hooks.Receive_Limit (State.Buffer'Length)
+            else State.Buffer'Length);
       begin
-         Client_Test_Barrier (3);
+         if Connection_Test_Hooks.Enabled then
+            Connection_Test_Hooks.Barrier (3);
+         end if;
          if State.Token_Item /= null and then State.Token_Item.Requested then
             Fail_Exchange
               (Item, Cancelled, Flyology.Operations.Cancelled);
@@ -3733,7 +3702,9 @@ package body Flyology.HTTP.Client is
             Last, Result);
          case Result is
             when Connection_Drivers.Made_Progress =>
-               Client_Test_Receive_Observed;
+               if Connection_Test_Hooks.Enabled then
+                  Connection_Test_Hooks.Receive_Observed;
+               end if;
                if Last >= State.Buffer'First then
                   State.Result.Admission := Response_Observed;
                   State.Metadata.Saw_Response_Bytes := True;

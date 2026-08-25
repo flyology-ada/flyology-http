@@ -1,19 +1,6 @@
 with "../flyology_http.gpr";
 
 project HTTP_Tests is
-   type Connection_Test_Hooks_Type is ("false", "true");
-   Connection_Test_Hooks : Connection_Test_Hooks_Type :=
-     external ("FLYOLOGY_CONNECTION_TEST_HOOKS", "false");
-   Connection_Test_Hook_Switch :=
-     "-gnateDFLYOLOGY_CONNECTION_TEST_HOOKS=False";
-   case Connection_Test_Hooks is
-      when "false" =>
-         null;
-      when "true" =>
-         Connection_Test_Hook_Switch :=
-           "-gnateDFLYOLOGY_CONNECTION_TEST_HOOKS=True";
-   end case;
-
    for Languages use ("Ada", "C");
    for Source_Dirs use (".", "native", "compile_fail");
    for Object_Dir use "obj/http_tests";
@@ -102,8 +89,7 @@ project HTTP_Tests is
 
    package Compiler is
       for Default_Switches ("Ada") use
-        ("-gnat2022", "-gnata", "-gnatVa", "-gnatwa", "-gnatwJ",
-         Connection_Test_Hook_Switch);
+        ("-gnat2022", "-gnata", "-gnatVa", "-gnatwa", "-gnatwJ");
       for Default_Switches ("C") use
         ("-std=c11", "-Wall", "-Wextra");
    end Compiler;

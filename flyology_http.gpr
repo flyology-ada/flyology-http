@@ -7,21 +7,24 @@ project Flyology_HTTP is
    type Connection_Test_Hooks_Type is ("false", "true");
    Connection_Test_Hooks : Connection_Test_Hooks_Type :=
      external ("FLYOLOGY_CONNECTION_TEST_HOOKS", "false");
-   Connection_Test_Hook_Switch :=
-     "-gnateDFLYOLOGY_CONNECTION_TEST_HOOKS=False";
+   --  Select one private implementation instead of exporting an Ada
+   --  preprocessor symbol through every project-aware consumer tool.
+   Connection_Test_Hook_Source_Dir :=
+     "src/test_hooks/connection/disabled/";
    case Connection_Test_Hooks is
       when "false" =>
          null;
       when "true" =>
-         Connection_Test_Hook_Switch :=
-           "-gnateDFLYOLOGY_CONNECTION_TEST_HOOKS=True";
+         Connection_Test_Hook_Source_Dir :=
+           "src/test_hooks/connection/enabled/";
    end case;
 
    for Languages use ("Ada");
    for Library_Name use "Flyology_HTTP";
    for Library_Version use
      Project'Library_Name & ".so." & Flyology_HTTP_Config.Crate_Version;
-   for Source_Dirs use ("src/", "config/");
+   for Source_Dirs use
+     ("src/", "config/", Connection_Test_Hook_Source_Dir);
 
    type Documentation_Mode_Type is ("false", "true");
    Documentation_Mode : Documentation_Mode_Type :=
@@ -91,7 +94,7 @@ project Flyology_HTTP is
    package Compiler is
       for Default_Switches ("Ada") use
         Flyology_HTTP_Config.Ada_Compiler_Switches
-        & ("-gnatwJ", Connection_Test_Hook_Switch);
+        & ("-gnatwJ");
    end Compiler;
 
    package Binder is
