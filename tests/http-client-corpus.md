@@ -6,13 +6,13 @@ fixture, applicable protocols and public API styles, terminal result,
 admission certainty, and ownership-visible effects. The validator rejects
 duplicate IDs, unknown dimensions, contradictory pre-admission outcomes,
 nonzero failed buffer results, incomplete protocol/API coverage, unsourced
-external claims, and any reduction below the maintained 66-vector floor.
+external claims, and any reduction below the maintained 67-vector floor.
 
 `corpus/http-client-execution.json` is the execution manifest. It identifies
 the exact case/protocol/API tuples driven by a maintained runner and the native
 and lightweight lanes used. Every tuple not listed there is explicitly
 `evidence-only`; it remains a standards-backed design vector, not an executable
-qualification claim. The current manifest records 60 executable tuples and
+qualification claim. The current manifest records 61 executable tuples and
 346 evidence-only tuples. Consumer-critical lost-response, stale-reuse,
 cancellation,
 abandonment, blocked-source, and established-child tuples are required across

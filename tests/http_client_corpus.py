@@ -40,7 +40,7 @@ def validate(document: dict, corpus_path: Path | None = None) -> None:
             if source["kind"] == "standard":
                 assert source["url"].startswith("https://www.rfc-editor.org/"), identifier
     cases = document["cases"]
-    assert len(cases) >= 66, "the maintained client corpus must not shrink below 66 vectors"
+    assert len(cases) >= 67, "the maintained client corpus must not shrink below 67 vectors"
     identifiers = [case["id"] for case in cases]
     assert len(identifiers) == len(set(identifiers)), "duplicate case id"
     assert {"complete-fixed", "blocked-source-early-final", "malformed-stream-isolation", "lost-final-response"} <= set(identifiers)

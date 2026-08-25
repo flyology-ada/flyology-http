@@ -17,6 +17,13 @@
       "runner": "scripts/http-client-differential.sh"
     },
     {
+      "cases": ["safe-stale-after-handoff-one-retry"],
+      "protocols": ["h1"],
+      "api_styles": ["established-child"],
+      "models": ["native", "lightweight"],
+      "runner": "tests/http_client_scoped_stale_reuse.adb"
+    },
+    {
       "cases": ["parent-continue-after"],
       "protocols": ["h1", "h2", "h3"],
       "api_styles": ["established-child"],

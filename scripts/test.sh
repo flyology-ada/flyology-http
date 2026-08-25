@@ -156,6 +156,7 @@ tls_smoke
 http_smoke
 http_operations_smoke
 http_client_scoped_smoke
+http_client_scoped_stale_reuse
 http_client_smoke
 http_client_addressing
 http_client_authentication
@@ -220,6 +221,11 @@ done
   "$http_root/tests/bin/behavioral/http_client_scoped_smoke" lightweight
 printf '%s\n' \
   "flyology_http test: PASS http_client_scoped_smoke (lightweight)"
+
+"$http_root/scripts/run-with-timeout.sh" 60 \
+  "$http_root/tests/bin/behavioral/http_client_scoped_stale_reuse" lightweight
+printf '%s\n' \
+  "flyology_http test: PASS http_client_scoped_stale_reuse (lightweight)"
 
 for main in $connection_hook_mains; do
   "$http_root/scripts/run-with-timeout.sh" 30 \
