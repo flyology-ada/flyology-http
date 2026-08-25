@@ -12,6 +12,9 @@ env -i \
   GPR_CONFIG=/outer/flyology/build/flyology.cgpr \
   GPR_PROJECT_PATH=/outer/projects \
   FLYOLOGY_ALIRE_PREFIX=/outer/flyology \
+  GNAT_FLYOLOGY_NATIVE_ALIRE_PREFIX=/outer/gnat \
+  GNAT_NATIVE_ALIRE_PREFIX=/outer/gnat-native \
+  GPRBUILD_ALIRE_PREFIX=/outer/gprbuild \
   sh -c '
     set -eu
     . "$1"
@@ -22,6 +25,9 @@ env -i \
       test -z "${GPR_CONFIG:-}"
       test -z "${GPR_PROJECT_PATH:-}"
       test -z "${FLYOLOGY_ALIRE_PREFIX:-}"
+      test -z "${GNAT_FLYOLOGY_NATIVE_ALIRE_PREFIX:-}"
+      test -z "${GNAT_NATIVE_ALIRE_PREFIX:-}"
+      test -z "${GPRBUILD_ALIRE_PREFIX:-}"
       test "${ALIRE:-}" = True
     '\''
   ' sh "$context_helper"

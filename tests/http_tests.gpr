@@ -64,6 +64,7 @@ project HTTP_Tests is
       "http_smoke.adb",
       "http_operations_smoke.adb",
       "http_client_scoped_smoke.adb",
+      "http_client_scoped_stale_reuse.adb",
       "http_client_smoke.adb",
       "http_client_addressing.adb",
       "http_client_authentication.adb",

@@ -954,7 +954,7 @@ package body Flyology.HTTP.Client is
         Flyology.Operations.Failed)
    is
    begin
-      if Item.State.Target = Response_Head_Target
+      if Item.State.Target in Buffer_Target | Response_Head_Target
         and then Item.State.Result.Admission = Possibly_Admitted
         and then Item.State.Was_Reused
         and then not Item.State.Safe_Retry_Used
@@ -964,10 +964,10 @@ package body Flyology.HTTP.Client is
           Response_Invalid
         and then not Item.State.Metadata.Saw_Response_Bytes
       then
-         --  Ordinary synchronous GET/HEAD compatibility retains the legacy
-         --  one-shot stale-connection recovery.  Only safe methods qualify:
-         --  conditional PUT and every other mutation remain ambiguous after
-         --  first handoff and are never replayed.
+         --  Complete-body buffer exchanges and the synchronous response-head
+         --  adapter share one-shot stale-connection recovery.  Only safe
+         --  methods qualify: conditional PUT and every other mutation remain
+         --  ambiguous after first handoff and are never replayed.
          Release_Exchange_Transport (Item.State.all, Reusable => False);
          Item.State.Client_Item.Control.State.Pool.Record_Stale_Retry;
          Item.State.Safe_Retry_Used := True;

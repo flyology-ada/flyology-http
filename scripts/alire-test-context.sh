@@ -17,7 +17,10 @@ flyology_http_run_nested_alire_test () {
       -u FLYOLOGY_HTTP_ALIRE_PREFIX \
       -u FLYOLOGY_QUIC_ALIRE_PREFIX \
       -u FLYOLOGY_ROOT \
+      -u GNAT_FLYOLOGY_NATIVE_ALIRE_PREFIX \
+      -u GNAT_NATIVE_ALIRE_PREFIX \
       -u GPR_CONFIG \
+      -u GPRBUILD_ALIRE_PREFIX \
       -u GPR_PROJECT_PATH \
       "$@"
   else

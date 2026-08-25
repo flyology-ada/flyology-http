@@ -330,6 +330,14 @@
       "expect": {"kind": "transport-failed", "certainty": "possibly-admitted", "body_effect": "zero", "automatic_replay": false}
     },
     {
+      "id": "safe-stale-after-handoff-one-retry",
+      "provenance": ["rfc9110:9.2.2", "flyology"],
+      "fixture": "complete-412-then-reused-safe-get-drops-before-response",
+      "protocols": ["h1"],
+      "api_styles": ["established-child"],
+      "expect": {"kind": "response-complete", "certainty": "response-observed", "status": 200, "body_effect": "complete", "automatic_replay": true}
+    },
+    {
       "id": "parent-continue-after",
       "provenance": ["flyology"],
       "fixture": "synthetic-parent-child",

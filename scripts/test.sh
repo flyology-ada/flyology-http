@@ -98,22 +98,9 @@ FLYOLOGY_RTS_DIR="$test_rts" \
 FLYOLOGY_DEFAULT=native \
 FLYOLOGY_LOOP_POOL_SIZE=1 \
   "$flyology_root/scripts/prepare-rts.sh" >/dev/null
-if [ -n "${FLYOLOGY_HTTP_TEST_IN_ALIRE:-}" ]; then
-  env \
-    -u FLYOLOGY_ALIRE_PREFIX \
-    -u FLYOLOGY_ALLOCATORS_ALIRE_PREFIX \
-    -u FLYOLOGY_CACHELINES_ALIRE_PREFIX \
-    -u FLYOLOGY_HTTP_ALIRE_PREFIX \
-    -u FLYOLOGY_QUIC_ALIRE_PREFIX \
-    -u FLYOLOGY_ROOT \
-    -u GPR_CONFIG \
-    -u GPR_PROJECT_PATH \
-    FLYOLOGY_QUIC_TEST_RTS="$test_rts" \
-    "$http_root/flyology_quic/scripts/test.sh"
-else
-  FLYOLOGY_QUIC_TEST_RTS="$test_rts" \
-    "$http_root/flyology_quic/scripts/test.sh"
-fi
+flyology_http_run_nested_alire_test \
+  env FLYOLOGY_QUIC_TEST_RTS="$test_rts" \
+  "$http_root/flyology_quic/scripts/test.sh"
 
 ordinary_mains='flyology-rate_limit_policy_smoke
 flyology-http_chunk_encoding-smoke
@@ -156,6 +143,7 @@ tls_smoke
 http_smoke
 http_operations_smoke
 http_client_scoped_smoke
+http_client_scoped_stale_reuse
 http_client_smoke
 http_client_addressing
 http_client_authentication
@@ -220,6 +208,11 @@ done
   "$http_root/tests/bin/behavioral/http_client_scoped_smoke" lightweight
 printf '%s\n' \
   "flyology_http test: PASS http_client_scoped_smoke (lightweight)"
+
+"$http_root/scripts/run-with-timeout.sh" 60 \
+  "$http_root/tests/bin/behavioral/http_client_scoped_stale_reuse" lightweight
+printf '%s\n' \
+  "flyology_http test: PASS http_client_scoped_stale_reuse (lightweight)"
 
 for main in $connection_hook_mains; do
   "$http_root/scripts/run-with-timeout.sh" 30 \
