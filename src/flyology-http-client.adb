@@ -629,7 +629,7 @@ package body Flyology.HTTP.Client is
      (To_String (Item.Detail));
 
    procedure Validate_Request (Value : Request);
-   procedure Validate_Scoped_Encoding
+   procedure Validate_Composable_Encoding
      (Owner         : Client_State;
       Value         : Request;
       Has_Source    : Boolean;
@@ -1156,7 +1156,7 @@ package body Flyology.HTTP.Client is
    begin
       --  The private synchronous adapter terminalizes its operation at the
       --  final response head, transferring the live response stream and pool
-      --  lease into Response.  The ordinary public scoped operations never
+      --  lease into Response.  The ordinary public composable operations never
       --  use this target and still terminalize only after the complete body.
       if State.Client_Item /= null then
          Observe_HTTP_3_Alternative
@@ -1348,12 +1348,12 @@ package body Flyology.HTTP.Client is
             Validate_Request (Value.all);
             if Value.Redirects.Mode /= Return_Redirects then
                raise Constraint_Error with
-                 "scoped exchanges do not follow redirects";
+                 "composable exchanges do not follow redirects";
             elsif Value.Expect_Continue
               and then Target /= Response_Head_Target
             then
                raise Constraint_Error with
-                 "scoped exchanges do not support Expect: 100-continue";
+                 "composable exchanges do not support Expect: 100-continue";
             elsif Value.Expect_Continue
               and then Item.Control.State.Protocol_Policy /= HTTP_1_Only
             then
@@ -1374,19 +1374,20 @@ package body Flyology.HTTP.Client is
                Operation.State.Source_Length := Declared_Length (Source.all);
                if Flyology.Bytes.Length (Value.Body_Value) /= 0 then
                   raise Constraint_Error with
-                    "a scoped request source cannot accompany a retained body";
+                    "a composable request source cannot accompany "
+                    & "a retained body";
                elsif Operation.State.Source_Length.Is_Known
                  and then Flyology.HTTP.Headers.Count
                    (Value.Trailer_Fields) > 0
                then
                   raise Constraint_Error with
-                    "known-length scoped sources cannot carry trailers";
+                    "known-length composable sources cannot carry trailers";
                end if;
             else
                Operation.State.Source_Length := Unknown_Length;
                if Flyology.HTTP.Headers.Count (Value.Trailer_Fields) > 0 then
                   raise Constraint_Error with
-                    "retained scoped bodies cannot carry trailers";
+                    "retained composable bodies cannot carry trailers";
                end if;
             end if;
             if Value.Expect_Continue
@@ -1398,7 +1399,7 @@ package body Flyology.HTTP.Client is
                raise Constraint_Error with
                  "Expect: 100-continue requires a nonempty request body";
             end if;
-            Validate_Scoped_Encoding
+            Validate_Composable_Encoding
               (Item.Control.State.all, Value.all, Source /= null,
                Operation.State.Source_Length);
          exception
@@ -1428,281 +1429,281 @@ package body Flyology.HTTP.Client is
          raise;
    end Start_Exchange;
 
-   package body Scoped is
-      function Exchange_To_Buffer
-        (Set         : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item        : not null access Client;
-         Value       : not null access constant Request;
-         Destination : in out Flyology.Buffers.Unique_Buffer;
-         Deadline    : Monotonic_Deadline;
-         Token       : access Flyology.Cancellation.Token := null)
-         return Exchange_Operation
-      is
-      begin
-         return Result : Exchange_Operation (Set) do
-            Start (Result, Item, Value, Destination, Deadline, Token);
-         end return;
-      end Exchange_To_Buffer;
+   function Exchange_To_Buffer
+     (Set         : not null access
+        Flyology.Operations.Completion_Set'Class;
+      Item        : not null access Client;
+      Value       : not null access constant Request;
+      Destination : in out Flyology.Buffers.Unique_Buffer;
+      Deadline    : Monotonic_Deadline;
+      Token       : access Flyology.Cancellation.Token := null)
+      return Exchange_Operation
+   is
+   begin
+      return Result : Exchange_Operation (Set) do
+         Exchange_To_Buffer
+           (Item, Value, Destination, Deadline, Token, Result);
+      end return;
+   end Exchange_To_Buffer;
 
-      function Exchange_To_Buffer
-        (Set         : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item        : not null access Client;
-         Value       : not null access constant Request;
-         Source      : not null access Operation_Request_Body_Source'Class;
-         Destination : in out Flyology.Buffers.Unique_Buffer;
-         Deadline    : Monotonic_Deadline;
-         Token       : access Flyology.Cancellation.Token := null)
-         return Exchange_Operation
-      is
-      begin
-         return Result : Exchange_Operation (Set) do
-            Start
-              (Result, Item, Value, Source, Destination, Deadline, Token);
-         end return;
-      end Exchange_To_Buffer;
+   function Exchange_To_Buffer
+     (Set         : not null access
+        Flyology.Operations.Completion_Set'Class;
+      Item        : not null access Client;
+      Value       : not null access constant Request;
+      Source      : not null access Operation_Request_Body_Source'Class;
+      Destination : in out Flyology.Buffers.Unique_Buffer;
+      Deadline    : Monotonic_Deadline;
+      Token       : access Flyology.Cancellation.Token := null)
+      return Exchange_Operation
+   is
+   begin
+      return Result : Exchange_Operation (Set) do
+         Exchange_To_Buffer
+           (Item, Value, Source, Destination, Deadline, Token, Result);
+      end return;
+   end Exchange_To_Buffer;
 
-      function Exchange_To_Sink
-        (Set      : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item     : not null access Client;
-         Value    : not null access constant Request;
-         Sink     : not null access Response_Body_Sink'Class;
-         Deadline : Monotonic_Deadline;
-         Token    : access Flyology.Cancellation.Token := null)
-         return Exchange_Operation
-      is
-      begin
-         return Result : Exchange_Operation (Set) do
-            Start (Result, Item, Value, Sink, Deadline, Token);
-         end return;
-      end Exchange_To_Sink;
+   function Exchange_To_Sink
+     (Set      : not null access
+        Flyology.Operations.Completion_Set'Class;
+      Item     : not null access Client;
+      Value    : not null access constant Request;
+      Sink     : not null access Response_Body_Sink'Class;
+      Deadline : Monotonic_Deadline;
+      Token    : access Flyology.Cancellation.Token := null)
+      return Exchange_Operation
+   is
+   begin
+      return Result : Exchange_Operation (Set) do
+         Exchange_To_Sink
+           (Item, Value, Sink, Deadline, Token, Result);
+      end return;
+   end Exchange_To_Sink;
 
-      function Exchange_To_Sink
-        (Set      : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item     : not null access Client;
-         Value    : not null access constant Request;
-         Source   : not null access Operation_Request_Body_Source'Class;
-         Sink     : not null access Response_Body_Sink'Class;
-         Deadline : Monotonic_Deadline;
-         Token    : access Flyology.Cancellation.Token := null)
-         return Exchange_Operation
-      is
-      begin
-         return Result : Exchange_Operation (Set) do
-            Start (Result, Item, Value, Source, Sink, Deadline, Token);
-         end return;
-      end Exchange_To_Sink;
+   function Exchange_To_Sink
+     (Set      : not null access
+        Flyology.Operations.Completion_Set'Class;
+      Item     : not null access Client;
+      Value    : not null access constant Request;
+      Source   : not null access Operation_Request_Body_Source'Class;
+      Sink     : not null access Response_Body_Sink'Class;
+      Deadline : Monotonic_Deadline;
+      Token    : access Flyology.Cancellation.Token := null)
+      return Exchange_Operation
+   is
+   begin
+      return Result : Exchange_Operation (Set) do
+         Exchange_To_Sink
+           (Item, Value, Source, Sink, Deadline, Token, Result);
+      end return;
+   end Exchange_To_Sink;
 
-      procedure Start
-        (Operation   : in out Exchange_Operation;
-         Item        : not null access Client;
-         Value       : not null access constant Request;
-         Destination : in out Flyology.Buffers.Unique_Buffer;
-         Deadline    : Monotonic_Deadline;
-         Token       : access Flyology.Cancellation.Token := null)
-      is
+   procedure Exchange_To_Buffer
+     (Item        : not null access Client;
+      Value       : not null access constant Request;
+      Destination : in out Flyology.Buffers.Unique_Buffer;
+      Deadline    : Monotonic_Deadline;
+      Token       : access Flyology.Cancellation.Token := null;
+      Operation   : in out Exchange_Operation)
+   is
+   begin
+      Start_Exchange
+        (Operation, Item, Value, null, null, Buffer_Target, Deadline,
+         Token, Defer_Drive => True);
+      if Operation.State.Start_Rejected then
+         return;
+      end if;
       begin
-         Start_Exchange
-           (Operation, Item, Value, null, null, Buffer_Target, Deadline,
-            Token, Defer_Drive => True);
-         if Operation.State.Start_Rejected then
-            return;
-         end if;
-         begin
-            Flyology.Buffers.Drivers.Move_From
-              (Destination, Operation.State.Destination);
-            Operation.State.Destination_Moved := True;
-            Flyology.Operations.Drive
-              (Flyology.Operations.Operation'Class (Operation),
-               Flyology.Operations.Start_Operation);
-         exception
-            when others =>
-               if Operation.State.Destination_Moved then
-                  Flyology.Buffers.Drivers.Move_To
-                    (Operation.State.Destination, Destination);
-                  Operation.State.Destination_Moved := False;
-               end if;
-               if Flyology.Operations.Is_Active (Operation) then
-                  Flyology.Operations.Drivers.Rollback_Start (Operation);
-               end if;
-               Release_Exchange_Borrows (Operation.State.all);
-               raise;
-         end;
-      end Start;
+         Flyology.Buffers.Drivers.Move_From
+           (Destination, Operation.State.Destination);
+         Operation.State.Destination_Moved := True;
+         Flyology.Operations.Drive
+           (Flyology.Operations.Operation'Class (Operation),
+            Flyology.Operations.Start_Operation);
+      exception
+         when others =>
+            if Operation.State.Destination_Moved then
+               Flyology.Buffers.Drivers.Move_To
+                 (Operation.State.Destination, Destination);
+               Operation.State.Destination_Moved := False;
+            end if;
+            if Flyology.Operations.Is_Active (Operation) then
+               Flyology.Operations.Drivers.Rollback_Start (Operation);
+            end if;
+            Release_Exchange_Borrows (Operation.State.all);
+            raise;
+      end;
+   end Exchange_To_Buffer;
 
-      procedure Start
-        (Operation   : in out Exchange_Operation;
-         Item        : not null access Client;
-         Value       : not null access constant Request;
-         Source      : not null access Operation_Request_Body_Source'Class;
-         Destination : in out Flyology.Buffers.Unique_Buffer;
-         Deadline    : Monotonic_Deadline;
-         Token       : access Flyology.Cancellation.Token := null)
-      is
+   procedure Exchange_To_Buffer
+     (Item        : not null access Client;
+      Value       : not null access constant Request;
+      Source      : not null access Operation_Request_Body_Source'Class;
+      Destination : in out Flyology.Buffers.Unique_Buffer;
+      Deadline    : Monotonic_Deadline;
+      Token       : access Flyology.Cancellation.Token := null;
+      Operation   : in out Exchange_Operation)
+   is
+   begin
+      Start_Exchange
+        (Operation, Item, Value, Source, null, Buffer_Target, Deadline,
+         Token, Defer_Drive => True);
+      if Operation.State.Start_Rejected then
+         return;
+      end if;
       begin
-         Start_Exchange
-           (Operation, Item, Value, Source, null, Buffer_Target, Deadline,
-            Token, Defer_Drive => True);
-         if Operation.State.Start_Rejected then
-            return;
-         end if;
-         begin
-            Flyology.Buffers.Drivers.Move_From
-              (Destination, Operation.State.Destination);
-            Operation.State.Destination_Moved := True;
-            Operation.State.Source_Attached := True;
-            Flyology.Operations.Drive
-              (Flyology.Operations.Operation'Class (Operation),
-               Flyology.Operations.Start_Operation);
-         exception
-            when others =>
-               if Operation.State.Destination_Moved then
-                  Flyology.Buffers.Drivers.Move_To
-                    (Operation.State.Destination, Destination);
-                  Operation.State.Destination_Moved := False;
-               end if;
-               Release_Exchange_Borrows (Operation.State.all);
-               if Flyology.Operations.Is_Active (Operation) then
-                  Flyology.Operations.Drivers.Rollback_Start (Operation);
-               end if;
-               raise;
-         end;
-      end Start;
-
-      procedure Start
-        (Operation : in out Exchange_Operation;
-         Item      : not null access Client;
-         Value     : not null access constant Request;
-         Sink      : not null access Response_Body_Sink'Class;
-         Deadline  : Monotonic_Deadline;
-         Token     : access Flyology.Cancellation.Token := null)
-      is
-      begin
-         Start_Exchange
-           (Operation, Item, Value, null, Sink, Sink_Target, Deadline, Token);
-      end Start;
-
-      procedure Start
-        (Operation : in out Exchange_Operation;
-         Item      : not null access Client;
-         Value     : not null access constant Request;
-         Source    : not null access Operation_Request_Body_Source'Class;
-         Sink      : not null access Response_Body_Sink'Class;
-         Deadline  : Monotonic_Deadline;
-         Token     : access Flyology.Cancellation.Token := null)
-      is
-      begin
-         Start_Exchange
-           (Operation, Item, Value, Source, Sink, Sink_Target, Deadline,
-            Token, Defer_Drive => True);
-         if Operation.State.Start_Rejected then
-            return;
-         end if;
+         Flyology.Buffers.Drivers.Move_From
+           (Destination, Operation.State.Destination);
+         Operation.State.Destination_Moved := True;
          Operation.State.Source_Attached := True;
-         begin
-            Flyology.Operations.Drive
-              (Flyology.Operations.Operation'Class (Operation),
-               Flyology.Operations.Start_Operation);
-         exception
-            when others =>
-               Release_Exchange_Borrows (Operation.State.all);
-               if Flyology.Operations.Is_Active (Operation) then
-                  Flyology.Operations.Drivers.Rollback_Start (Operation);
-               end if;
-               raise;
-         end;
-      end Start;
+         Flyology.Operations.Drive
+           (Flyology.Operations.Operation'Class (Operation),
+            Flyology.Operations.Start_Operation);
+      exception
+         when others =>
+            if Operation.State.Destination_Moved then
+               Flyology.Buffers.Drivers.Move_To
+                 (Operation.State.Destination, Destination);
+               Operation.State.Destination_Moved := False;
+            end if;
+            Release_Exchange_Borrows (Operation.State.all);
+            if Flyology.Operations.Is_Active (Operation) then
+               Flyology.Operations.Drivers.Rollback_Start (Operation);
+            end if;
+            raise;
+      end;
+   end Exchange_To_Buffer;
 
-      function Admission
-        (Operation : Exchange_Operation) return Admission_Certainty is
-        (if Operation.State = null
-         then Not_Admitted
-         else Operation.State.Result.Admission);
+   procedure Exchange_To_Sink
+     (Item      : not null access Client;
+      Value     : not null access constant Request;
+      Sink      : not null access Response_Body_Sink'Class;
+      Deadline  : Monotonic_Deadline;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Exchange_Operation)
+   is
+   begin
+      Start_Exchange
+        (Operation, Item, Value, null, Sink, Sink_Target, Deadline, Token);
+   end Exchange_To_Sink;
 
-      function Raw_Phase
-        (Operation : Exchange_Operation) return Exchange_Phase is
-        (if Operation.State = null
-         then Not_Started
-         elsif Operation.State.Drain_Active
-         then Draining
-         else Operation.State.Result.Last_Phase);
-
-      procedure Finish
-        (Operation : in out Exchange_Operation;
-         Result    : out Exchange_Result;
-         Reply     : out Response)
-      is
+   procedure Exchange_To_Sink
+     (Item      : not null access Client;
+      Value     : not null access constant Request;
+      Source    : not null access Operation_Request_Body_Source'Class;
+      Sink      : not null access Response_Body_Sink'Class;
+      Deadline  : Monotonic_Deadline;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Exchange_Operation)
+   is
+   begin
+      Start_Exchange
+        (Operation, Item, Value, Source, Sink, Sink_Target, Deadline,
+         Token, Defer_Drive => True);
+      if Operation.State.Start_Rejected then
+         return;
+      end if;
+      Operation.State.Source_Attached := True;
       begin
-         if Operation.State = null then
-            raise Flyology.Operations.Operation_Error with
-              "exchange operation has no state";
-         elsif Operation.State.Target not in
-           Sink_Target | Response_Head_Target
-         then
-            raise Program_Error with "buffer exchange requires buffer Finish";
-         end if;
-         Result := Operation.State.Result;
-         Reply.Data := Operation.State.Reply_Data;
-         Operation.State.Reply_Data := null;
-         Flyology.Operations.Consume (Operation);
-         if Operation.State.Has_Saved_Error then
-            Ada.Exceptions.Raise_Exception
-              (Ada.Exceptions.Exception_Identity
-                 (Operation.State.Saved_Error),
-               Ada.Exceptions.Exception_Message
-                 (Operation.State.Saved_Error));
-         end if;
-      end Finish;
+         Flyology.Operations.Drive
+           (Flyology.Operations.Operation'Class (Operation),
+            Flyology.Operations.Start_Operation);
+      exception
+         when others =>
+            Release_Exchange_Borrows (Operation.State.all);
+            if Flyology.Operations.Is_Active (Operation) then
+               Flyology.Operations.Drivers.Rollback_Start (Operation);
+            end if;
+            raise;
+      end;
+   end Exchange_To_Sink;
 
-      procedure Finish
-        (Operation   : in out Exchange_Operation;
-         Result      : out Exchange_Result;
-         Reply       : out Response;
-         Destination : in out Flyology.Buffers.Unique_Buffer)
-      is
-      begin
-         if Operation.State = null then
-            raise Flyology.Operations.Operation_Error with
-              "exchange operation has no state";
-         elsif Operation.State.Target /= Buffer_Target then
-            raise Program_Error with "sink exchange requires sink Finish";
-         elsif Operation.State.Destination_Moved
-           and then
-             (Flyology.Buffers.Has_Buffer (Destination)
-              or else not Flyology.Buffers.Drivers.Same_Pool
-                (Operation.State.Destination, Destination))
-         then
-            raise Program_Error with
-              "response destination is not vacant in the original pool";
-         end if;
+   function Admission
+     (Operation : Exchange_Operation) return Admission_Certainty is
+     (if Operation.State = null
+      then Not_Admitted
+      else Operation.State.Result.Admission);
 
-         Result := Operation.State.Result;
-         Reply.Data := Operation.State.Reply_Data;
-         Operation.State.Reply_Data := null;
-         Flyology.Operations.Consume (Operation);
-         if Operation.State.Destination_Moved then
-            Flyology.Buffers.Drivers.Set_Length
-              (Operation.State.Destination,
-               (if Result.Result_Kind = Response_Complete
-                then Operation.State.Response_Length
-                else 0));
-            Flyology.Buffers.Drivers.Move_To
-              (Operation.State.Destination, Destination);
-            Operation.State.Destination_Moved := False;
-         end if;
-         if Operation.State.Has_Saved_Error then
-            Ada.Exceptions.Raise_Exception
-              (Ada.Exceptions.Exception_Identity
-                 (Operation.State.Saved_Error),
-               Ada.Exceptions.Exception_Message
-                 (Operation.State.Saved_Error));
-         end if;
-      end Finish;
-   end Scoped;
+   function Raw_Phase
+     (Operation : Exchange_Operation) return Exchange_Phase is
+     (if Operation.State = null
+      then Not_Started
+      elsif Operation.State.Drain_Active
+      then Draining
+      else Operation.State.Result.Last_Phase);
 
+   procedure Finish
+     (Operation : in out Exchange_Operation'Class;
+      Result    : out Exchange_Result;
+      Reply     : out Response)
+   is
+   begin
+      if Operation.State = null then
+         raise Flyology.Operations.Operation_Error with
+           "exchange operation has no state";
+      elsif Operation.State.Target not in
+        Sink_Target | Response_Head_Target
+      then
+         raise Program_Error with "buffer exchange requires buffer Finish";
+      end if;
+      Result := Operation.State.Result;
+      Reply.Data := Operation.State.Reply_Data;
+      Operation.State.Reply_Data := null;
+      Flyology.Operations.Consume (Operation);
+      if Operation.State.Has_Saved_Error then
+         Ada.Exceptions.Raise_Exception
+           (Ada.Exceptions.Exception_Identity
+              (Operation.State.Saved_Error),
+            Ada.Exceptions.Exception_Message
+              (Operation.State.Saved_Error));
+      end if;
+   end Finish;
+
+   procedure Finish
+     (Operation   : in out Exchange_Operation'Class;
+      Result      : out Exchange_Result;
+      Reply       : out Response;
+      Destination : in out Flyology.Buffers.Unique_Buffer)
+   is
+   begin
+      if Operation.State = null then
+         raise Flyology.Operations.Operation_Error with
+           "exchange operation has no state";
+      elsif Operation.State.Target /= Buffer_Target then
+         raise Program_Error with "sink exchange requires sink Finish";
+      elsif Operation.State.Destination_Moved
+        and then
+          (Flyology.Buffers.Has_Buffer (Destination)
+           or else not Flyology.Buffers.Drivers.Same_Pool
+             (Operation.State.Destination, Destination))
+      then
+         raise Program_Error with
+           "response destination is not vacant in the original pool";
+      end if;
+
+      Result := Operation.State.Result;
+      Reply.Data := Operation.State.Reply_Data;
+      Operation.State.Reply_Data := null;
+      Flyology.Operations.Consume (Operation);
+      if Operation.State.Destination_Moved then
+         Flyology.Buffers.Drivers.Set_Length
+           (Operation.State.Destination,
+            (if Result.Result_Kind = Response_Complete
+             then Operation.State.Response_Length
+             else 0));
+         Flyology.Buffers.Drivers.Move_To
+           (Operation.State.Destination, Destination);
+         Operation.State.Destination_Moved := False;
+      end if;
+      if Operation.State.Has_Saved_Error then
+         Ada.Exceptions.Raise_Exception
+           (Ada.Exceptions.Exception_Identity
+              (Operation.State.Saved_Error),
+            Ada.Exceptions.Exception_Message
+              (Operation.State.Saved_Error));
+      end if;
+   end Finish;
    overriding procedure Drive
      (Item  : in out Exchange_Operation;
       Event : Flyology.Operations.Driver_Event)
@@ -2535,7 +2536,7 @@ package body Flyology.HTTP.Client is
 
    package body HTTP_1_Internals is separate;
 
-   procedure Validate_Scoped_Encoding
+   procedure Validate_Composable_Encoding
      (Owner         : Client_State;
       Value         : Request;
       Has_Source    : Boolean;
@@ -2632,7 +2633,7 @@ package body Flyology.HTTP.Client is
              Automatic_Fields > H3.Max_Fields
          then
             raise Constraint_Error with
-              "request pseudo-fields exceed scoped HTTP/3 bounds";
+              "request pseudo-fields exceed composable HTTP/3 bounds";
          end if;
          Validate_H3_Fields (Value.Fields);
          if Has_Source then
@@ -2655,7 +2656,7 @@ package body Flyology.HTTP.Client is
             Validate_H2;
             Validate_H3;
       end case;
-   end Validate_Scoped_Encoding;
+   end Validate_Composable_Encoding;
 
    procedure Drive_Exchange_Engine
      (Item  : in out Exchange_Operation;
@@ -4121,7 +4122,7 @@ package body Flyology.HTTP.Client is
                Fail_Exchange (Item, Response_Invalid);
             when H2_Connections.Head_Refused |
                  H2_Connections.Head_Goaway_Unprocessed =>
-               --  Scoped sources are never replayed. Even an explicit peer
+               --  Composable sources are never replayed. Even an explicit peer
                --  refusal is reported against the already queued request.
                --  The synchronous adapter may apply its historical one-shot
                --  replay policy after typed terminal cleanup.
@@ -4527,7 +4528,7 @@ package body Flyology.HTTP.Client is
                Release_HTTP_2_Pump;
                --  The peer supplied bytes that violate HTTP/2 framing or
                --  compression rules. Preserve synchronous Protocol_Error
-               --  semantics while scoped callers receive the typed invalid
+               --  semantics while composable callers receive the typed invalid
                --  response outcome and unchanged admission certainty.
                Fail_Exchange (Item, Response_Invalid);
          end case;
@@ -6288,15 +6289,17 @@ package body Flyology.HTTP.Client is
       if Item.Control.State = null
         or else not Item.Control.State.Is_Configured
       then
-         --  Preserve the ordinary Execute contract.  Scoped callers receive
-         --  the typed Client_Unavailable result, while the synchronous API
-         --  has always treated an unconfigured client as a programming error.
+         --  Preserve the ordinary Execute contract. Composable callers
+         --  receive the typed Client_Unavailable result, while the synchronous
+         --  API has always treated an unconfigured client as a programming
+         --  error.
          raise Program_Error with "HTTP client is not configured";
       end if;
 
-      --  Redirects remain an ordinary synchronous wrapper.  Every individual
-      --  hop disables nested redirect policy and is driven by the same scoped
-      --  H1/H2/H3 operation engine used by public composable exchanges.
+      --  Redirects remain an ordinary synchronous wrapper. Every individual
+      --  hop disables nested redirect policy and is driven by the same
+      --  composable H1/H2/H3 operation engine used by public composable
+      --  exchanges.
       Request_Copy.Redirects := No_Redirects;
       if Source = null then
          Start_Exchange
@@ -6318,7 +6321,7 @@ package body Flyology.HTTP.Client is
       end if;
       Flyology.Operations.Wait_All (Set);
       Failure_Cause := Operation.State.Failure_Cause;
-      Scoped.Finish (Operation, Result, Reply);
+      Finish (Operation, Result, Reply);
       if Result.Result_Kind = Response_Complete then
          Move_Response (Reply, Output);
          return;
@@ -6930,8 +6933,8 @@ package body Flyology.HTTP.Client is
          end Pump;
       begin
          --  The synchronous body adapter uses the same owner-driven session
-         --  pump as a scoped exchange.  Before releasing its stream, give the
-         --  pump the same bounded settlement pass used by the composable
+         --  pump as a composable exchange. Before releasing its stream, give
+         --  the pump the same bounded settlement pass used by the composable
          --  driver: parse already-buffered connection control frames and
          --  commit any queued ACK, credit, or stream reset output.  This is
          --  especially important when END_STREAM and a PING arrive together,

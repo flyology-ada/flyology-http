@@ -170,7 +170,7 @@ def serve_connection(
                 if state.scenario in {
                     "early-final",
                     "early-final-body",
-                    "scoped-source-early-final",
+                    "composable-source-early-final",
                 }:
                     body = b"rejected" if state.scenario == "early-final-body" else b""
                     connection.send_headers(
@@ -229,7 +229,7 @@ def serve_connection(
                 if state.scenario in {
                     "early-final",
                     "early-final-body",
-                    "scoped-source-early-final",
+                    "composable-source-early-final",
                 }:
                     pass
                 elif state.scenario == "head-empty-data":
@@ -240,7 +240,7 @@ def serve_connection(
                     )
                     connection.send_data(stream_id, b"", end_stream=True)
                     state.record("head-empty-data", stream=stream_id)
-                elif state.scenario == "scoped-body-forbidden":
+                elif state.scenario == "composable-body-forbidden":
                     status = 200 if state.request_count == 1 else 304
                     connection.send_headers(
                         stream_id,
@@ -276,8 +276,8 @@ def serve_connection(
                     state.record("flood", frames=8_000)
                 elif state.scenario in {
                     "shutdown-race",
-                    "scoped-cancel",
-                    "scoped-abandon",
+                    "composable-cancel",
+                    "composable-abandon",
                 }:
                     connection.send_headers(
                         stream_id,
@@ -295,14 +295,14 @@ def serve_connection(
                 if state.scenario in {
                     "early-final",
                     "early-final-body",
-                    "scoped-source-early-final",
+                    "composable-source-early-final",
                     "head-empty-data",
-                    "scoped-body-forbidden",
+                    "composable-body-forbidden",
                     "informational-end",
                     "flood",
                     "shutdown-race",
-                    "scoped-cancel",
-                    "scoped-abandon",
+                    "composable-cancel",
+                    "composable-abandon",
                     "soak",
                 } or (
                     state.scenario == "reset-race" and stream_id == 1
@@ -325,7 +325,7 @@ def serve_connection(
                         connection.send_data(second, b"second", end_stream=True)
                         connection.send_data(first, b"response", end_stream=True)
                         state.record("multiplex", streams=state.pending_streams)
-                elif state.scenario == "scoped-stream-isolation":
+                elif state.scenario == "composable-stream-isolation":
                     state.pending_streams.append(stream_id)
                     if len(state.pending_streams) == 2:
                         bad, good = state.pending_streams
@@ -359,7 +359,7 @@ def serve_connection(
                 )
             elif isinstance(event, ConnectionTerminated):
                 state.record("client-goaway", error=int(event.error_code))
-                return state.scenario in {"soak", "scoped-source-contract"}
+                return state.scenario in {"soak", "composable-source-contract"}
 
         outbound = connection.data_to_send()
         if outbound:
@@ -369,9 +369,9 @@ def serve_connection(
                 if state.scenario not in {
                     "early-final",
                     "early-final-body",
-                    "scoped-source-early-final",
-                    "scoped-cancel",
-                    "scoped-abandon",
+                    "composable-source-early-final",
+                    "composable-cancel",
+                    "composable-abandon",
                     "shutdown-race",
                 }:
                     raise
@@ -420,16 +420,16 @@ def main() -> None:
             "goaway",
             "refused",
             "prior",
-            "scoped",
-            "scoped-tls",
-            "scoped-parent",
-            "scoped-cancel",
-            "scoped-abandon",
-            "scoped-source-early-final",
-            "scoped-source-contract",
-            "scoped-sink-contract",
-            "scoped-stream-isolation",
-            "scoped-body-forbidden",
+            "composable",
+            "composable-tls",
+            "composable-parent",
+            "composable-cancel",
+            "composable-abandon",
+            "composable-source-early-final",
+            "composable-source-contract",
+            "composable-sink-contract",
+            "composable-stream-isolation",
+            "composable-body-forbidden",
             "long-sync",
             "fallback",
             "require-failure",

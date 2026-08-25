@@ -166,12 +166,12 @@ procedure HTTP3_Client_Stress_Probe is
                Result : Client.Exchange_Result;
                Reply : Client.Response;
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Sink
+                 Client.Exchange_To_Sink
                    (Set'Access, HTTP'Access, Value'Unchecked_Access,
                     Sink'Access, Client.Deadline_After (Request_Timeout));
             begin
                Flyology.Operations.Wait_All (Set);
-               Client.Scoped.Finish (Operation, Result, Reply);
+               Client.Finish (Operation, Result, Reply);
                if Client.Kind (Result) = Client.Response_Complete
                  and then Client.Status (Reply) = 200
                  and then Client.Negotiated_Protocol (Reply) =

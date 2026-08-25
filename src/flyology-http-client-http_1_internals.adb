@@ -470,8 +470,8 @@ package body HTTP_1_Internals is
       if Data.Mode = No_Body and then Length (Data.Pending) > 0 then
          --  Bytes following a bodyless response may only be a response to a
          --  pipelined request, which this client never sends. This applies to
-         --  both immediate and scoped completion; otherwise a scoped response
-         --  can poison the next pooled request.
+         --  both immediate and composable completion; otherwise a composable
+         --  response can poison the next pooled request.
          Data.Reusable := False;
       end if;
       if Data.Mode = No_Body and then Release_Immediately then

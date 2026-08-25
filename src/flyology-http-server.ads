@@ -144,9 +144,9 @@ package Flyology.HTTP.Server is
       Timeout : Duration;
       Token   : access Flyology.Cancellation.Token) is abstract;
 
-   --  Additive transport capability used by scoped HTTP operations. Concrete
-   --  adapters retain one definite, set-independent I/O capability; the
-   --  visible HTTP operation owns the only Flyology completion-set slot.
+   --  Additive transport capability used by composable HTTP operations.
+   --  Concrete adapters retain one definite, set-independent I/O capability;
+   --  the visible HTTP operation owns the only Flyology completion-set slot.
    type Operation_Transport is limited interface and Transport;
 
    --  Begin a set-independent transport borrow and arm its shared deadline.
@@ -295,111 +295,170 @@ package Flyology.HTTP.Server is
    --  remain owned by one handler at a time. Buffered pipelined input is kept
    --  between Read_Request calls.
    --  @field Channel Borrowed transport kept alive for this object
-   type Connection (Channel : not null access Transport'Class) is limited
-     private;
+   type Connection
+     (Channel : not null access Transport'Class) is tagged limited private;
 
-   --  Scoped request-head read. Item and Token must outlive the operation.
+   --  Composable request-head read. Item and Token must outlive the operation.
    --  The operation retains its parsed result until typed Finish.
    type HTTP_Operation is
      abstract new Flyology.Operations.Operation with private;
 
-   --  Scoped request-head read with a retained Request result.
+   --  Composable request-head read with a retained Request result.
    type Read_Request_Head_Operation is new HTTP_Operation with private;
 
-   --  Scoped request-body acceptance, including a required 100 Continue send.
+   --  Composable request-body acceptance, including a required 100 Continue
+   --  send.
    type Accept_Body_Operation is new HTTP_Operation with private;
 
-   --  Scoped decoded request-body read. Data remains borrowed until Finish.
+   --  Composable decoded request-body read. Data remains borrowed until
+   --  Finish.
    type Read_Body_Operation is new HTTP_Operation with private;
 
-   --  Constructors for bounded HTTP operations. Keeping constructors in a
-   --  nested namespace preserves Connection's familiar non-dispatching public
-   --  view while the returned operations remain interchangeable with every
-   --  Flyology operation.
-   package Scoped is
+   --  Composable constructors and reusable initiation share the provider's
+   --  state machine and semantics with the synchronous overloads below.
 
-      --  Start a request-head read with one header/request deadline.
-      --  @param Set Completion set that owns the operation
-      --  @param Item HTTP connection using Operation_Transport
-      --  @param Timeout Header and complete-request deadline
-      --  @param Max_Body Application body limit
-      --  @param Token Optional cancellation source
-      --  @return Started limited request-head operation
-      function Read_Request_Head
-        (Set      : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item     : not null access Connection;
-         Timeout  : Duration := 30.0;
-         Max_Body : Body_Size := Max_Request_Body;
-         Token    : access Flyology.Cancellation.Token := null)
-         return Read_Request_Head_Operation;
+   --  Start a request-head read with one header/request deadline.
+   --  @param Set Completion set that owns the operation
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Timeout Header and complete-request deadline
+   --  @param Max_Body Application body limit
+   --  @param Token Optional cancellation source
+   --  @return Started limited request-head operation
+   function Read_Request_Head
+     (Set      : not null access Flyology.Operations.Completion_Set'Class;
+      Item     : not null access Connection'Class;
+      Timeout  : Duration := 30.0;
+      Max_Body : Body_Size := Max_Request_Body;
+      Token    : access Flyology.Cancellation.Token := null)
+      return Read_Request_Head_Operation;
 
-      --  Start a request-head read with distinct absolute budgets.
-      --  @param Set Completion set that owns the operation
-      --  @param Item HTTP connection using Operation_Transport
-      --  @param Header_Timeout Request-head deadline
-      --  @param Request_Timeout Complete streamed-request deadline
-      --  @param Max_Body Application body limit
-      --  @param Token Optional cancellation source
-      --  @return Started limited request-head operation
-      function Read_Request_Head
-        (Set             : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item            : not null access Connection;
-         Header_Timeout  : Duration;
-         Request_Timeout : Duration;
-         Max_Body        : Body_Size := Max_Request_Body;
-         Token           : access Flyology.Cancellation.Token := null)
-         return Read_Request_Head_Operation;
+   --  Start or restart a request-head read in an established operation.
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Timeout Header and complete-request deadline
+   --  @param Max_Body Application body limit
+   --  @param Token Optional cancellation source
+   --  @param Operation Inactive established operation to start
+   procedure Read_Request_Head
+     (Item      : not null access Connection'Class;
+      Timeout   : Duration := 30.0;
+      Max_Body  : Body_Size := Max_Request_Body;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Read_Request_Head_Operation)
+   with
+     Pre =>
+       not Flyology.Operations.Is_Active (Operation)
+       and then not Flyology.Operations.Is_Terminal (Operation);
 
-      --  Start scoped request-body acceptance.
-      --  @param Set Completion set that owns the operation
-      --  @param Item HTTP connection using Operation_Transport
-      --  @param Token Optional cancellation source
-      --  @return Started limited acceptance operation
-      function Accept_Body
-        (Set   : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item  : not null access Connection;
-         Token : access Flyology.Cancellation.Token := null)
-         return Accept_Body_Operation;
+   --  Start a request-head read with distinct absolute budgets.
+   --  @param Set Completion set that owns the operation
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Header_Timeout Request-head deadline
+   --  @param Request_Timeout Complete streamed-request deadline
+   --  @param Max_Body Application body limit
+   --  @param Token Optional cancellation source
+   --  @return Started limited request-head operation
+   function Read_Request_Head
+     (Set             : not null access
+        Flyology.Operations.Completion_Set'Class;
+      Item            : not null access Connection'Class;
+      Header_Timeout  : Duration;
+      Request_Timeout : Duration;
+      Max_Body        : Body_Size := Max_Request_Body;
+      Token           : access Flyology.Cancellation.Token := null)
+      return Read_Request_Head_Operation;
 
-      --  Start one scoped decoded body read into caller-owned storage.
-      --  @param Set Completion set that owns the operation
-      --  @param Item HTTP connection using Operation_Transport
-      --  @param Data Destination borrowed until typed Finish
-      --  @param Token Optional cancellation source
-      --  @return Started limited body-read operation
-      function Read_Body
-        (Set   : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item  : not null access Connection;
-         Data  : not null access Ada.Streams.Stream_Element_Array;
-         Token : access Flyology.Cancellation.Token := null)
-         return Read_Body_Operation;
+   --  Start or restart a request-head read with distinct absolute budgets.
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Header_Timeout Request-head deadline
+   --  @param Request_Timeout Complete streamed-request deadline
+   --  @param Max_Body Application body limit
+   --  @param Token Optional cancellation source
+   --  @param Operation Inactive established operation to start
+   procedure Read_Request_Head
+     (Item            : not null access Connection'Class;
+      Header_Timeout  : Duration;
+      Request_Timeout : Duration;
+      Max_Body        : Body_Size := Max_Request_Body;
+      Token           : access Flyology.Cancellation.Token := null;
+      Operation       : in out Read_Request_Head_Operation)
+   with
+     Pre =>
+       not Flyology.Operations.Is_Active (Operation)
+       and then not Flyology.Operations.Is_Terminal (Operation);
 
-      --  Consume a terminal request-head operation and publish its result.
-      --  @param Operation Terminal request-head operation
-      --  @param Value Parsed request head on success
-      --  @param Peer_Closed True only for closure between requests
-      procedure Finish
-        (Operation   : in out Read_Request_Head_Operation;
-         Value       : out Request;
-         Peer_Closed : out Boolean);
+   --  Start composable request-body acceptance.
+   --  @param Set Completion set that owns the operation
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Token Optional cancellation source
+   --  @return Started limited acceptance operation
+   function Accept_Body
+     (Set   : not null access Flyology.Operations.Completion_Set'Class;
+      Item  : not null access Connection'Class;
+      Token : access Flyology.Cancellation.Token := null)
+      return Accept_Body_Operation;
 
-      --  Consume a terminal acceptance operation.
-      --  @param Operation Terminal acceptance operation
-      procedure Finish (Operation : in out Accept_Body_Operation);
+   --  Start or restart request-body acceptance in an established operation.
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Token Optional cancellation source
+   --  @param Operation Inactive established operation to start
+   procedure Accept_Body
+     (Item      : not null access Connection'Class;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Accept_Body_Operation)
+   with
+     Pre =>
+       not Flyology.Operations.Is_Active (Operation)
+       and then not Flyology.Operations.Is_Terminal (Operation);
 
-      --  Consume a terminal body-read operation and publish its results.
-      --  @param Operation Terminal body-read operation
-      --  @param Last Last decoded byte, or Data'First - 1 when none
-      --  @param Finished True after complete body framing and trailers
-      procedure Finish
-        (Operation : in out Read_Body_Operation;
-         Last      : out Ada.Streams.Stream_Element_Offset;
-         Finished  : out Boolean);
-   end Scoped;
+   --  Start one composable decoded body read into caller-owned storage.
+   --  @param Set Completion set that owns the operation
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Data Destination borrowed until typed Finish
+   --  @param Token Optional cancellation source
+   --  @return Started limited body-read operation
+   function Read_Body
+     (Set   : not null access Flyology.Operations.Completion_Set'Class;
+      Item  : not null access Connection'Class;
+      Data  : not null access Ada.Streams.Stream_Element_Array;
+      Token : access Flyology.Cancellation.Token := null)
+      return Read_Body_Operation;
+
+   --  Start or restart a decoded body read in an established operation.
+   --  @param Item HTTP connection using Operation_Transport
+   --  @param Data Destination borrowed until typed Finish
+   --  @param Token Optional cancellation source
+   --  @param Operation Inactive established operation to start
+   procedure Read_Body
+     (Item      : not null access Connection'Class;
+      Data      : not null access Ada.Streams.Stream_Element_Array;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Read_Body_Operation)
+   with
+     Pre =>
+       not Flyology.Operations.Is_Active (Operation)
+       and then not Flyology.Operations.Is_Terminal (Operation);
+
+   --  Consume a terminal request-head operation and publish its result.
+   --  @param Operation Terminal request-head operation
+   --  @param Value Parsed request head on success
+   --  @param Peer_Closed True only for closure between requests
+   procedure Finish
+     (Operation   : in out Read_Request_Head_Operation;
+      Value       : out Request;
+      Peer_Closed : out Boolean);
+
+   --  Consume a terminal acceptance operation.
+   --  @param Operation Terminal acceptance operation
+   procedure Finish (Operation : in out Accept_Body_Operation);
+
+   --  Consume a terminal body-read operation and publish its results.
+   --  @param Operation Terminal body-read operation
+   --  @param Last Last decoded byte, or Data'First - 1 when none
+   --  @param Finished True after complete body framing and trailers
+   procedure Finish
+     (Operation : in out Read_Body_Operation;
+      Last      : out Ada.Streams.Stream_Element_Offset;
+      Finished  : out Boolean);
 
    --  Attach one shared ingress budget before the first request is read.
    --  The budget must outlive Item and cannot be replaced while bytes are
@@ -997,12 +1056,12 @@ private
      Ada.Streams.Stream_Element_Array
        (1 .. Ada.Streams.Stream_Element_Offset (8 * 1_024));
 
-   type Connection_Access is access all Connection;
+   type Connection_Handle is access all Connection'Class;
    type Cancellation_Token_Access is access all Flyology.Cancellation.Token;
 
    type HTTP_Operation is
      abstract new Flyology.Operations.Operation with record
-      Item_Handle  : Connection_Access := null;
+      Item_Handle  : Connection_Handle := null;
       Token_Handle : Cancellation_Token_Access := null;
       IO_Started   : Boolean := False;
       Acquiring    : Boolean := False;

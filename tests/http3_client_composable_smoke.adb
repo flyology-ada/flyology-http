@@ -19,7 +19,7 @@ with HTTP_Client_Corpus_Sources;
 with HTTP_Client_Corpus_Sinks;
 with Interfaces;
 
-procedure HTTP3_Client_Scoped_Smoke is
+procedure HTTP3_Client_Composable_Smoke is
    package Client renames Flyology.HTTP.Client;
    package Buffers renames Flyology.Buffers;
    package Operations renames Flyology.Operations;
@@ -80,16 +80,16 @@ procedure HTTP3_Client_Scoped_Smoke is
       Event : Operations.Driver_Event) is
    begin
       if Event = Operations.Start_Operation then
-         Client.Scoped.Start
-           (Item.Child, Item.HTTP, Item.Ask, Item.Destination.all,
-            Client.Deadline_After (10.0));
+         Client.Exchange_To_Buffer
+           (Item.HTTP, Item.Ask, Item.Destination.all,
+            Client.Deadline_After (10.0), null, Item.Child);
          Operations.Continue_After (Item, Item.Child);
       elsif Event = Operations.Dependency_Changed then
          declare
             Result : Client.Exchange_Result;
             Reply : Client.Response;
          begin
-            Client.Scoped.Finish
+            Client.Finish
               (Item.Child, Result, Reply, Item.Destination.all);
             Item.Passed :=
               Client.Kind (Result) = Client.Response_Complete
@@ -233,15 +233,15 @@ procedure HTTP3_Client_Scoped_Smoke is
          Result : Client.Exchange_Result;
          Reply : Client.Response;
          Operation : Client.Exchange_Operation :=
-           Client.Scoped.Exchange_To_Buffer
+           Client.Exchange_To_Buffer
              (Set'Access, HTTP'Access, Value'Unchecked_Access,
               Destination, Client.Deadline_After (10.0));
       begin
          Operations.Wait_All (Set);
-         Client.Scoped.Finish
+         Client.Finish
            (Operation, Result, Reply, Destination);
          Corpus.Check
-           (Golden.Complete_Fixed, Golden.H3, Golden.Scoped_Buffer,
+           (Golden.Complete_Fixed, Golden.H3, Golden.Composable_Buffer,
             (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Status_Known => True,
@@ -274,12 +274,12 @@ procedure HTTP3_Client_Scoped_Smoke is
             Result : Client.Exchange_Result;
             Reply : Client.Response;
             Operation : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                  (Set'Access, HTTP'Access, Value'Unchecked_Access,
                  Large_Destination, Client.Deadline_After (30.0));
          begin
             Operations.Wait_All (Set);
-            Client.Scoped.Finish
+            Client.Finish
               (Operation, Result, Reply, Large_Destination);
             Large_OK :=
               Client.Kind (Result) = Client.Response_Complete
@@ -366,12 +366,12 @@ procedure HTTP3_Client_Scoped_Smoke is
             Buffers.Set_Tag (Destination, 77);
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Invalid'Unchecked_Access,
                     Destination, Client.Deadline_After (10.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish
+               Client.Finish
                  (Operation, Result, Reply, Destination);
             end;
             Validation_OK :=
@@ -396,15 +396,15 @@ procedure HTTP3_Client_Scoped_Smoke is
             Result : Client.Exchange_Result;
             Reply : Client.Response;
             Operation : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, HTTP'Access, Value'Unchecked_Access,
                  Destination, Client.Deadline_After (10.0));
          begin
             Operations.Wait_All (Set);
-            Client.Scoped.Finish
+            Client.Finish
               (Operation, Result, Reply, Destination);
             Corpus.Check
-              (Golden.Complete_Fixed, Golden.H3, Golden.Scoped_Buffer,
+              (Golden.Complete_Fixed, Golden.H3, Golden.Composable_Buffer,
                (Kind => Corpus.To_Golden (Client.Kind (Result)),
                 Certainty => Corpus.To_Golden (Client.Certainty (Result)),
                 Status_Known => True,
@@ -448,17 +448,17 @@ procedure HTTP3_Client_Scoped_Smoke is
             Result : Client.Exchange_Result;
             Reply : Client.Response;
             Operation : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, HTTP'Access, Value'Unchecked_Access,
                  Source'Access, Destination,
                  Client.Deadline_After (10.0));
          begin
             Operations.Wait_All (Set);
-            Client.Scoped.Finish
+            Client.Finish
               (Operation, Result, Reply, Destination);
             Corpus.Check
               (Golden.Blocked_Source_Early_Final, Golden.H3,
-               Golden.Scoped_Buffer,
+               Golden.Composable_Buffer,
                (Kind => Corpus.To_Golden (Client.Kind (Result)),
                 Certainty => Corpus.To_Golden (Client.Certainty (Result)),
                 Status_Known => True,
@@ -501,17 +501,17 @@ procedure HTTP3_Client_Scoped_Smoke is
             begin
                declare
                   Operation : Client.Exchange_Operation :=
-                    Client.Scoped.Exchange_To_Buffer
+                    Client.Exchange_To_Buffer
                       (Set'Access, HTTP'Access,
                        Value'Unchecked_Access, Source'Access,
                        Destination, Client.Deadline_After (10.0));
                begin
                   Operations.Wait_All (Set);
-                  Client.Scoped.Finish
+                  Client.Finish
                     (Operation, Result, Reply, Destination);
                end;
                Corpus.Check
-                 (Scenario, Golden.H3, Golden.Scoped_Buffer,
+                 (Scenario, Golden.H3, Golden.Composable_Buffer,
                   (Kind => Corpus.To_Golden (Client.Kind (Result)),
                    Certainty =>
                      Corpus.To_Golden (Client.Certainty (Result)),
@@ -561,16 +561,16 @@ procedure HTTP3_Client_Scoped_Smoke is
             begin
                declare
                   Operation : Client.Exchange_Operation :=
-                    Client.Scoped.Exchange_To_Sink
+                    Client.Exchange_To_Sink
                       (Set'Access, HTTP'Access,
                        Value'Unchecked_Access, Sink'Access,
                        Client.Deadline_After (10.0));
                begin
                   Operations.Wait_All (Set);
-                  Client.Scoped.Finish (Operation, Result, Reply);
+                  Client.Finish (Operation, Result, Reply);
                end;
                Corpus.Check
-                 (Scenario, Golden.H3, Golden.Scoped_Sink,
+                 (Scenario, Golden.H3, Golden.Composable_Sink,
                   (Kind => Corpus.To_Golden (Client.Kind (Result)),
                    Certainty =>
                      Corpus.To_Golden (Client.Certainty (Result)),
@@ -610,7 +610,7 @@ procedure HTTP3_Client_Scoped_Smoke is
             Result : Client.Exchange_Result;
             Reply : Client.Response;
             Operation : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, HTTP'Access, Value'Unchecked_Access,
                  Destination, Client.Deadline_After (10.0), Token'Access);
             task Canceller;
@@ -621,11 +621,11 @@ procedure HTTP3_Client_Scoped_Smoke is
             end Canceller;
          begin
             Operations.Wait_All (Set);
-            Client.Scoped.Finish
+            Client.Finish
               (Operation, Result, Reply, Destination);
             Corpus.Check
               (Golden.Cancel_After_Admission, Golden.H3,
-               Golden.Scoped_Buffer,
+               Golden.Composable_Buffer,
                (Kind => Corpus.To_Golden (Client.Kind (Result)),
                 Certainty => Corpus.To_Golden (Client.Certainty (Result)),
                 Body_Effect => Golden.Zero,
@@ -658,7 +658,7 @@ procedure HTTP3_Client_Scoped_Smoke is
          begin
             declare
                Operation : constant Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Value'Unchecked_Access,
                     Destination, Client.Deadline_After (10.0), Token'Access);
                task Canceller;
@@ -671,7 +671,7 @@ procedure HTTP3_Client_Scoped_Smoke is
                Operations.Wait_All (Set);
                Terminal_OK :=
                  Operations.Outcome (Operation) = Operations.Cancelled
-                   and then Client.Scoped.Admission (Operation) =
+                   and then Client.Admission (Operation) =
                      Client.Possibly_Admitted;
                --  Deliberately omit Finish. Finalization must drain before
                --  returning the detached token to its pool.
@@ -696,12 +696,12 @@ procedure HTTP3_Client_Scoped_Smoke is
             Result : Client.Exchange_Result;
             Reply : Client.Response;
             Operation : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, HTTP'Access, Value'Unchecked_Access,
                  Destination, Client.Deadline_After (10.0));
          begin
             Operations.Wait_All (Set);
-            Client.Scoped.Finish
+            Client.Finish
               (Operation, Result, Reply, Destination);
             Reuse_OK :=
               Client.Kind (Result) = Client.Response_Complete
@@ -736,20 +736,20 @@ procedure HTTP3_Client_Scoped_Smoke is
             Buffers.Acquire (Destination_2);
             declare
                Slow_Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access,
                     Slow_Request'Unchecked_Access, Destination,
                     Client.Deadline_After (10.0));
                Fast_Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access,
                     Fast_Request'Unchecked_Access, Destination_2,
                     Client.Deadline_After (10.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish
+               Client.Finish
                  (Slow_Operation, Slow_Result, Slow_Reply, Destination);
-               Client.Scoped.Finish
+               Client.Finish
                  (Fast_Operation, Fast_Result, Fast_Reply, Destination_2);
             end;
             Multiplex_OK :=
@@ -802,9 +802,9 @@ begin
       Outcome.Wait (Passed, Detail);
       if not Passed then
          raise Program_Error with
-           "scoped HTTP/3 failure: " &
+           "composable HTTP/3 failure: " &
            Ada.Strings.Unbounded.To_String (Detail);
       end if;
    end;
-   Ada.Text_IO.Put_Line ("scoped HTTP/3 client passed");
-end HTTP3_Client_Scoped_Smoke;
+   Ada.Text_IO.Put_Line ("composable HTTP/3 client passed");
+end HTTP3_Client_Composable_Smoke;

@@ -247,12 +247,12 @@ procedure HTTP_Client_TLS_Smoke is
                Buffers.Acquire (Destination);
                declare
                   Operation : Client.Exchange_Operation :=
-                    Client.Scoped.Exchange_To_Buffer
+                    Client.Exchange_To_Buffer
                       (Set'Access, Item'Access, Value'Access, Destination,
                        Client.Deadline_After (3.0));
                begin
                   Operations.Wait_All (Set);
-                  Client.Scoped.Finish
+                  Client.Finish
                     (Operation, Result, Reply, Destination);
                end;
                pragma Assert

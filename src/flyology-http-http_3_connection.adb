@@ -666,10 +666,11 @@ package body Flyology.HTTP.HTTP_3_Connection is
          Item.Sending (Slot).Finished := True;
          Item.Sending (Slot).Cancelled := True;
          if Item.Local_Role = Client then
-            --  A scoped client owns the complete exchange lifecycle and has
-            --  no later Release_Request call. Retire its local message state
-            --  once RESET_STREAM/STOP_SENDING has been built. The server
-            --  keeps request state until its normal Release_Request step.
+            --  A composable client owns the complete exchange lifecycle and
+            --  has no later Release_Request call. Retire its local message
+            --  state once RESET_STREAM/STOP_SENDING has been built. The
+            --  server keeps request state until its normal Release_Request
+            --  step.
             Abandon_Message (Item, Transport, Stream);
          end if;
       end if;

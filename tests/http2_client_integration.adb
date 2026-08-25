@@ -81,16 +81,16 @@ procedure HTTP2_Client_Integration is
       Event : Flyology.Operations.Driver_Event) is
    begin
       if Event = Flyology.Operations.Start_Operation then
-         Client.Scoped.Start
-           (Item.Child, Item.HTTP, Item.Ask, Item.Destination.all,
-            Client.Deadline_After (30.0));
+         Client.Exchange_To_Buffer
+           (Item.HTTP, Item.Ask, Item.Destination.all,
+            Client.Deadline_After (30.0), null, Item.Child);
          Flyology.Operations.Continue_After (Item, Item.Child);
       elsif Event = Flyology.Operations.Dependency_Changed then
          declare
             Result : Client.Exchange_Result;
             Reply : Client.Response;
          begin
-            Client.Scoped.Finish
+            Client.Finish
               (Item.Child, Result, Reply, Item.Destination.all);
             Item.Passed :=
               Client.Kind (Result) = Client.Response_Complete
@@ -242,12 +242,12 @@ procedure HTTP2_Client_Integration is
       else Client.Default_Pool_Configuration);
 begin
    if Scenario in
-     "prior" | "early-final" | "early-final-body" | "scoped" |
+     "prior" | "early-final" | "early-final-body" | "composable" |
      "long-sync" |
-     "scoped-body-forbidden" |
-     "scoped-source-early-final" |
-     "scoped-source-contract" | "scoped-sink-contract" |
-     "scoped-stream-isolation"
+     "composable-body-forbidden" |
+     "composable-source-early-final" |
+     "composable-source-contract" | "composable-sink-contract" |
+     "composable-stream-isolation"
    then
       Client.Configure
         (Item, Flyology.HTTP.Parse_Origin (Origin_Text),
@@ -263,7 +263,7 @@ begin
          Pool);
    end if;
 
-   if Scenario = "scoped-stream-isolation" then
+   if Scenario = "composable-stream-isolation" then
       declare
          package Buffers renames Flyology.Buffers;
          package Operations renames Flyology.Operations;
@@ -284,18 +284,18 @@ begin
          Buffers.Acquire (Good_Buffer);
          declare
             Bad_Operation : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, Item'Access, Bad_Request'Unchecked_Access,
                  Bad_Buffer, Client.Deadline_After (30.0));
             Good_Operation : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, Item'Access, Good_Request'Unchecked_Access,
                  Good_Buffer, Client.Deadline_After (30.0));
          begin
             Operations.Wait_All (Set);
-            Client.Scoped.Finish
+            Client.Finish
               (Bad_Operation, Bad_Result, Bad_Reply, Bad_Buffer);
-            Client.Scoped.Finish
+            Client.Finish
               (Good_Operation, Good_Result, Good_Reply, Good_Buffer);
          end;
          pragma Assert
@@ -309,7 +309,7 @@ begin
          pragma Assert (Buffers.Length (Good_Buffer) = 14);
          Corpus.Check
            (Golden.Malformed_Stream_Isolation, Golden.H2,
-            Golden.Scoped_Buffer,
+            Golden.Composable_Buffer,
             (Kind => Corpus.To_Golden (Client.Kind (Bad_Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Bad_Result)),
              Body_Effect => Golden.Zero,
@@ -321,7 +321,7 @@ begin
          Buffers.Release (Bad_Buffer);
          Buffers.Release (Good_Buffer);
       end;
-   elsif Scenario = "scoped-body-forbidden" then
+   elsif Scenario = "composable-body-forbidden" then
       declare
          package Buffers renames Flyology.Buffers;
          package Operations renames Flyology.Operations;
@@ -342,12 +342,12 @@ begin
             Client.Set_Method (Request, Method);
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, Item'Access, Request'Unchecked_Access,
                     Destination, Client.Deadline_After (30.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish
+               Client.Finish
                  (Operation, Result, Reply, Destination);
             end;
             pragma Assert
@@ -571,7 +571,7 @@ begin
             Value : aliased Client.Request;
          begin
             Client.Set_Target (Value, "/" & Scenario);
-            if Scenario = "scoped-abandon" then
+            if Scenario = "composable-abandon" then
                declare
                   package Buffers renames Flyology.Buffers;
                   package Operations renames Flyology.Operations;
@@ -585,7 +585,7 @@ begin
                   Buffers.Acquire (Destination);
                   declare
                      Operation : constant Client.Exchange_Operation :=
-                       Client.Scoped.Exchange_To_Buffer
+                       Client.Exchange_To_Buffer
                          (Set'Access, Item'Access, Value'Unchecked_Access,
                           Destination, Client.Deadline_After (30.0),
                           Token'Access);
@@ -599,7 +599,7 @@ begin
                      Operations.Wait_All (Set);
                      Terminal_OK :=
                        Operations.Outcome (Operation) = Operations.Cancelled
-                         and then Client.Scoped.Admission (Operation) =
+                         and then Client.Admission (Operation) =
                            Client.Response_Observed;
                      --  Deliberately omit Finish. Finalization must drain the
                      --  reset and return the detached token to its pool.
@@ -610,7 +610,7 @@ begin
                     (Terminal_OK and then Buffers.Length (Destination) = 0);
                   Buffers.Release (Destination);
                end;
-            elsif Scenario = "scoped-cancel" then
+            elsif Scenario = "composable-cancel" then
                declare
                   package Buffers renames Flyology.Buffers;
                   package Operations renames Flyology.Operations;
@@ -624,7 +624,7 @@ begin
                   Buffers.Acquire (Destination);
                   declare
                      Operation : aliased Client.Exchange_Operation :=
-                       Client.Scoped.Exchange_To_Buffer
+                       Client.Exchange_To_Buffer
                          (Set'Access, Item'Access, Value'Unchecked_Access,
                           Destination, Client.Deadline_After (30.0));
                      task Canceller;
@@ -635,7 +635,7 @@ begin
                      end Canceller;
                   begin
                      Operations.Wait_All (Set);
-                     Client.Scoped.Finish
+                     Client.Finish
                        (Operation, Result, Reply, Destination);
                   end;
                   Results.Report
@@ -645,7 +645,7 @@ begin
                        and then Buffers.Length (Destination) = 0);
                   Buffers.Release (Destination);
                end;
-            elsif Scenario = "scoped-parent" then
+            elsif Scenario = "composable-parent" then
                declare
                   package Buffers renames Flyology.Buffers;
                   package Operations renames Flyology.Operations;
@@ -672,7 +672,7 @@ begin
                   Operations.Release (Parent);
                   Buffers.Release (Destination);
                end;
-            elsif Scenario in "scoped" | "scoped-tls" then
+            elsif Scenario in "composable" | "composable-tls" then
                declare
                   package Buffers renames Flyology.Buffers;
                   package Operations renames Flyology.Operations;
@@ -686,17 +686,17 @@ begin
                   Buffers.Acquire (Destination);
                   declare
                      Operation : Client.Exchange_Operation :=
-                       Client.Scoped.Exchange_To_Buffer
+                       Client.Exchange_To_Buffer
                          (Set'Access, Item'Access, Value'Unchecked_Access,
                           Destination, Client.Deadline_After (30.0));
                   begin
                      Operations.Wait_All (Set);
-                     Client.Scoped.Finish
+                     Client.Finish
                        (Operation, Result, Reply, Destination);
                   end;
                   Corpus.Check
                     (Golden.Complete_Fixed, Golden.H2,
-                     Golden.Scoped_Buffer,
+                     Golden.Composable_Buffer,
                      (Kind => Corpus.To_Golden (Client.Kind (Result)),
                       Certainty =>
                         Corpus.To_Golden (Client.Certainty (Result)),
@@ -724,13 +724,13 @@ begin
                      Buffers.Set_Tag (Destination, 42);
                      declare
                         Operation : Client.Exchange_Operation :=
-                          Client.Scoped.Exchange_To_Buffer
+                          Client.Exchange_To_Buffer
                             (Set'Access, Item'Access,
                              Invalid'Unchecked_Access, Destination,
                              Client.Deadline_After (30.0));
                      begin
                         Operations.Wait_All (Set);
-                        Client.Scoped.Finish
+                        Client.Finish
                           (Operation, Invalid_Result, Invalid_Reply,
                            Destination);
                      end;
@@ -746,7 +746,7 @@ begin
                      Buffers.Release (Destination);
                   end;
                end;
-            elsif Scenario = "scoped-source-early-final" then
+            elsif Scenario = "composable-source-early-final" then
                declare
                   package Buffers renames Flyology.Buffers;
                   package Operations renames Flyology.Operations;
@@ -762,18 +762,18 @@ begin
                   Buffers.Acquire (Destination);
                   declare
                      Operation : Client.Exchange_Operation :=
-                       Client.Scoped.Exchange_To_Buffer
+                       Client.Exchange_To_Buffer
                          (Set'Access, Item'Access, Value'Unchecked_Access,
                           Source'Access, Destination,
                           Client.Deadline_After (30.0));
                   begin
                      Operations.Wait_All (Set);
-                     Client.Scoped.Finish
+                     Client.Finish
                        (Operation, Result, Reply, Destination);
                   end;
                   Corpus.Check
                     (Golden.Blocked_Source_Early_Final, Golden.H2,
-                     Golden.Scoped_Buffer,
+                     Golden.Composable_Buffer,
                      (Kind => Corpus.To_Golden (Client.Kind (Result)),
                       Certainty =>
                         Corpus.To_Golden (Client.Certainty (Result)),
@@ -792,7 +792,7 @@ begin
                        and then Buffers.Length (Destination) = 0);
                   Buffers.Release (Destination);
                end;
-            elsif Scenario = "scoped-source-contract" then
+            elsif Scenario = "composable-source-contract" then
                declare
                   package Buffers renames Flyology.Buffers;
                   package Operations renames Flyology.Operations;
@@ -811,17 +811,17 @@ begin
                   begin
                      declare
                         Operation : Client.Exchange_Operation :=
-                          Client.Scoped.Exchange_To_Buffer
+                          Client.Exchange_To_Buffer
                             (Set'Access, Item'Access,
                              Value'Unchecked_Access, Source'Access,
                              Destination, Client.Deadline_After (30.0));
                      begin
                         Operations.Wait_All (Set);
-                        Client.Scoped.Finish
+                        Client.Finish
                           (Operation, Result, Reply, Destination);
                      end;
                      Corpus.Check
-                       (Scenario, Golden.H2, Golden.Scoped_Buffer,
+                       (Scenario, Golden.H2, Golden.Composable_Buffer,
                         (Kind => Corpus.To_Golden (Client.Kind (Result)),
                          Certainty =>
                            Corpus.To_Golden (Client.Certainty (Result)),
@@ -851,10 +851,10 @@ begin
                   Check_Fault
                     (Faults.Exceptional_Source,
                      Golden.Source_Exception);
-                  Results.Report (Passed, "scoped source contract");
+                  Results.Report (Passed, "composable source contract");
                   Buffers.Release (Destination);
                end;
-            elsif Scenario = "scoped-sink-contract" then
+            elsif Scenario = "composable-sink-contract" then
                declare
                   package Operations renames Flyology.Operations;
                   Set : aliased Operations.Completion_Set (3);
@@ -869,17 +869,17 @@ begin
                   begin
                      declare
                         Operation : Client.Exchange_Operation :=
-                          Client.Scoped.Exchange_To_Sink
+                          Client.Exchange_To_Sink
                             (Set'Access, Item'Access,
                              Value'Unchecked_Access, Sink'Access,
                              Client.Deadline_After (30.0));
                      begin
                         Operations.Wait_All (Set);
-                        Client.Scoped.Finish
+                        Client.Finish
                           (Operation, Result, Reply);
                      end;
                      Corpus.Check
-                       (Scenario, Golden.H2, Golden.Scoped_Sink,
+                       (Scenario, Golden.H2, Golden.Composable_Sink,
                         (Kind => Corpus.To_Golden (Client.Kind (Result)),
                          Certainty =>
                            Corpus.To_Golden (Client.Certainty (Result)),
@@ -904,7 +904,7 @@ begin
                   Check_Fault
                     (Sink_Faults.Immediate_Failure,
                      Golden.Sink_Exception);
-                  Results.Report (Passed, "scoped sink contract");
+                  Results.Report (Passed, "composable sink contract");
                end;
             else
             if Scenario in "upload" | "early-final" | "early-final-body" then
