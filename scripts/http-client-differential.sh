@@ -60,9 +60,9 @@ run_fixture () {
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
     sync native "$protocol" "$url" >"$run_dir/ada-sync"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped native "$protocol" "$url" >"$run_dir/ada-scoped-native"
+    composable native "$protocol" "$url" >"$run_dir/ada-composable-native"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped lightweight "$protocol" "$url" >"$run_dir/ada-scoped-lightweight"
+    composable lightweight "$protocol" "$url" >"$run_dir/ada-composable-lightweight"
   "$python" "$http_root/tests/http_client_pycurl.py" easy "$protocol" "$url" \
     >"$run_dir/pycurl-easy"
   "$python" "$http_root/tests/http_client_pycurl.py" multi "$protocol" "$url" \
@@ -73,7 +73,7 @@ run_fixture () {
   "$python" -c '
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
-names = ("ada-sync", "ada-scoped-native", "ada-scoped-lightweight", "pycurl-easy", "pycurl-multi")
+names = ("ada-sync", "ada-composable-native", "ada-composable-lightweight", "pycurl-easy", "pycurl-multi")
 def normalized(name):
     lines = root.joinpath(name).read_text().splitlines()
     return sorted(line for line in lines if line.startswith(("status=", "protocol=", "body_hex=", "header=", "trailer=")))
@@ -122,10 +122,10 @@ run_lost_fixture () {
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
     sync-lost native "$protocol" "$url" >"$run_dir/ada-sync"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped-lost native "$protocol" "$url" >"$run_dir/ada-scoped-native"
+    composable-lost native "$protocol" "$url" >"$run_dir/ada-composable-native"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped-lost lightweight "$protocol" "$url" \
-    >"$run_dir/ada-scoped-lightweight"
+    composable-lost lightweight "$protocol" "$url" \
+    >"$run_dir/ada-composable-lightweight"
   wait "$peer_pid"
   peer_pid=
   "$python" -c '
@@ -138,7 +138,7 @@ for record in records:
     assert record["if_none_match"] == "*", record
     assert bytes.fromhex(record["body_hex"]) == b"immutable-commit-bytes", record
 assert root.joinpath("ada-sync").read_text().splitlines() == ["outcome=failed"]
-for name in ("ada-scoped-native", "ada-scoped-lightweight"):
+for name in ("ada-composable-native", "ada-composable-lightweight"):
     lines = root.joinpath(name).read_text().splitlines()
     assert "admission=POSSIBLY_ADMITTED" in lines, (name, lines)
     assert "body_length=0" in lines, (name, lines)
@@ -184,13 +184,13 @@ run_h3_fixture () {
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
     sync native h3 "$url" >"$run_dir/ada-sync"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped native h3 "$url" >"$run_dir/ada-scoped-native"
+    composable native h3 "$url" >"$run_dir/ada-composable-native"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped lightweight h3 "$url" >"$run_dir/ada-scoped-lightweight"
+    composable lightweight h3 "$url" >"$run_dir/ada-composable-lightweight"
   "$python" -c '
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
-names = ("ada-sync", "ada-scoped-native", "ada-scoped-lightweight")
+names = ("ada-sync", "ada-composable-native", "ada-composable-lightweight")
 def normalized(name):
     lines = root.joinpath(name).read_text().splitlines()
     return sorted(line for line in lines if line.startswith(("status=", "protocol=", "body_hex=", "header=", "trailer=")))
@@ -250,9 +250,9 @@ run_h3_lost_fixture () {
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
     sync-lost native h3 "$url" >"$run_dir/ada-sync"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped-lost native h3 "$url" >"$run_dir/ada-scoped-native"
+    composable-lost native h3 "$url" >"$run_dir/ada-composable-native"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped-lost lightweight h3 "$url" >"$run_dir/ada-scoped-lightweight"
+    composable-lost lightweight h3 "$url" >"$run_dir/ada-composable-lightweight"
   sleep 0.5
   "$python" -c '
 import json, pathlib, sys
@@ -264,7 +264,7 @@ for record in records:
     assert record["if_none_match"] == "*", record
     assert bytes.fromhex(record["body_hex"]) == b"immutable-commit-bytes", record
 assert root.joinpath("ada-sync").read_text().splitlines() == ["outcome=failed"]
-for name in ("ada-scoped-native", "ada-scoped-lightweight"):
+for name in ("ada-composable-native", "ada-composable-lightweight"):
     lines = root.joinpath(name).read_text().splitlines()
     assert "admission=POSSIBLY_ADMITTED" in lines, (name, lines)
     assert "body_length=0" in lines, (name, lines)
@@ -311,7 +311,7 @@ run_h3_malformed_fixture () {
   fi
   url="https://127.0.0.1:$port/"
   "$http_root/tests/bin/http-client-differential/http_client_differential_client" \
-    scoped-h3-isolation "$model" h3 "$url" >"$run_dir/ada"
+    composable-h3-isolation "$model" h3 "$url" >"$run_dir/ada"
   grep -qx 'outcome=isolated' "$run_dir/ada"
   cleanup_h3_malformed_fixture
   peer_pid=

@@ -1518,12 +1518,12 @@ package body Flyology.HTTP.Server is
          null;
    end Request_Cancellation;
 
-   procedure Start_Head
+   procedure Begin_Head
      (Item : in out Read_Request_Head_Operation) is
    begin
       if Item.Item_Handle.Channel.all not in Operation_Transport'Class then
          raise Program_Error with
-           "HTTP transport does not support scoped operations";
+           "HTTP transport does not support composable operations";
       end if;
       Item.Started := Ada.Real_Time.Clock;
       Operation_Drivers.Start (Item);
@@ -1539,11 +1539,28 @@ package body Flyology.HTTP.Server is
             Flyology.Operations.Consume (Item);
          end if;
          raise;
-   end Start_Head;
+   end Begin_Head;
 
-   function Create_Read_Request_Head
+   procedure Read_Request_Head
+     (Item      : not null access Connection'Class;
+      Timeout   : Duration := 30.0;
+      Max_Body  : Body_Size := Max_Request_Body;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Read_Request_Head_Operation)
+   is
+   begin
+      Operation.Item_Handle := Item.all'Unchecked_Access;
+      Operation.Token_Handle :=
+        (if Token = null then null else Token.all'Unchecked_Access);
+      Operation.Header_Timeout := Timeout;
+      Operation.Request_Timeout := Timeout;
+      Operation.Max_Body := Max_Body;
+      Begin_Head (Operation);
+   end Read_Request_Head;
+
+   function Read_Request_Head
      (Set      : not null access Flyology.Operations.Completion_Set'Class;
-      Item     : not null access Connection;
+      Item     : not null access Connection'Class;
       Timeout  : Duration := 30.0;
       Max_Body : Body_Size := Max_Request_Body;
       Token    : access Flyology.Cancellation.Token := null)
@@ -1551,20 +1568,32 @@ package body Flyology.HTTP.Server is
    is
    begin
       return Result : Read_Request_Head_Operation (Set) do
-         Result.Item_Handle := Item.all'Unchecked_Access;
-         Result.Token_Handle :=
-           (if Token = null then null else Token.all'Unchecked_Access);
-         Result.Header_Timeout := Timeout;
-         Result.Request_Timeout := Timeout;
-         Result.Max_Body := Max_Body;
-         Start_Head (Result);
+         Read_Request_Head (Item, Timeout, Max_Body, Token, Result);
       end return;
-   end Create_Read_Request_Head;
+   end Read_Request_Head;
 
-   function Create_Read_Request_Head
+   procedure Read_Request_Head
+     (Item            : not null access Connection'Class;
+      Header_Timeout  : Duration;
+      Request_Timeout : Duration;
+      Max_Body        : Body_Size := Max_Request_Body;
+      Token           : access Flyology.Cancellation.Token := null;
+      Operation       : in out Read_Request_Head_Operation)
+   is
+   begin
+      Operation.Item_Handle := Item.all'Unchecked_Access;
+      Operation.Token_Handle :=
+        (if Token = null then null else Token.all'Unchecked_Access);
+      Operation.Header_Timeout := Header_Timeout;
+      Operation.Request_Timeout := Request_Timeout;
+      Operation.Max_Body := Max_Body;
+      Begin_Head (Operation);
+   end Read_Request_Head;
+
+   function Read_Request_Head
      (Set             : not null access
         Flyology.Operations.Completion_Set'Class;
-      Item            : not null access Connection;
+      Item            : not null access Connection'Class;
       Header_Timeout  : Duration;
       Request_Timeout : Duration;
       Max_Body        : Body_Size := Max_Request_Body;
@@ -1573,15 +1602,10 @@ package body Flyology.HTTP.Server is
    is
    begin
       return Result : Read_Request_Head_Operation (Set) do
-         Result.Item_Handle := Item.all'Unchecked_Access;
-         Result.Token_Handle :=
-           (if Token = null then null else Token.all'Unchecked_Access);
-         Result.Header_Timeout := Header_Timeout;
-         Result.Request_Timeout := Request_Timeout;
-         Result.Max_Body := Max_Body;
-         Start_Head (Result);
+         Read_Request_Head
+           (Item, Header_Timeout, Request_Timeout, Max_Body, Token, Result);
       end return;
-   end Create_Read_Request_Head;
+   end Read_Request_Head;
 
    procedure Finish_Head
      (Operation   : in out Read_Request_Head_Operation;
@@ -1729,7 +1753,7 @@ package body Flyology.HTTP.Server is
          Complete_Accept (Item, Flyology.Operations.Failed);
       elsif Event = Flyology.Operations.Start_Operation then
          Prepare_Accept_Body
-           (Item.Item_Handle.all, Item.Time_Left, Send_Continue);
+           (Connection (Item.Item_Handle.all), Item.Time_Left, Send_Continue);
          if not Send_Continue then
             Complete_Accept (Item, Flyology.Operations.Succeeded);
             return;
@@ -1777,36 +1801,45 @@ package body Flyology.HTTP.Server is
          null;
    end Request_Cancellation;
 
-   function Create_Accept_Body
-     (Set   : not null access Flyology.Operations.Completion_Set'Class;
-      Item  : not null access Connection;
-      Token : access Flyology.Cancellation.Token := null)
-      return Accept_Body_Operation
+   procedure Accept_Body
+     (Item      : not null access Connection'Class;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Accept_Body_Operation)
    is
    begin
       if Item.Channel.all not in Operation_Transport'Class then
          raise Program_Error with
-           "HTTP transport does not support scoped operations";
+           "HTTP transport does not support composable operations";
       end if;
+      Operation.Item_Handle := Item.all'Unchecked_Access;
+      Operation.Token_Handle :=
+        (if Token = null then null else Token.all'Unchecked_Access);
+      Operation_Drivers.Start (Operation);
+      Flyology.Operations.Drive
+        (Flyology.Operations.Operation'Class (Operation),
+         Flyology.Operations.Start_Operation);
+   exception
+      when others =>
+         if Flyology.Operations.Is_Active (Operation) then
+            Flyology.Operations.Cancel (Operation);
+         end if;
+         if Flyology.Operations.Is_Terminal (Operation) then
+            Flyology.Operations.Consume (Operation);
+         end if;
+         raise;
+   end Accept_Body;
+
+   function Accept_Body
+     (Set   : not null access Flyology.Operations.Completion_Set'Class;
+      Item  : not null access Connection'Class;
+      Token : access Flyology.Cancellation.Token := null)
+      return Accept_Body_Operation
+   is
+   begin
       return Result : Accept_Body_Operation (Set) do
-         Result.Item_Handle := Item.all'Unchecked_Access;
-         Result.Token_Handle :=
-           (if Token = null then null else Token.all'Unchecked_Access);
-         Operation_Drivers.Start (Result);
-         Flyology.Operations.Drive
-           (Flyology.Operations.Operation'Class (Result),
-            Flyology.Operations.Start_Operation);
-      exception
-         when others =>
-            if Flyology.Operations.Is_Active (Result) then
-               Flyology.Operations.Cancel (Result);
-            end if;
-            if Flyology.Operations.Is_Terminal (Result) then
-               Flyology.Operations.Consume (Result);
-            end if;
-            raise;
+         Accept_Body (Item, Token, Result);
       end return;
-   end Create_Accept_Body;
+   end Accept_Body;
 
    procedure Finish_Accept (Operation : in out Accept_Body_Operation) is
       Result : constant Flyology.Operations.Terminal_Outcome :=
@@ -2080,7 +2113,8 @@ package body Flyology.HTTP.Server is
       Data_Length : constant Natural :=
         Natural (Item.Data_Last - Item.Data_First + 1);
       Maximum : constant Natural := Body_Input_Maximum
-        (Item.Item_Handle.all, Positive (Data_Length - Item.Written));
+        (Connection (Item.Item_Handle.all),
+         Positive (Data_Length - Item.Written));
       Current : constant Natural := Length (Item.Item_Handle.Pending);
       Room    : constant Natural :=
         (if Current >= Maximum then 0 else Maximum - Current);
@@ -2114,7 +2148,7 @@ package body Flyology.HTTP.Server is
          when Connection_Drivers.Peer_Closed =>
             raise Protocol_Error with
               "peer closed inside HTTP " &
-              Body_Close_Description (Item.Item_Handle.all);
+              Body_Close_Description (Connection (Item.Item_Handle.all));
       end case;
    end Receive_Body_Step;
 
@@ -2144,7 +2178,7 @@ package body Flyology.HTTP.Server is
                Start_IO
                  (Operation_Transport'Class (Item.Item_Handle.Channel.all),
                   Item,
-                  Body_Time_Left (Item.Item_Handle.all),
+                  Body_Time_Left (Connection (Item.Item_Handle.all)),
                   Item.Token_Handle, Acquisition);
                Item.Acquiring :=
                  Acquisition = Connection_Drivers.Need_Acquire_Readiness;
@@ -2211,9 +2245,9 @@ package body Flyology.HTTP.Server is
          null;
    end Request_Cancellation;
 
-   procedure Start_Body
+   procedure Begin_Body
      (Operation    : in out Read_Body_Operation;
-      Item         : not null access Connection;
+      Item         : not null access Connection'Class;
       Data_Address : System.Address;
       Data_First   : Ada.Streams.Stream_Element_Offset;
       Data_Last    : Ada.Streams.Stream_Element_Offset;
@@ -2222,7 +2256,7 @@ package body Flyology.HTTP.Server is
    begin
       if Item.Channel.all not in Operation_Transport'Class then
          raise Program_Error with
-           "HTTP transport does not support scoped operations";
+           "HTTP transport does not support composable operations";
       end if;
       Operation.Item_Handle := Item.all'Unchecked_Access;
       Operation.Token_Handle :=
@@ -2244,91 +2278,36 @@ package body Flyology.HTTP.Server is
             Flyology.Operations.Consume (Operation);
          end if;
          raise;
-   end Start_Body;
+   end Begin_Body;
 
-   function Create_Read_Body
+   procedure Read_Body
+     (Item      : not null access Connection'Class;
+      Data      : not null access Ada.Streams.Stream_Element_Array;
+      Token     : access Flyology.Cancellation.Token := null;
+      Operation : in out Read_Body_Operation)
+   is
+   begin
+      Begin_Body
+        (Operation, Item, Data.all'Address, Data'First, Data'Last, Token);
+   end Read_Body;
+
+   function Read_Body
      (Set   : not null access Flyology.Operations.Completion_Set'Class;
-      Item  : not null access Connection;
+      Item  : not null access Connection'Class;
       Data  : not null access Ada.Streams.Stream_Element_Array;
       Token : access Flyology.Cancellation.Token := null)
       return Read_Body_Operation
    is
    begin
       return Result : Read_Body_Operation (Set) do
-         Start_Body
-           (Result, Item, Data.all'Address, Data'First, Data'Last, Token);
+         Read_Body (Item, Data, Token, Result);
       end return;
-   end Create_Read_Body;
+   end Read_Body;
 
    procedure Finish_Body
      (Operation : in out Read_Body_Operation;
       Last      : out Ada.Streams.Stream_Element_Offset;
       Finished  : out Boolean);
-
-   package body Scoped is
-      function Read_Request_Head
-        (Set      : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item     : not null access Connection;
-         Timeout  : Duration := 30.0;
-         Max_Body : Body_Size := Max_Request_Body;
-         Token    : access Flyology.Cancellation.Token := null)
-         return Read_Request_Head_Operation is
-        (Create_Read_Request_Head
-           (Set, Item, Timeout, Max_Body, Token));
-
-      function Read_Request_Head
-        (Set             : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item            : not null access Connection;
-         Header_Timeout  : Duration;
-         Request_Timeout : Duration;
-         Max_Body        : Body_Size := Max_Request_Body;
-         Token           : access Flyology.Cancellation.Token := null)
-         return Read_Request_Head_Operation is
-        (Create_Read_Request_Head
-           (Set, Item, Header_Timeout, Request_Timeout, Max_Body, Token));
-
-      function Accept_Body
-        (Set   : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item  : not null access Connection;
-         Token : access Flyology.Cancellation.Token := null)
-         return Accept_Body_Operation is
-        (Create_Accept_Body (Set, Item, Token));
-
-      function Read_Body
-        (Set   : not null access
-           Flyology.Operations.Completion_Set'Class;
-         Item  : not null access Connection;
-         Data  : not null access Ada.Streams.Stream_Element_Array;
-         Token : access Flyology.Cancellation.Token := null)
-         return Read_Body_Operation is
-        (Create_Read_Body (Set, Item, Data, Token));
-
-      procedure Finish
-        (Operation   : in out Read_Request_Head_Operation;
-         Value       : out Request;
-         Peer_Closed : out Boolean)
-      is
-      begin
-         Finish_Head (Operation, Value, Peer_Closed);
-      end Finish;
-
-      procedure Finish (Operation : in out Accept_Body_Operation) is
-      begin
-         Finish_Accept (Operation);
-      end Finish;
-
-      procedure Finish
-        (Operation : in out Read_Body_Operation;
-         Last      : out Ada.Streams.Stream_Element_Offset;
-         Finished  : out Boolean)
-      is
-      begin
-         Finish_Body (Operation, Last, Finished);
-      end Finish;
-   end Scoped;
 
    procedure Finish_Body
      (Operation : in out Read_Body_Operation;
@@ -2350,6 +2329,29 @@ package body Flyology.HTTP.Server is
             Ada.Exceptions.Reraise_Occurrence (Operation.Failure);
       end case;
    end Finish_Body;
+
+   procedure Finish
+     (Operation   : in out Read_Request_Head_Operation;
+      Value       : out Request;
+      Peer_Closed : out Boolean)
+   is
+   begin
+      Finish_Head (Operation, Value, Peer_Closed);
+   end Finish;
+
+   procedure Finish (Operation : in out Accept_Body_Operation) is
+   begin
+      Finish_Accept (Operation);
+   end Finish;
+
+   procedure Finish
+     (Operation : in out Read_Body_Operation;
+      Last      : out Ada.Streams.Stream_Element_Offset;
+      Finished  : out Boolean)
+   is
+   begin
+      Finish_Body (Operation, Last, Finished);
+   end Finish;
 
    procedure Read_Body
      (Item     : in out Connection;

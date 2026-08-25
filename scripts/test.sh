@@ -142,8 +142,8 @@ buffers_smoke
 tls_smoke
 http_smoke
 http_operations_smoke
-http_client_scoped_smoke
-http_client_scoped_stale_reuse
+http_client_composable_smoke
+http_client_composable_stale_reuse
 http_client_smoke
 http_client_addressing
 http_client_authentication
@@ -172,12 +172,12 @@ connection_hook_mains='http_client_pool_races
 http_client_deadline_matrix
 http_client_fragmentation'
 
-http3_scoped_mains='http3_h3spec_server
-http3_client_scoped_smoke'
+http3_composable_mains='http3_h3spec_server
+http3_client_composable_smoke'
 
 unset FLYOLOGY_CONNECTION_TEST_HOOKS || :
 compile_and_link behavioral "$ordinary_mains"
-compile_and_link behavioral-http3-scoped "$http3_scoped_mains"
+compile_and_link behavioral-http3-composable "$http3_composable_mains"
 
 FLYOLOGY_CONNECTION_TEST_HOOKS=true
 export FLYOLOGY_CONNECTION_TEST_HOOKS
@@ -205,14 +205,14 @@ for main in $ordinary_mains; do
 done
 
 "$http_root/scripts/run-with-timeout.sh" 60 \
-  "$http_root/tests/bin/behavioral/http_client_scoped_smoke" lightweight
+  "$http_root/tests/bin/behavioral/http_client_composable_smoke" lightweight
 printf '%s\n' \
-  "flyology_http test: PASS http_client_scoped_smoke (lightweight)"
+  "flyology_http test: PASS http_client_composable_smoke (lightweight)"
 
 "$http_root/scripts/run-with-timeout.sh" 60 \
-  "$http_root/tests/bin/behavioral/http_client_scoped_stale_reuse" lightweight
+  "$http_root/tests/bin/behavioral/http_client_composable_stale_reuse" lightweight
 printf '%s\n' \
-  "flyology_http test: PASS http_client_scoped_stale_reuse (lightweight)"
+  "flyology_http test: PASS http_client_composable_stale_reuse (lightweight)"
 
 for main in $connection_hook_mains; do
   "$http_root/scripts/run-with-timeout.sh" 30 \
@@ -221,17 +221,17 @@ for main in $connection_hook_mains; do
 done
 
 for model in native lightweight; do
-  run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http3-scoped.XXXXXX")
+  run_dir=$(mktemp -d "${TMPDIR:-/tmp}/flyology-http3-composable.XXXXXX")
   server_log="$run_dir/server.log"
   server_pid=
-  cleanup_http3_scoped () {
+  cleanup_http3_composable () {
     if [ -n "$server_pid" ]; then
       kill "$server_pid" 2>/dev/null || :
       wait "$server_pid" 2>/dev/null || :
     fi
   }
-  trap cleanup_http3_scoped EXIT HUP INT TERM
-  "$http_root/tests/bin/behavioral-http3-scoped/http3_h3spec_server" \
+  trap cleanup_http3_composable EXIT HUP INT TERM
+  "$http_root/tests/bin/behavioral-http3-composable/http3_h3spec_server" \
     0 32 1 15.0 16 >"$server_log" 2>&1 &
   server_pid=$!
   port=
@@ -256,12 +256,12 @@ for model in native lightweight; do
     exit 1
   fi
   "$http_root/scripts/run-with-timeout.sh" 60 \
-    "$http_root/tests/bin/behavioral-http3-scoped/http3_client_scoped_smoke" \
+    "$http_root/tests/bin/behavioral-http3-composable/http3_client_composable_smoke" \
     "$port" "$model"
-  cleanup_http3_scoped
+  cleanup_http3_composable
   server_pid=
   trap - EXIT HUP INT TERM
-  printf '%s\n' "flyology_http test: PASS http3_client_scoped_smoke ($model)"
+  printf '%s\n' "flyology_http test: PASS http3_client_composable_smoke ($model)"
 done
 
 response_lifetime_log="$http_root/build/tests/http-client-response-lifetime.log"

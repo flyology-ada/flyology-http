@@ -36,12 +36,12 @@ parent composition—properties the external wire tools cannot observe.
 Its protocol encodings are interpreted by the maintained peers:
 
 - H1 lifecycle and ownership fixtures are in
-  `http_client_scoped_smoke.adb` and the existing parser corpus tests.
+  `http_client_composable_smoke.adb` and the existing parser corpus tests.
 - H2 response, upload, reset, and multiplex fixtures are in `http2_peer.py`
   and `http2_client_integration.adb`.
 - H3 response, reset, QPACK, and multiplex fixtures are in
   `oracle/aioquic_h3_server.py`, `http3_h3spec_server.adb`, and
-  `http3_client_scoped_smoke.adb`.
+  `http3_client_composable_smoke.adb`.
 - Legal cross-implementation fixtures are in
   `http_client_differential_peer.py`, with PycURL and aioquic adapters in
   `http_client_pycurl.py` and `scripts/http-client-differential.sh`.
@@ -66,7 +66,7 @@ H1/H2 implementation, while pinned aioquic 1.3.0 provides an independent H3
 peer because the pinned libcurl build has no HTTP/3 backend. The differential
 compares normalized status, selected protocol, body octets, corpus-owned
 headers and trailers, and the independent peer transcript with synchronous Ada
-and both scoped owner models. These external implementations are corroborating
+and both composable owner models. These external implementations are corroborating
 evidence, not the golden oracle for malformed framing or Flyology-specific
 ownership and admission state.
 
@@ -76,14 +76,14 @@ Adapters may filter the corpus with:
 python3 tests/http_client_corpus.py \
   tests/corpus/http-client-scenarios.json \
   --execution tests/corpus/http-client-execution.json \
-  --protocol h2 --api scoped-buffer
+  --protocol h2 --api composable-buffer
 ```
 
 The pinned h2spec server suite qualifies the H2 server, and pinned h2specd runs
-57 client tests against both synchronous and scoped Ada entry points in both
+57 client tests against both synchronous and composable Ada entry points in both
 owner models. Upstream h3spec is server-oriented, so it qualifies the H3 server
 only. H3 client behavior is instead checked with the independent aioquic peer,
-deterministic QPACK/field-section adapters, and scoped wire scenarios. A vector
+deterministic QPACK/field-section adapters, and composable wire scenarios. A vector
 is not considered covered merely because a server-side tool or codec component
 passed; its public API/protocol/lane tuple must appear in the execution
 manifest.

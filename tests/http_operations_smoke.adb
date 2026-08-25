@@ -119,7 +119,7 @@ procedure HTTP_Operations_Smoke is
                begin
                   declare
                      Head : aliased HTTP.Read_Request_Head_Operation :=
-                       HTTP.Scoped.Read_Request_Head
+                       HTTP.Read_Request_Head
                          (Set'Access, Client'Access, Timeout => 1.0);
                      Timer : Timers.Timer_Operation :=
                        Timers.Sleep_For (Set'Access, 0.0);
@@ -127,7 +127,7 @@ procedure HTTP_Operations_Smoke is
                      Send (Peer, "host" & CRLF & CRLF);
                      Operations.Wait_All (Set);
                      Timers.Finish (Timer);
-                     HTTP.Scoped.Finish (Head, Request, Closed);
+                     HTTP.Finish (Head, Request, Closed);
                      pragma Assert (not Closed);
                      pragma Assert
                        (HTTP.Target (Request) = "/lightweight");
@@ -145,11 +145,11 @@ procedure HTTP_Operations_Smoke is
                declare
                   Set : aliased Operations.Completion_Set (1);
                   Head : HTTP.Read_Request_Head_Operation :=
-                    HTTP.Scoped.Read_Request_Head
+                    HTTP.Read_Request_Head
                       (Set'Access, Client'Access, Timeout => 1.0);
                begin
                   Operations.Wait_All (Set);
-                  HTTP.Scoped.Finish (Head, Request, Closed);
+                  HTTP.Finish (Head, Request, Closed);
                   pragma Assert (Closed);
                   pragma Assert (HTTP.Target (Request) = "");
                end;
@@ -194,7 +194,7 @@ procedure HTTP_Operations_Smoke is
          declare
             Set : aliased Operations.Completion_Set (3);
             Head : aliased HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head
+              HTTP.Read_Request_Head
                 (Set'Access, Client'Access, Timeout => 1.0);
             Timer : Timers.Timer_Operation :=
               Timers.Sleep_For (Set'Access, 0.001);
@@ -210,7 +210,7 @@ procedure HTTP_Operations_Smoke is
             Operations.Wait_All (Set);
             Operations.Finish (Gate, Matched);
             Timers.Finish (Timer);
-            HTTP.Scoped.Finish (Head, Request, Closed);
+            HTTP.Finish (Head, Request, Closed);
             pragma Assert (not Closed);
             pragma Assert (HTTP.Method (Request) = "POST");
             pragma Assert (HTTP.Target (Request) = "/composed");
@@ -221,14 +221,14 @@ procedure HTTP_Operations_Smoke is
             Data : aliased Ada.Streams.Stream_Element_Array :=
               [1 => 0, 2 => 0, 3 => 0, 4 => 0, 5 => 0];
             Read : aliased HTTP.Read_Body_Operation :=
-              HTTP.Scoped.Read_Body
+              HTTP.Read_Body
                 (Set'Access, Client'Access, Data'Access);
             Last : Ada.Streams.Stream_Element_Offset;
             Finished : Boolean;
          begin
             Send (Peer, "llo");
             Operations.Wait_All (Set);
-            HTTP.Scoped.Finish (Read, Last, Finished);
+            HTTP.Finish (Read, Last, Finished);
             pragma Assert (Finished);
             pragma Assert (Last = Data'Last);
             pragma Assert (Text (Data) = "hello");
@@ -252,6 +252,14 @@ procedure HTTP_Operations_Smoke is
          Client : aliased HTTP.Connection (Transport'Access);
          Request : HTTP.Request;
          Closed : Boolean;
+         Set : aliased Operations.Completion_Set (1);
+         Head : HTTP.Read_Request_Head_Operation (Set'Access);
+         Acceptance : HTTP.Accept_Body_Operation (Set'Access);
+         Read : HTTP.Read_Body_Operation (Set'Access);
+         Response : Ada.Streams.Stream_Element_Array (1 .. 25);
+         Data : aliased Ada.Streams.Stream_Element_Array := [1 => 0];
+         Last : Ada.Streams.Stream_Element_Offset;
+         Finished : Boolean;
       begin
          Send
            (Peer,
@@ -259,53 +267,35 @@ procedure HTTP_Operations_Smoke is
             & "Host: localhost" & CRLF
             & "Content-Length: 1" & CRLF
             & "Expect: 100-continue" & CRLF & CRLF);
-         declare
-            Set : aliased Operations.Completion_Set (1);
-            Head : aliased HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head (Set'Access, Client'Access);
-         begin
-            Operations.Wait_All (Set);
-            HTTP.Scoped.Finish (Head, Request, Closed);
-            pragma Assert (not Closed);
-         end;
-         declare
-            Set : aliased Operations.Completion_Set (1);
-            Acceptance : aliased HTTP.Accept_Body_Operation :=
-              HTTP.Scoped.Accept_Body (Set'Access, Client'Access);
-            Response : Ada.Streams.Stream_Element_Array (1 .. 25);
-         begin
-            Operations.Wait_All (Set);
-            HTTP.Scoped.Finish (Acceptance);
-            Sockets.Receive_Exactly (Peer, Response, Timeout => 1.0);
-            pragma Assert
-              (Text (Response) = "HTTP/1.1 100 Continue" & CRLF & CRLF);
-         end;
+         HTTP.Read_Request_Head (Client'Access, Operation => Head);
+         Operations.Wait_All (Set);
+         HTTP.Finish (Head, Request, Closed);
+         Operations.Release (Head);
+         pragma Assert (not Closed);
+
+         HTTP.Accept_Body (Client'Access, Operation => Acceptance);
+         Operations.Wait_All (Set);
+         HTTP.Finish (Acceptance);
+         Operations.Release (Acceptance);
+         Sockets.Receive_Exactly (Peer, Response, Timeout => 1.0);
+         pragma Assert
+           (Text (Response) = "HTTP/1.1 100 Continue" & CRLF & CRLF);
+
          Send (Peer, "x");
-         declare
-            Set : aliased Operations.Completion_Set (1);
-            Data : aliased Ada.Streams.Stream_Element_Array := [1 => 0];
-            Read : aliased HTTP.Read_Body_Operation :=
-              HTTP.Scoped.Read_Body
-                (Set'Access, Client'Access, Data'Access);
-            Last : Ada.Streams.Stream_Element_Offset;
-            Finished : Boolean;
-         begin
-            Operations.Wait_All (Set);
-            HTTP.Scoped.Finish (Read, Last, Finished);
-            pragma Assert
-              (Finished and then Last = Data'Last and then Text (Data) = "x");
-         end;
+         HTTP.Read_Body (Client'Access, Data'Access, Operation => Read);
+         Operations.Wait_All (Set);
+         HTTP.Finish (Read, Last, Finished);
+         Operations.Release (Read);
+         pragma Assert
+           (Finished and then Last = Data'Last and then Text (Data) = "x");
+
          Sockets.Close_Socket (Peer);
-         declare
-            Set : aliased Operations.Completion_Set (1);
-            Head : HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head (Set'Access, Client'Access);
-         begin
-            Operations.Wait_All (Set);
-            HTTP.Scoped.Finish (Head, Request, Closed);
-            pragma Assert (Closed);
-            pragma Assert (HTTP.Target (Request) = "");
-         end;
+         HTTP.Read_Request_Head (Client'Access, Operation => Head);
+         Operations.Wait_All (Set);
+         HTTP.Finish (Head, Request, Closed);
+         Operations.Release (Head);
+         pragma Assert (Closed);
+         pragma Assert (HTTP.Target (Request) = "");
       end;
       Connections.Close (Channel);
    end Check_Accept_Body;
@@ -366,7 +356,7 @@ procedure HTTP_Operations_Smoke is
          declare
             Set : aliased Operations.Completion_Set (1);
             Head : aliased HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head
+              HTTP.Read_Request_Head
                 (Set'Access, Client'Access, Timeout => 1.0);
             Request : HTTP.Request;
             Closed : Boolean;
@@ -375,7 +365,7 @@ procedure HTTP_Operations_Smoke is
             Operations.Cancel (Head);
             pragma Assert (Operations.Is_Terminal (Head));
             begin
-               HTTP.Scoped.Finish (Head, Request, Closed);
+               HTTP.Finish (Head, Request, Closed);
             exception
                when Operations.Operation_Cancelled =>
                   Cancelled := True;
@@ -387,7 +377,7 @@ procedure HTTP_Operations_Smoke is
             Token : aliased Flyology.Cancellation.Token;
             Set : aliased Operations.Completion_Set (1);
             Head : aliased HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head
+              HTTP.Read_Request_Head
                 (Set'Access, Client'Access, Timeout => 1.0,
                  Token => Token'Access);
             Request : HTTP.Request;
@@ -397,7 +387,7 @@ procedure HTTP_Operations_Smoke is
             Token.Request;
             Operations.Wait_All (Set);
             begin
-               HTTP.Scoped.Finish (Head, Request, Closed);
+               HTTP.Finish (Head, Request, Closed);
             exception
                when Operations.Operation_Cancelled =>
                   Cancelled := True;
@@ -408,7 +398,7 @@ procedure HTTP_Operations_Smoke is
          declare
             Set : aliased Operations.Completion_Set (1);
             Head : constant HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head
+              HTTP.Read_Request_Head
                 (Set'Access, Client'Access, Timeout => 1.0);
          begin
             pragma Assert (Operations.Is_Active (Head));
@@ -422,13 +412,13 @@ procedure HTTP_Operations_Smoke is
          declare
             Set : aliased Operations.Completion_Set (1);
             Head : aliased HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head
+              HTTP.Read_Request_Head
                 (Set'Access, Client'Access, Timeout => 1.0);
             Request : HTTP.Request;
             Closed : Boolean;
          begin
             Operations.Wait_All (Set);
-            HTTP.Scoped.Finish (Head, Request, Closed);
+            HTTP.Finish (Head, Request, Closed);
             pragma Assert (not Closed);
             pragma Assert (HTTP.Target (Request) = "/after-cleanup");
          end;
@@ -451,7 +441,7 @@ procedure HTTP_Operations_Smoke is
          Client : aliased HTTP.Connection (Transport'Access);
          Set : aliased Operations.Completion_Set (2);
          Head : aliased HTTP.Read_Request_Head_Operation :=
-           HTTP.Scoped.Read_Request_Head
+           HTTP.Read_Request_Head
              (Set'Access, Client'Access, Timeout => 0.0);
          Timer : Timers.Timer_Operation := Timers.Sleep_For (Set'Access, 0.0);
          Batch : Operations.Completion_Batch (Set.Capacity);
@@ -464,7 +454,7 @@ procedure HTTP_Operations_Smoke is
            (Operations.Outcome (Head) = Operations.Failed);
          Timers.Finish (Timer);
          begin
-            HTTP.Scoped.Finish (Head, Request, Closed);
+            HTTP.Finish (Head, Request, Closed);
          exception
             when Flyology.IO.Timeout_Error =>
                Timed_Out := True;
@@ -478,7 +468,7 @@ procedure HTTP_Operations_Smoke is
          Client : aliased HTTP.Connection (Transport'Access);
          Set : aliased Operations.Completion_Set (2);
          Head : aliased HTTP.Read_Request_Head_Operation :=
-           HTTP.Scoped.Read_Request_Head
+           HTTP.Read_Request_Head
              (Set'Access, Client'Access, Timeout => 1.0);
          Timer : Timers.Timer_Operation := Timers.Sleep_For (Set'Access, 0.0);
          Request : HTTP.Request;
@@ -490,7 +480,7 @@ procedure HTTP_Operations_Smoke is
            (Operations.Outcome (Head) = Operations.Failed);
          Timers.Finish (Timer);
          begin
-            HTTP.Scoped.Finish (Head, Request, Closed);
+            HTTP.Finish (Head, Request, Closed);
          exception
             when Flyology.HTTP.Protocol_Error =>
                Failed := True;
@@ -520,9 +510,9 @@ procedure HTTP_Operations_Smoke is
          Client_2 : aliased HTTP.Connection (Transport_2'Access);
          Set : aliased Operations.Completion_Set (3);
          Head_1 : aliased HTTP.Read_Request_Head_Operation :=
-           HTTP.Scoped.Read_Request_Head (Set'Access, Client_1'Access);
+           HTTP.Read_Request_Head (Set'Access, Client_1'Access);
          Head_2 : aliased HTTP.Read_Request_Head_Operation :=
-           HTTP.Scoped.Read_Request_Head (Set'Access, Client_2'Access);
+           HTTP.Read_Request_Head (Set'Access, Client_2'Access);
          Timer : Timers.Timer_Operation := Timers.Sleep_For (Set'Access, 0.0);
          Batch : Operations.Completion_Batch (Set.Capacity);
          Request : HTTP.Request;
@@ -538,7 +528,7 @@ procedure HTTP_Operations_Smoke is
          Operations.Wait_At_Least
            (Set, Required => 1, Completed => Batch);
          pragma Assert (Batch.Count = 1);
-         HTTP.Scoped.Finish (Head_1, Request, Closed);
+         HTTP.Finish (Head_1, Request, Closed);
          pragma Assert (not Closed);
          pragma Assert (HTTP.Target (Request) = "/one");
 
@@ -548,7 +538,7 @@ procedure HTTP_Operations_Smoke is
          Operations.Wait_For_Successes
            (Set, Required => 1, Completed => Batch);
          pragma Assert (Batch.Count = 1);
-         HTTP.Scoped.Finish (Head_2, Request, Closed);
+         HTTP.Finish (Head_2, Request, Closed);
          pragma Assert (not Closed);
          pragma Assert (HTTP.Target (Request) = "/two");
       end;
@@ -613,13 +603,13 @@ procedure HTTP_Operations_Smoke is
               (Channel'Access);
             HTTP_Connection : aliased HTTP.Connection (Transport'Access);
             Head : aliased HTTP.Read_Request_Head_Operation :=
-              HTTP.Scoped.Read_Request_Head
+              HTTP.Read_Request_Head
                 (Set'Access, HTTP_Connection'Access, Timeout => 5.0);
             Request : HTTP.Request;
             Closed : Boolean;
          begin
             Operations.Wait_All (Set);
-            HTTP.Scoped.Finish (Head, Request, Closed);
+            HTTP.Finish (Head, Request, Closed);
             pragma Assert (not Closed);
             pragma Assert (HTTP.Target (Request) = "/tls-operation");
          end;

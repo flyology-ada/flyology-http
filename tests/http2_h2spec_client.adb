@@ -44,7 +44,7 @@ procedure HTTP2_H2spec_Client is
          begin
             null;
          end;
-      elsif Style = "scoped" then
+      elsif Style = "composable" then
          declare
             Pool : aliased Buffers.Pool
               (Block_Size => 262_144, Capacity => 1);
@@ -56,12 +56,12 @@ procedure HTTP2_H2spec_Client is
             Buffers.Acquire (Destination);
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Ask'Access, Destination,
                     Client.Deadline_After (2.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish
+               Client.Finish
                  (Operation, Result, Reply, Destination);
             end;
             Buffers.Release (Destination);
@@ -81,7 +81,7 @@ procedure HTTP2_H2spec_Client is
 begin
    if Ada.Command_Line.Argument_Count /= 3 then
       raise Program_Error with
-        "usage: http2_h2spec_client {sync|scoped} " &
+        "usage: http2_h2spec_client {sync|composable} " &
         "{native|lightweight} URL";
    end if;
 end HTTP2_H2spec_Client;

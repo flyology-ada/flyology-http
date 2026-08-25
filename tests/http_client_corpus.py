@@ -11,7 +11,7 @@ import re
 
 
 PROTOCOLS = {"h1", "h2", "h3"}
-API_STYLES = {"sync-head", "scoped-buffer", "scoped-sink", "established-child"}
+API_STYLES = {"sync-head", "composable-buffer", "composable-sink", "established-child"}
 DIFFERENTIALS = {"pycurl-easy", "pycurl-multi", "aioquic-peer"}
 SOURCE_KINDS = {"standard", "upstream-suite", "oracle-model", "project-contract"}
 PRE_ADMISSION = {"pre-admission-rejected"}
@@ -104,7 +104,7 @@ def validate(document: dict, corpus_path: Path | None = None) -> None:
             assert expect["certainty"] == "not-admitted", case["id"]
         if expect["kind"] == "response-complete":
             assert expect["certainty"] == "response-observed", case["id"]
-        if "scoped-buffer" in styles and expect["kind"] != "response-complete":
+        if "composable-buffer" in styles and expect["kind"] != "response-complete":
             assert expect["body_effect"] in NON_SUCCESS_BUFFER_EFFECTS, case["id"]
         if "required_length" in expect:
             required = expect["required_length"]
@@ -171,12 +171,12 @@ def validate_execution(document: dict, execution: dict, repository: Path) -> Non
     #  evidence-only default. They are the publication ambiguity, ownership,
     #  and composition boundary for Object Storage and Flyology.DB.
     for identifier, styles in {
-        "lost-final-response": {"sync-head", "scoped-buffer"},
-        "stale-after-handoff-no-replay": {"sync-head", "scoped-buffer"},
+        "lost-final-response": {"sync-head", "composable-buffer"},
+        "stale-after-handoff-no-replay": {"sync-head", "composable-buffer"},
         "parent-continue-after": {"established-child"},
-        "abandonment-drain": {"scoped-buffer"},
-        "cancel-after-admission": {"scoped-buffer"},
-        "blocked-source-early-final": {"scoped-buffer"},
+        "abandonment-drain": {"composable-buffer"},
+        "cancel-after-admission": {"composable-buffer"},
+        "blocked-source-early-final": {"composable-buffer"},
     }.items():
         for protocol in PROTOCOLS:
             for style in styles:

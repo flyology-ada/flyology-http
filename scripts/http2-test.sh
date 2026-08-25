@@ -54,7 +54,7 @@ run_codecs () {
 run_client () {
   require_tester
   build_test http2_client_integration http2-integration
-  scenarios=${FLYOLOGY_HTTP2_CLIENT_SCENARIOS:-"basic prior scoped scoped-tls scoped-parent scoped-cancel scoped-abandon scoped-source-early-final scoped-source-contract scoped-sink-contract scoped-stream-isolation scoped-body-forbidden long-sync fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final early-final-body head-empty-data reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post"}
+  scenarios=${FLYOLOGY_HTTP2_CLIENT_SCENARIOS:-"basic prior composable composable-tls composable-parent composable-cancel composable-abandon composable-source-early-final composable-source-contract composable-sink-contract composable-stream-isolation composable-body-forbidden long-sync fallback require-failure multiplex continuation peer-capacity stream-order flow upload early-final early-final-body head-empty-data reset-race zero-read bad-preface informational-end flood shutdown-race goaway refused refused-post"}
   models=${FLYOLOGY_HTTP2_CLIENT_MODELS:-"native lightweight"}
   for model in $models; do
     for scenario in $scenarios; do
@@ -63,15 +63,15 @@ run_client () {
       log_file="$run_dir/events.jsonl"
       cleartext=
       scheme=https
-      if [ "$scenario" = prior ] || [ "$scenario" = scoped ] \
-        || [ "$scenario" = scoped-body-forbidden ] \
+      if [ "$scenario" = prior ] || [ "$scenario" = composable ] \
+        || [ "$scenario" = composable-body-forbidden ] \
         || [ "$scenario" = long-sync ] \
         || [ "$scenario" = early-final ] \
         || [ "$scenario" = early-final-body ] \
-        || [ "$scenario" = scoped-source-early-final ] \
-        || [ "$scenario" = scoped-source-contract ] \
-        || [ "$scenario" = scoped-sink-contract ] \
-        || [ "$scenario" = scoped-stream-isolation ]
+        || [ "$scenario" = composable-source-early-final ] \
+        || [ "$scenario" = composable-source-contract ] \
+        || [ "$scenario" = composable-sink-contract ] \
+        || [ "$scenario" = composable-stream-isolation ]
       then
         cleartext=--cleartext
         scheme=http
@@ -116,9 +116,9 @@ run_client () {
       wait "$peer_pid"
       case "$scenario" in
         long-sync) expected_requests=10000 ;;
-        scoped-body-forbidden) expected_requests=2 ;;
-        scoped-source-contract) expected_requests=0 ;;
-        multiplex|continuation|peer-capacity|stream-order|reset-race|goaway|refused|scoped-sink-contract|scoped-stream-isolation) expected_requests=2 ;;
+        composable-body-forbidden) expected_requests=2 ;;
+        composable-source-contract) expected_requests=0 ;;
+        multiplex|continuation|peer-capacity|stream-order|reset-race|goaway|refused|composable-sink-contract|composable-stream-isolation) expected_requests=2 ;;
         require-failure|bad-preface) expected_requests=0 ;;
         *) expected_requests=1 ;;
       esac
@@ -132,9 +132,9 @@ run_client () {
       fi
       if [ "$scenario" = early-final ] \
         || [ "$scenario" = early-final-body ] \
-        || [ "$scenario" = scoped-source-early-final ] \
-        || [ "$scenario" = scoped-cancel ] \
-        || [ "$scenario" = scoped-stream-isolation ]
+        || [ "$scenario" = composable-source-early-final ] \
+        || [ "$scenario" = composable-cancel ] \
+        || [ "$scenario" = composable-stream-isolation ]
       then
         PYTHONDONTWRITEBYTECODE=1 "$python" -c \
           'import json,sys; events=[json.loads(x) for x in open(sys.argv[1])]; assert any(e["event"]=="client-reset" for e in events)' \
@@ -340,7 +340,7 @@ run_client_h2spec () {
   prepare_h2specd
   build_test http2_h2spec_client h2spec-client
 
-  styles=${FLYOLOGY_HTTP2_H2SPECD_STYLES:-"sync scoped"}
+  styles=${FLYOLOGY_HTTP2_H2SPECD_STYLES:-"sync composable"}
   models=${FLYOLOGY_HTTP2_H2SPECD_MODELS:-"native lightweight"}
   for style in $styles; do
     for model in $models; do

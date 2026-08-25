@@ -22,7 +22,7 @@ with HTTP_Client_Corpus_Oracle;
 with HTTP_Client_Corpus_Sources;
 with HTTP_Client_Corpus_Sinks;
 
-procedure HTTP_Client_Scoped_Smoke is
+procedure HTTP_Client_Composable_Smoke is
    package Buffers renames Flyology.Buffers;
    package Client renames Flyology.HTTP.Client;
    package Operations renames Flyology.Operations;
@@ -58,7 +58,7 @@ procedure HTTP_Client_Scoped_Smoke is
      Ada.Environment_Variables.Value ("TMPDIR", "/tmp");
    Path : constant String :=
      Prefix & (if Prefix (Prefix'Last) = '/' then "" else "/") &
-     "flyology-http-scoped-" &
+     "flyology-http-composable-" &
      Decimal (GNAT.OS_Lib.Pid_To_Integer (GNAT.OS_Lib.Current_Process_Id)) &
      ".sock";
 
@@ -171,9 +171,9 @@ procedure HTTP_Client_Scoped_Smoke is
       Event : Operations.Driver_Event) is
    begin
       if Event = Operations.Start_Operation then
-         Client.Scoped.Start
-            (Item.Child, Item.HTTP, Item.Ask, Item.Destination.all,
-            Client.Deadline_After (5.0));
+         Client.Exchange_To_Buffer
+           (Item.HTTP, Item.Ask, Item.Destination.all,
+            Client.Deadline_After (5.0), null, Item.Child);
          if Item.Cancel_After_Start then
             Timers.Sleep_For (0.05, Item.Timer);
             Operations.Continue_After (Item, Item.Timer);
@@ -196,7 +196,7 @@ procedure HTTP_Client_Scoped_Smoke is
             Result : Client.Exchange_Result;
             Reply : Client.Response;
          begin
-            Client.Scoped.Finish
+            Client.Finish
               (Item.Child, Result, Reply, Item.Destination.all);
             Item.Child_Kind := Client.Kind (Result);
             Item.Child_Certainty := Client.Certainty (Result);
@@ -468,7 +468,7 @@ begin
          when Error : others =>
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "scoped H1 server failed: " &
+               "composable H1 server failed: " &
                  "stage" & Natural'Image (Stage) & ": " &
                  ", client-fault=" &
                  Natural'Image (Client_Fault_Position) &
@@ -497,7 +497,7 @@ begin
          Stage : Natural := 0;
       begin
          Client.Configure
-        (HTTP, Flyology.HTTP.Parse_Origin ("http://scoped.local"),
+        (HTTP, Flyology.HTTP.Parse_Origin ("http://composable.local"),
          Client.Unix_Socket (Path));
       Buffers.Acquire (Destination);
       Stage := 1;
@@ -505,7 +505,7 @@ begin
       declare
          Set : aliased Operations.Completion_Set (3);
          Operation : Client.Exchange_Operation :=
-           Client.Scoped.Exchange_To_Buffer
+           Client.Exchange_To_Buffer
              (Set'Access, HTTP'Access, Ask'Access, Destination,
               Client.Deadline_After (5.0));
          Result : Client.Exchange_Result;
@@ -515,14 +515,14 @@ begin
          if Operations.Is_Active (Operation) then
             Operations.Wait_All (Set);
          end if;
-         Client.Scoped.Finish (Operation, Result, Reply, Destination);
+         Client.Finish (Operation, Result, Reply, Destination);
          pragma Assert (Client.Kind (Result) = Client.Cancelled);
          pragma Assert
            (Client.Certainty (Result) = Client.Not_Admitted);
          pragma Assert (Buffers.Length (Destination) = 0);
          Corpus.Check
            (Golden.Cancel_Before_Admission, Golden.H1,
-            Golden.Scoped_Buffer,
+            Golden.Composable_Buffer,
              (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Body_Effect => Golden.Zero,
@@ -533,7 +533,7 @@ begin
       declare
          Set : aliased Operations.Completion_Set (5);
          Token : aliased Flyology.Cancellation.Token;
-         Op  : Client.Exchange_Operation := Client.Scoped.Exchange_To_Buffer
+         Op  : Client.Exchange_Operation := Client.Exchange_To_Buffer
            (Set'Access, HTTP'Access, Ask'Access, Destination,
             Client.Deadline_After (5.0), Token'Access);
          Result : Client.Exchange_Result;
@@ -541,7 +541,7 @@ begin
       begin
          pragma Assert (not Buffers.Has_Buffer (Destination));
          Operations.Wait_All (Set);
-         Client.Scoped.Finish (Op, Result, Reply, Destination);
+         Client.Finish (Op, Result, Reply, Destination);
          pragma Assert (Client.Kind (Result) = Client.Response_Complete);
          pragma Assert
            (Client.Certainty (Result) = Client.Response_Observed);
@@ -549,7 +549,7 @@ begin
          pragma Assert (Client.Body_Complete (Reply));
          Check_Payload (Destination, "body");
          Corpus.Check
-           (Golden.Complete_Fixed, Golden.H1, Golden.Scoped_Buffer,
+           (Golden.Complete_Fixed, Golden.H1, Golden.Composable_Buffer,
             (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Status_Known => True,
@@ -561,14 +561,14 @@ begin
 
       declare
          Set : aliased Operations.Completion_Set (3);
-         Op  : Client.Exchange_Operation := Client.Scoped.Exchange_To_Buffer
+         Op  : Client.Exchange_Operation := Client.Exchange_To_Buffer
            (Set'Access, HTTP'Access, Ask'Access, Destination,
             Client.Deadline_After (5.0));
          Result : Client.Exchange_Result;
          Reply  : Client.Response;
       begin
          Operations.Wait_All (Set);
-         Client.Scoped.Finish (Op, Result, Reply, Destination);
+         Client.Finish (Op, Result, Reply, Destination);
          pragma Assert
            (Client.Kind (Result) = Client.Response_Body_Too_Large);
          pragma Assert (Buffers.Length (Destination) = 0);
@@ -577,7 +577,7 @@ begin
            (Client.Required_Body_Length (Result).Bytes = 40);
          Corpus.Check
            (Golden.Known_Capacity_Overflow, Golden.H1,
-            Golden.Scoped_Buffer,
+            Golden.Composable_Buffer,
             (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Body_Effect => Golden.Zero,
@@ -591,19 +591,19 @@ begin
 
       declare
          Set : aliased Operations.Completion_Set (3);
-         Op  : Client.Exchange_Operation := Client.Scoped.Exchange_To_Buffer
+         Op  : Client.Exchange_Operation := Client.Exchange_To_Buffer
            (Set'Access, HTTP'Access, Ask'Access, Destination,
             Client.Deadline_After (5.0));
          Result : Client.Exchange_Result;
          Reply  : Client.Response;
       begin
          Operations.Wait_All (Set);
-         Client.Scoped.Finish (Op, Result, Reply, Destination);
+         Client.Finish (Op, Result, Reply, Destination);
          pragma Assert (Client.Kind (Result) = Client.Response_Complete);
          pragma Assert (Client.Status (Reply) = 204);
          pragma Assert (Buffers.Length (Destination) = 0);
          Corpus.Check
-           (Golden.No_Body_204, Golden.H1, Golden.Scoped_Buffer,
+           (Golden.No_Body_204, Golden.H1, Golden.Composable_Buffer,
             (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Status_Known => True,
@@ -635,14 +635,14 @@ begin
          Sink : aliased Counting_Sink;
          Set : aliased Operations.Completion_Set (3);
          Operation : Client.Exchange_Operation :=
-           Client.Scoped.Exchange_To_Sink
+           Client.Exchange_To_Sink
              (Set'Access, HTTP'Access, Ask'Access, Sink'Access,
               Client.Deadline_After (5.0));
          Result : Client.Exchange_Result;
          Reply : Client.Response;
       begin
          Operations.Wait_All (Set);
-         Client.Scoped.Finish (Operation, Result, Reply);
+         Client.Finish (Operation, Result, Reply);
          pragma Assert (Client.Kind (Result) = Client.Response_Complete);
          pragma Assert (Client.Status (Reply) = 200);
          pragma Assert (Sink.Count = 9);
@@ -653,7 +653,7 @@ begin
               Character'Pos ('a') + Character'Pos ('t') +
               Character'Pos ('a'));
          Corpus.Check
-           (Golden.Complete_Fixed, Golden.H1, Golden.Scoped_Sink,
+           (Golden.Complete_Fixed, Golden.H1, Golden.Composable_Sink,
             (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Status_Known => True,
@@ -673,12 +673,12 @@ begin
          Client.Set_Target (Ask, "/early");
          declare
             Op : Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, HTTP'Access, Ask'Access, Source'Access,
                  Destination, Client.Deadline_After (5.0));
          begin
             Operations.Wait_All (Set);
-            Client.Scoped.Finish (Op, Result, Reply, Destination);
+            Client.Finish (Op, Result, Reply, Destination);
          end;
          pragma Assert (Client.Kind (Result) = Client.Response_Complete);
          pragma Assert (Client.Status (Reply) = 413);
@@ -688,7 +688,7 @@ begin
            (Client.Diagnostics (HTTP).Reusable_Transports = 0);
          Corpus.Check
            (Golden.Blocked_Source_Early_Final, Golden.H1,
-            Golden.Scoped_Buffer,
+            Golden.Composable_Buffer,
             (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Status_Known => True,
@@ -715,7 +715,7 @@ begin
          begin
             Client.Configure
               (Fault_HTTP, Flyology.HTTP.Parse_Origin
-                 ("http://scoped.local"),
+                 ("http://composable.local"),
                Client.Unix_Socket (Path));
             Source_Accept_Gate.Wait;
             delay 0.01;
@@ -725,16 +725,16 @@ begin
                  Decimal (Faults.Fault_Kind'Pos (Fault)));
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, Fault_HTTP'Access, Ask'Access, Source'Access,
                     Destination, Client.Deadline_After (5.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish
+               Client.Finish
                  (Operation, Result, Reply, Destination);
             end;
             Corpus.Check
-              (Scenario, Golden.H1, Golden.Scoped_Buffer,
+              (Scenario, Golden.H1, Golden.Composable_Buffer,
                (Kind => Corpus.To_Golden (Client.Kind (Result)),
                 Certainty => Corpus.To_Golden (Client.Certainty (Result)),
                 Body_Effect => Golden.Zero,
@@ -813,7 +813,7 @@ begin
             then
                Ada.Text_IO.Put_Line
                  (Ada.Text_IO.Standard_Error,
-                  "scoped H1 post-cancel pool: active" &
+                  "composable H1 post-cancel pool: active" &
                     Natural'Image (Snapshot.Active_Exchanges) &
                     " pending" &
                     Natural'Image (Snapshot.Pending_Transports) &
@@ -841,7 +841,7 @@ begin
          for Iteration in 1 .. 10_000 loop
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Buffer
+                 Client.Exchange_To_Buffer
                    (Set'Access, HTTP'Access, Ask'Access, Destination,
                     Client.Deadline_After (5.0));
                Result : Client.Exchange_Result;
@@ -858,12 +858,12 @@ begin
                   when others =>
                      Operations.Wait_All (Set);
                end case;
-               Client.Scoped.Finish
+               Client.Finish
                  (Operation, Result, Reply, Destination);
                if Client.Kind (Result) /= Client.Response_Complete then
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
-                     "scoped H1 slot iteration" &
+                     "composable H1 slot iteration" &
                        Positive'Image (Iteration) & ": " &
                        Client.Exchange_Result_Kind'Image
                          (Client.Kind (Result)) & " / " &
@@ -879,7 +879,7 @@ begin
             end;
          end loop;
          Corpus.Check
-           (Golden.Slot_Reuse_Loop, Golden.H1, Golden.Scoped_Buffer,
+           (Golden.Slot_Reuse_Loop, Golden.H1, Golden.Composable_Buffer,
             (Kind => Golden.Response_Complete,
              Certainty => Golden.Response_Observed,
              Status_Known => True,
@@ -917,17 +917,17 @@ begin
          begin
             declare
                Operation : Client.Exchange_Operation :=
-                 Client.Scoped.Exchange_To_Sink
+                 Client.Exchange_To_Sink
                    (Set'Access, HTTP'Access, Ask'Access, Sink'Access,
                     Client.Deadline_After (5.0));
             begin
                Operations.Wait_All (Set);
-               Client.Scoped.Finish (Operation, Result, Reply);
+               Client.Finish (Operation, Result, Reply);
             end;
             if Client.Kind (Result) /= Client.Response_Sink_Failed then
                Ada.Text_IO.Put_Line
                  (Ada.Text_IO.Standard_Error,
-                  "scoped H1 sink result: " &
+                  "composable H1 sink result: " &
                     Client.Exchange_Result_Kind'Image
                       (Client.Kind (Result)) & " / " &
                     Client.Admission_Certainty'Image
@@ -936,7 +936,7 @@ begin
                       (Client.Phase (Result)));
             end if;
             Corpus.Check
-              (Scenario, Golden.H1, Golden.Scoped_Sink,
+              (Scenario, Golden.H1, Golden.Composable_Sink,
                (Kind => Corpus.To_Golden (Client.Kind (Result)),
                 Certainty => Corpus.To_Golden (Client.Certainty (Result)),
                 Body_Effect => Golden.Partial_Visible,
@@ -986,7 +986,7 @@ begin
          Client.Set_Target (Ask, "/abandon");
          declare
             Operation : constant Client.Exchange_Operation :=
-              Client.Scoped.Exchange_To_Buffer
+              Client.Exchange_To_Buffer
                 (Set'Access, HTTP'Access, Ask'Access, Destination,
                  Client.Deadline_After (5.0), Token'Access);
          begin
@@ -994,16 +994,16 @@ begin
             pragma Assert
               (Operations.Outcome (Operation) = Operations.Cancelled);
             pragma Assert
-              (Client.Scoped.Admission (Operation) =
+              (Client.Admission (Operation) =
                  Client.Possibly_Admitted);
             pragma Assert
-              (Client.Scoped.Raw_Phase (Operation) /= Client.Draining);
+              (Client.Raw_Phase (Operation) /= Client.Draining);
             Corpus.Check
               (Golden.Abandonment_Drain, Golden.H1,
-               Golden.Scoped_Buffer,
+               Golden.Composable_Buffer,
                (Kind => Golden.Cancelled,
                 Certainty => Corpus.To_Golden
-                  (Client.Scoped.Admission (Operation)),
+                  (Client.Admission (Operation)),
                 Body_Effect => Golden.Zero,
                 Request_Reset => True,
                 others => <>));
@@ -1019,7 +1019,7 @@ begin
       declare
          Set : aliased Operations.Completion_Set (3);
          Before_Length : constant Natural := Buffers.Length (Destination);
-         Op : Client.Exchange_Operation := Client.Scoped.Exchange_To_Buffer
+         Op : Client.Exchange_Operation := Client.Exchange_To_Buffer
            (Set'Access, HTTP'Access, Ask'Access, Destination,
             Client.Deadline_After (0.0));
          Result : Client.Exchange_Result;
@@ -1027,12 +1027,12 @@ begin
       begin
          pragma Assert (Buffers.Has_Buffer (Destination));
          pragma Assert (Buffers.Length (Destination) = Before_Length);
-         Client.Scoped.Finish (Op, Result, Reply, Destination);
+         Client.Finish (Op, Result, Reply, Destination);
          pragma Assert (Client.Kind (Result) = Client.Timed_Out);
          pragma Assert
            (Client.Certainty (Result) = Client.Not_Admitted);
          Corpus.Check
-           (Golden.Expired_At_Start, Golden.H1, Golden.Scoped_Buffer,
+           (Golden.Expired_At_Start, Golden.H1, Golden.Composable_Buffer,
             (Kind => Corpus.To_Golden (Client.Kind (Result)),
              Certainty => Corpus.To_Golden (Client.Certainty (Result)),
              Body_Effect => Golden.Unchanged,
@@ -1046,7 +1046,7 @@ begin
          when Error : others =>
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "scoped H1 caller failed: " &
+               "composable H1 caller failed: " &
                  "stage" & Natural'Image (Stage) & ": " &
                  Ada.Exceptions.Exception_Information (Error));
             if Sockets.Is_Open (Listener) then
@@ -1059,4 +1059,4 @@ begin
    pragma Assert (Server_Passed);
    pragma Assert (Caller_Passed);
    Remove_Path;
-end HTTP_Client_Scoped_Smoke;
+end HTTP_Client_Composable_Smoke;

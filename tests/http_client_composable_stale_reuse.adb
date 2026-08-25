@@ -15,7 +15,7 @@ with Flyology.Operations.Drivers;
 with GNAT.OS_Lib;
 with HTTP_Client_Corpus_Oracle;
 
-procedure HTTP_Client_Scoped_Stale_Reuse is
+procedure HTTP_Client_Composable_Stale_Reuse is
    package Buffers renames Flyology.Buffers;
    package Client renames Flyology.HTTP.Client;
    package Operations renames Flyology.Operations;
@@ -46,7 +46,7 @@ procedure HTTP_Client_Scoped_Stale_Reuse is
      Ada.Environment_Variables.Value ("TMPDIR", "/tmp");
    Path : constant String :=
      Prefix & (if Prefix (Prefix'Last) = '/' then "" else "/") &
-     "flyology-http-scoped-stale-" &
+     "flyology-http-composable-stale-" &
      Decimal (GNAT.OS_Lib.Pid_To_Integer (GNAT.OS_Lib.Current_Process_Id)) &
      ".sock";
 
@@ -128,14 +128,14 @@ procedure HTTP_Client_Scoped_Stale_Reuse is
       Reply  : Client.Response;
    begin
       if Event = Operations.Start_Operation then
-         Client.Scoped.Start
-           (Item.Child, Item.HTTP, Item.Put_Request,
-            Item.Put_Destination.all, Client.Deadline_After (5.0));
+         Client.Exchange_To_Buffer
+           (Item.HTTP, Item.Put_Request, Item.Put_Destination.all,
+            Client.Deadline_After (5.0), null, Item.Child);
          Operations.Continue_After (Item, Item.Child);
       elsif Event = Operations.Dependency_Changed
         and then Item.Phase = Conditional_Put
       then
-         Client.Scoped.Finish
+         Client.Finish
            (Item.Child, Result, Reply, Item.Put_Destination.all);
          Item.Passed :=
            Client.Kind (Result) = Client.Response_Complete
@@ -150,12 +150,12 @@ procedure HTTP_Client_Scoped_Stale_Reuse is
          --  This immediate established-child restart is the object-storage
          --  reconciliation sequence: Finish, Release, and Continue_After all
          --  occur inside one serial owner-stack dependency callback.
-         Client.Scoped.Start
-           (Item.Child, Item.HTTP, Item.Get_Request,
-            Item.Get_Destination.all, Client.Deadline_After (5.0));
+         Client.Exchange_To_Buffer
+           (Item.HTTP, Item.Get_Request, Item.Get_Destination.all,
+            Client.Deadline_After (5.0), null, Item.Child);
          Operations.Continue_After (Item, Item.Child);
       elsif Event = Operations.Dependency_Changed then
-         Client.Scoped.Finish
+         Client.Finish
            (Item.Child, Result, Reply, Item.Get_Destination.all);
          Item.Child_Kind := Client.Kind (Result);
          Item.Child_Certainty := Client.Certainty (Result);
@@ -257,7 +257,7 @@ begin
          when Error : others =>
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "scoped stale server failed at stage" & Natural'Image (Stage) &
+               "composable stale server failed at stage" & Natural'Image (Stage) &
                  ": " & Ada.Exceptions.Exception_Information (Error));
       end Server;
 
@@ -278,7 +278,7 @@ begin
             Put_Destination'Access, Get_Destination'Access);
       begin
          Client.Configure
-           (HTTP, Flyology.HTTP.Parse_Origin ("http://scoped.local"),
+           (HTTP, Flyology.HTTP.Parse_Origin ("http://composable.local"),
             Client.Unix_Socket (Path));
          Buffers.Acquire (Put_Destination);
          Buffers.Acquire (Get_Destination);
@@ -314,7 +314,7 @@ begin
          when Error : others =>
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "scoped stale caller failed: " &
+               "composable stale caller failed: " &
                  Ada.Exceptions.Exception_Information (Error));
       end Caller;
    begin
@@ -325,4 +325,4 @@ begin
    Remove_Path;
    pragma Assert (Server_Passed);
    pragma Assert (Caller_Passed);
-end HTTP_Client_Scoped_Stale_Reuse;
+end HTTP_Client_Composable_Stale_Reuse;
