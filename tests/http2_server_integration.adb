@@ -12,6 +12,7 @@ with Flyology.HTTP.Methods;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Connections;
+with Flyology.IO.Connections.Testing;
 with Flyology.IO.Sockets;
 with Flyology.Operations;
 
@@ -20,6 +21,7 @@ procedure HTTP2_Server_Integration is
    package SSE renames Flyology.HTTP.Client.SSE;
    package App renames Flyology.HTTP.Server.Applications;
    package Connections renames Flyology.IO.Connections;
+   package Connection_Testing renames Flyology.IO.Connections.Testing;
    package Sockets renames Flyology.IO.Sockets;
    use type Flyology.HTTP.Protocol;
    use type SSE.Read_Result;
@@ -733,6 +735,9 @@ begin
             Client.Set_Target (Request, "/sse");
             Client.Add_Header (Request, "Accept", "application/json");
             Client.Add_Header (Request, "Last-Event-ID", "template-id");
+            --  End the response-head receive exactly at the header boundary so
+            --  the first body read must reacquire the transferred connection.
+            Connection_Testing.Set_Receive_Cap (1);
             SSE.Open
               (Source, Request,
                Initial_Reconnect_Delay => 0.0,
@@ -757,6 +762,7 @@ begin
             pragma Assert (SSE.Last_Event_ID (Event) = "two");
             SSE.Read (Source, Result, Event, Token => null);
             pragma Assert (Result = SSE.Stream_Stopped);
+            Connection_Testing.Set_Receive_Cap (0);
          end;
          Client.Shutdown (HTTP_1, Timeout => 5.0);
       end;

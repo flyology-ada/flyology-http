@@ -406,6 +406,8 @@ package body Flyology.HTTP.Client is
       Sending_Source_End,
       Probing_Early_Response,
       Receiving_Head,
+      Starting_Response_Body,
+      Waiting_For_Response_Body_Lease,
       Receiving_Content,
       HTTP_2_Protocol_Step,
       HTTP_2_Waiting_For_Pump,
@@ -1663,7 +1665,7 @@ package body Flyology.HTTP.Client is
         Operation.State.Metadata.HTTP_3_Last_Stream_Credit;
       Operation.State.Driver_State :=
         (case Operation.State.Metadata.Engine is
-            when HTTP_1_Response => Receiving_Content,
+            when HTTP_1_Response => Starting_Response_Body,
             when HTTP_2_Response => HTTP_2_Protocol_Step,
             when HTTP_3_Response => HTTP_3_Protocol_Step);
       Transferred.Retains_Owner := False;
@@ -3841,6 +3843,22 @@ package body Flyology.HTTP.Client is
          end case;
       end Receive_One;
 
+      procedure Start_Response_Body is
+         Acquisition : Connection_Drivers.Acquisition_Result;
+      begin
+         Connection_Drivers.Start
+           (State.IO, State.Connection.Channel'Unchecked_Access,
+            Acquisition, Remaining (State.Deadline), State.Token_Item);
+         if Acquisition = Connection_Drivers.Acquired then
+            State.Driver_State := Receiving_Content;
+            Reschedule;
+         else
+            State.Driver_State := Waiting_For_Response_Body_Lease;
+            Connection_Drivers.Arm_Acquisition (State.IO, Item);
+            Connection_Drivers.Arm_Deadline (State.IO, Item);
+         end if;
+      end Start_Response_Body;
+
       procedure Deliver
         (Data : Ada.Streams.Stream_Element_Array) is
          Count : constant Natural := Natural (Data'Length);
@@ -5668,6 +5686,17 @@ package body Flyology.HTTP.Client is
             Probe_Early_Response;
          when Receiving_Head =>
             Receive_Head;
+         when Starting_Response_Body =>
+            Start_Response_Body;
+         when Waiting_For_Response_Body_Lease =>
+            Connection_Drivers.Poll_Acquisition (State.IO, Acquisition);
+            if Acquisition = Connection_Drivers.Acquired then
+               State.Driver_State := Receiving_Content;
+               Reschedule;
+            else
+               Connection_Drivers.Arm_Acquisition (State.IO, Item);
+               Connection_Drivers.Arm_Deadline (State.IO, Item);
+            end if;
          when Receiving_Content =>
             Receive_Content_Step;
          when HTTP_2_Protocol_Step =>
