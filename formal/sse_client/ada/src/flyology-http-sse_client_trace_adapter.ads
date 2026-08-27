@@ -19,6 +19,8 @@ package Flyology.HTTP.SSE_Client_Trace_Adapter is
    procedure Set_Retry_Delay
      (Item : in out State; Value : Duration);
 
+   function Retry_Delay_From_Milliseconds (Value : String) return Duration;
+
    procedure Dispatch_Event (Item : in out State);
 
    procedure End_Of_Body (Item : in out State);

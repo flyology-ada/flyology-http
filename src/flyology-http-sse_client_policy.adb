@@ -69,6 +69,33 @@ package body Flyology.HTTP.SSE_Client_Policy is
       Item.Retry_Delay_Value := Value;
    end Set_Retry_Delay;
 
+   function Retry_Delay_From_Milliseconds
+     (Value : String) return Duration
+   is
+      First_Digit : Positive := Value'First;
+   begin
+      while First_Digit < Value'Last
+        and then Value (First_Digit) = '0'
+      loop
+         First_Digit := First_Digit + 1;
+      end loop;
+      declare
+         Canonical : constant String := Value (First_Digit .. Value'Last);
+      begin
+         return
+           (if Canonical'Length <= 3 then
+               Duration'Value
+                 ("0." &
+                  String'(1 .. 3 - Canonical'Length => '0') & Canonical)
+            else
+               Duration'Value
+                 (Canonical
+                    (Canonical'First .. Canonical'Last - 3) &
+                  "." & Canonical
+                    (Canonical'Last - 2 .. Canonical'Last)));
+      end;
+   end Retry_Delay_From_Milliseconds;
+
    procedure Dispatch_Event (Item : in out State) is
    begin
       Require_Phase (Item, Open);

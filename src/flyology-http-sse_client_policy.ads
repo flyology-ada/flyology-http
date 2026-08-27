@@ -48,6 +48,16 @@ private package Flyology.HTTP.SSE_Client_Policy is
    procedure Set_Retry_Delay
      (Item : in out State; Value : Duration);
 
+   --  Convert an ASCII decimal EventSource retry value from the protocol's
+   --  millisecond unit to the public API's Duration seconds without passing
+   --  through a floating-point representation.
+   --  @param Value Nonempty ASCII decimal milliseconds
+   --  @return Exactly converted reconnect delay
+   --  @exception Constraint_Error Value is outside Duration's range
+   function Retry_Delay_From_Milliseconds (Value : String) return Duration
+     with Pre => Value /= ""
+       and then (for all C of Value => C in '0' .. '9');
+
    --  Commit the stream event-id buffer at a dispatch boundary.
    --  @param Item Open state to change
    procedure Dispatch_Event (Item : in out State);

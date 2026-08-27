@@ -305,7 +305,6 @@ package body Flyology.HTTP.Client.SSE is
    end Is_Event_Stream;
 
    procedure Parse_Retry (Item : in out Event_Source; Value : String) is
-      Milliseconds : Long_Long_Float := 0.0;
    begin
       if Value = "" then
          return;
@@ -314,19 +313,24 @@ package body Flyology.HTTP.Client.SSE is
          if C not in '0' .. '9' then
             return;
          end if;
-         --  The EventSource field grammar defines retry as ASCII decimal
-         --  milliseconds; Duration and the public API use seconds.
-         Milliseconds := Milliseconds * 10.0 +
-           Long_Long_Float (Character'Pos (C) - Character'Pos ('0'));
-         if Milliseconds / 1_000.0 >
-           Long_Long_Float (Item.Maximum_Delay)
-         then
+      end loop;
+      declare
+         Reconnect_Value : Duration;
+      begin
+         begin
+            Reconnect_Value :=
+              Policy.Retry_Delay_From_Milliseconds (Value);
+         exception
+            when Constraint_Error =>
+               raise Reconnect_Delay_Too_Large with
+                 "SSE retry field exceeds caller maximum";
+         end;
+         if Reconnect_Value > Item.Maximum_Delay then
             raise Reconnect_Delay_Too_Large with
               "SSE retry field exceeds caller maximum";
          end if;
-      end loop;
-      Policy.Set_Retry_Delay
-        (Item.Lifecycle, Duration (Milliseconds / 1_000.0));
+         Policy.Set_Retry_Delay (Item.Lifecycle, Reconnect_Value);
+      end;
    end Parse_Retry;
 
    procedure Process_Field (Item : in out Event_Source; Raw : String) is

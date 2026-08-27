@@ -3,6 +3,9 @@ EXTENDS Naturals
 
 CONSTANTS Ids, Delays, EnableCorruption
 
+\* Delay values are integer milliseconds from the EventSource retry field.
+\* The finite Delays set is model-checking geometry, not a product bound.
+
 ASSUME /\ Ids # {}
        /\ "" \in Ids
        /\ Delays # {}

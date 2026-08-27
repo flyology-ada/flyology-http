@@ -38,7 +38,7 @@ implementation as follows:
 | `ConnectionRecoverableFailure` | a recoverable typed response-head or response-body exchange failure |
 | `ConnectionFatalFailure` | invalid status, media type, or caller limit |
 | `ReceiveID` | an accepted `id` field updates the current stream buffer |
-| `ReceiveRetry` | an accepted `retry` field updates the reconnection time |
+| `ReceiveRetry` | an accepted integer-millisecond `retry` field is converted through the production fixed-point boundary and updates the reconnection time |
 | `DispatchEvent` | a blank line commits the stream ID buffer, even without data |
 | `EndOfBody` | clean end of an accepted response body |
 | `ReconnectWaitElapsed` | terminal `Flyology.IO.Timers.Timer_Operation` completion, followed by the policy transition before the next response-head exchange |
@@ -79,8 +79,9 @@ Progress:
 - TLAPS proves initialization and action-by-action preservation of the
   unbounded safety kernel.  It does not prove byte parsing or transport code.
 - The Ada trace adapter replays stable TLC actions through the lifecycle policy
-  used by the client and compares every modeled post-state.  Replay establishes
-  conformance only for the retained traces.
+  and fixed-point millisecond conversion used by the client, then compares every
+  modeled post-state. Replay establishes conformance only for the retained
+  traces; ordinary tests remain responsible for the byte-level field grammar.
 - HTTP/1.1, HTTP/2, and HTTP/3 integration tests explicitly start and finish a
   composable read, then continue through the blocking wait-over-operation
   overload. Together they establish response framing, incremental parsing, an

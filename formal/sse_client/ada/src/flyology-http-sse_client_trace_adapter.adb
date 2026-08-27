@@ -29,6 +29,10 @@ package body Flyology.HTTP.SSE_Client_Trace_Adapter is
       Policy.Set_Retry_Delay (Item.Value, Value);
    end Set_Retry_Delay;
 
+   function Retry_Delay_From_Milliseconds
+     (Value : String) return Duration is
+     (Policy.Retry_Delay_From_Milliseconds (Value));
+
    procedure Dispatch_Event (Item : in out State) is
    begin
       Policy.Dispatch_Event (Item.Value);

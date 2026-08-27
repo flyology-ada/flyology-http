@@ -1,6 +1,8 @@
 --------------------------- MODULE SSEClientTrace ----------------------------
 EXTENDS Naturals
 
+\* The witness uses integer milliseconds, matching the production conversion.
+
 VARIABLES phase, lastEventId, eventIdBuffer, sentLastEventId, retryDelay,
           waitDelay, pc, lastAction
 

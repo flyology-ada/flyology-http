@@ -144,6 +144,7 @@ http_smoke
 http_operations_smoke
 http_client_composable_smoke
 http_client_composable_stale_reuse
+http1_sse_client_integration
 http_client_smoke
 http_client_addressing
 http_client_authentication

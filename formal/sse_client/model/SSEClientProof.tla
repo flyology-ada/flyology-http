@@ -3,6 +3,8 @@ EXTENDS Naturals
 
 CONSTANTS Ids, Delays
 
+\* Delay values are integer milliseconds. Delays remains unbounded proof input.
+
 ASSUME ValidConstants ==
   /\ Ids # {}
   /\ "" \in Ids

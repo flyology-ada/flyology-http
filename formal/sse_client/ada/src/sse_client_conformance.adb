@@ -77,13 +77,15 @@ procedure SSE_Client_Conformance is
       elsif Value = "two" then SSE_Client_Model.State_Sent_Last_Event_Id_Two
       else raise Program_Error with "unexpected sent event ID");
 
+   --  WHATWG retry values and model delays are integer milliseconds, while
+   --  the production policy stores them as Duration values in seconds.
    function Delay_Of
      (Value : Duration) return SSE_Client_Model.State_Retry_Delay_Type is
-     (SSE_Client_Model.State_Retry_Delay_Type (Integer (Value)));
+     (SSE_Client_Model.State_Retry_Delay_Type (Integer (Value * 1_000)));
 
    function Wait_Of
      (Value : Duration) return SSE_Client_Model.State_Wait_Delay_Type is
-     (SSE_Client_Model.State_Wait_Delay_Type (Integer (Value)));
+     (SSE_Client_Model.State_Wait_Delay_Type (Integer (Value * 1_000)));
 
    function Observe
      (Current     : Policy.State;
@@ -107,7 +109,9 @@ procedure SSE_Client_Conformance is
       Observed : out SSE_Client_Model.State_Type;
       Status   : out Flyology_TLA.Replay.Adapter_Outcome) is
    begin
-      Policy.Initialize (Self.Current, Initial_Delay => 1.0);
+      Policy.Initialize
+        (Self.Current,
+         Initial_Delay => Policy.Retry_Delay_From_Milliseconds ("1"));
       Self.Pc := 0;
       Self.Last_Action := SSE_Client_Model.State_Last_Action_Init;
       Observed := Observe (Self.Current, Self.Pc, Self.Last_Action);
@@ -142,7 +146,7 @@ procedure SSE_Client_Conformance is
         and then Input.TLA_Delay = 2
       then
          Policy.Set_Retry_Delay
-           (Self.Current, Duration (Input.TLA_Delay));
+           (Self.Current, Policy.Retry_Delay_From_Milliseconds ("2"));
          Self.Last_Action := SSE_Client_Model.State_Last_Action_Receive_Retry;
       elsif Action = "SSEClientTrace!ReceiveIDOne"
         and then Input.Id = SSE_Client_Model.Input_Id_One
