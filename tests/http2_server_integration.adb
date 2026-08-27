@@ -7,19 +7,28 @@ with Flyology.Bytes;
 with Flyology.Cancellation;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
+with Flyology.HTTP.Client.SSE;
 with Flyology.HTTP.Methods;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Connections;
 with Flyology.IO.Sockets;
+with Flyology.Operations;
 
 procedure HTTP2_Server_Integration is
    package Client renames Flyology.HTTP.Client;
+   package SSE renames Flyology.HTTP.Client.SSE;
    package App renames Flyology.HTTP.Server.Applications;
    package Connections renames Flyology.IO.Connections;
    package Sockets renames Flyology.IO.Sockets;
    use type Flyology.HTTP.Protocol;
+   use type SSE.Read_Result;
    use type Ada.Streams.Stream_Element_Offset;
+
+   UTF8_Replacement : constant String :=
+     (Character'Val (16#EF#),
+      Character'Val (16#BF#),
+      Character'Val (16#BD#));
 
    function Decimal (Value : Natural) return String is
      (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
@@ -140,7 +149,7 @@ procedure HTTP2_Server_Integration is
 
    package Routing is new Flyology.HTTP.Server.Routing (Context);
    Routes : Routing.Router
-     (Capacity => 10,
+     (Capacity => 11,
       Slashes  => Routing.Strict_Slashes);
 
    procedure Identify_Protocol
@@ -166,6 +175,39 @@ procedure HTTP2_Server_Integration is
       X.Add_Header ("X-Protocol", "h2");
       X.Text (200, X.Request_Target);
    end Basic;
+
+   procedure Event_Stream
+     (State : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (State);
+      LF      : constant Character := Character'Val (10);
+      Last_ID : constant String := X.Request_Header ("last-event-id");
+   begin
+      pragma Assert (X.Request_Header ("accept") = "text/event-stream");
+      pragma Assert (X.Request_Header_Count ("last-event-id") <= 1);
+      if X.Request_Header_Count ("last-event-id") = 0 then
+         X.Begin_Stream (200, "text/event-stream; charset=utf-8");
+         X.Write_Chunk
+           (Character'Val (16#EF#) & Character'Val (16#BB#) &
+            Character'Val (16#BF#) & "retr");
+         X.Write_Chunk ("y: 1" & LF & "id: seed" & LF & LF);
+         X.End_Stream;
+      elsif Last_ID = "seed" then
+         X.Begin_Stream (200, "text/event-stream");
+         X.Write_Chunk
+           ("id: one" & LF & "event: tick" & LF & "data: alpha" & LF &
+            "data: beta" & LF & LF);
+         X.End_Stream;
+      elsif Last_ID = "one" then
+         X.Begin_Stream (200, "text/event-stream");
+         X.Write_Chunk ("id: two" & LF & "data: gam");
+         X.Write_Chunk ("ma" & Character'Val (16#FF#) & LF & LF);
+         X.End_Stream;
+      elsif Last_ID = "two" then
+         X.No_Content;
+      else
+         raise Program_Error with "unexpected SSE Last-Event-ID";
+      end if;
+   end Event_Stream;
 
    procedure Echo (State : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (State);
@@ -260,6 +302,7 @@ begin
    Routes.Get ("/fixed-zero", Fixed_Zero'Access, Name => "fixed.zero");
    Routes.Get ("/fixed-head", Fixed_Head'Access, Name => "fixed.head");
    Routes.Get ("/http1", Basic'Access, Name => "http1");
+   Routes.Get ("/sse", Event_Stream'Access, Name => "sse");
    Routes.Post
      ("/echo", Echo'Access, Name => "echo",
       Policy =>
@@ -306,7 +349,7 @@ begin
             Mode => Flyology.HTTP.Server.HTTP_1_Only,
             Timeout => 10.0,
             Max_Connection_Age => 30.0,
-            Max_Requests => 1,
+            Max_Requests => 5,
             Alt_Svc => "h3="":443""; ma=86400");
          Connections.Close (Channel);
       exception
@@ -341,6 +384,49 @@ begin
                  Expected);
          end;
       end Check;
+
+      procedure Check_SSE is
+         Request : Client.Request;
+         Source  : aliased SSE.Event_Source
+           (HTTP'Access, Maximum_Event_Bytes => 1_024);
+         Event   : SSE.Event;
+         Result  : SSE.Read_Result;
+      begin
+         Client.Set_Target (Request, "/sse");
+         Client.Add_Header (Request, "Accept", "application/json");
+         Client.Add_Header (Request, "Last-Event-ID", "template-id");
+         SSE.Open
+           (Source, Request,
+            Initial_Reconnect_Delay => 0.0,
+            Maximum_Reconnect_Delay => 1.0,
+            Deadline => Client.Deadline_After (10.0));
+         declare
+            Set : aliased Flyology.Operations.Completion_Set (4);
+            Operation : SSE.Read_Operation :=
+              SSE.Read (Set'Access, Source'Access);
+         begin
+            Flyology.Operations.Wait_All (Set);
+            SSE.Finish (Operation, Result, Event);
+         end;
+         pragma Assert (Result = SSE.Event_Available);
+         pragma Assert
+           (SSE.Data (Event) = "alpha" & Character'Val (10) & "beta");
+         pragma Assert (SSE.Event_Type (Event) = "tick");
+         pragma Assert (SSE.Last_Event_ID (Event) = "one");
+         pragma Assert (SSE.Reconnect_Delay (Source) = 0.001);
+
+         SSE.Read (Source, Result, Event, Token => null);
+         pragma Assert (Result = SSE.Event_Available);
+         pragma Assert
+           (SSE.Data (Event) = "gamma" & UTF8_Replacement);
+         pragma Assert (SSE.Event_Type (Event) = "message");
+         pragma Assert (SSE.Last_Event_ID (Event) = "two");
+
+         SSE.Read (Source, Result, Event, Token => null);
+         pragma Assert (Result = SSE.Stream_Stopped);
+         SSE.Read (Source, Result, Event, Token => null);
+         pragma Assert (Result = SSE.Stream_Stopped);
+      end Check_SSE;
    begin
       Client.Configure
         (HTTP,
@@ -609,6 +695,7 @@ begin
          end;
       end;
 
+      Check_SSE;
       Client.Shutdown (HTTP, Timeout => 5.0);
 
       declare
@@ -636,6 +723,40 @@ begin
             pragma Assert
               (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
                  "/http1");
+         end;
+         declare
+            Source : aliased SSE.Event_Source
+              (HTTP_1'Access, Maximum_Event_Bytes => 1_024);
+            Event  : SSE.Event;
+            Result : SSE.Read_Result;
+         begin
+            Client.Set_Target (Request, "/sse");
+            Client.Add_Header (Request, "Accept", "application/json");
+            Client.Add_Header (Request, "Last-Event-ID", "template-id");
+            SSE.Open
+              (Source, Request,
+               Initial_Reconnect_Delay => 0.0,
+               Maximum_Reconnect_Delay => 1.0,
+               Deadline => Client.Deadline_After (10.0));
+            declare
+               Set : aliased Flyology.Operations.Completion_Set (4);
+               Operation : SSE.Read_Operation :=
+                 SSE.Read (Set'Access, Source'Access);
+            begin
+               Flyology.Operations.Wait_All (Set);
+               SSE.Finish (Operation, Result, Event);
+            end;
+            pragma Assert (Result = SSE.Event_Available);
+            pragma Assert
+              (SSE.Data (Event) =
+                 "alpha" & Character'Val (10) & "beta");
+            pragma Assert (SSE.Last_Event_ID (Event) = "one");
+            SSE.Read (Source, Result, Event);
+            pragma Assert
+              (SSE.Data (Event) = "gamma" & UTF8_Replacement);
+            pragma Assert (SSE.Last_Event_ID (Event) = "two");
+            SSE.Read (Source, Result, Event, Token => null);
+            pragma Assert (Result = SSE.Stream_Stopped);
          end;
          Client.Shutdown (HTTP_1, Timeout => 5.0);
       end;

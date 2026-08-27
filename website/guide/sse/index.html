@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Consume server-sent events over Flyology HTTP/1.1, HTTP/2, or HTTP/3 with bounded parsing, reconnects, deadlines, cancellation, and composable reads.">
+    <meta name="theme-color" content="#17213d">
+    <title>Server-sent events guide · Flyology HTTP</title>
+    <link rel="canonical" href="https://http.flyology.org/guide/sse/">
+    <link rel="icon" href="../../assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles/site.css">
+    <script src="../../assets/scripts/ada-highlight.js"></script>
+    <script src="../../assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="../../" aria-label="Flyology HTTP home"><img src="../../assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology HTTP</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="../../">Overview</a></li>
+          <li><a href="../" aria-current="page">Guide</a></li>
+          <li><a href="../../architecture/">Architecture</a></li>
+          <li><a href="../../journal/">Journal</a></li>
+          <li><a href="../../api/">HTTP API</a></li>
+          <li><a href="../../iri-api/">IRI API</a></li>
+          <li>
+            <details class="nav-dropdown" data-nav-dropdown>
+              <summary>Ecosystem <svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m2.5 4.5 3.5 3 3.5-3"/></svg></summary>
+              <ul class="nav-dropdown-menu">
+                <li><a href="https://postgres.flyology.org/">Postgres</a></li>
+              </ul>
+            </details>
+          </li>
+          <li><a href="https://github.com/flyology-ada/flyology-http">GitHub</a></li><li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
+        </ul>
+        <div class="nav-tools">
+          <button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button>
+          <button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main" class="page-shell">
+      <header class="doc-hero">
+        <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../../">Flyology HTTP</a></li><li><a href="../">Guide</a></li><li aria-current="page">Server-sent events</li></ol><h1>Keep an event stream connected.</h1></div>
+        <p class="doc-hero-copy">Consume one EventSource over the client’s configured HTTP/1.1, HTTP/2, or HTTP/3 path. Bound retained parser state, reconnect with the latest event ID, or compose each read with other Flyology operations.</p>
+      </header>
+
+      <div class="docs-layout">
+        <nav class="toc" aria-label="On this page">
+          <p class="toc-title">On this page</p>
+          <ol>
+            <li><a href="#protocols">Use one API on H1, H2, and H3</a></li>
+            <li><a href="#open">Open an event source</a></li>
+            <li><a href="#blocking">Read events synchronously</a></li>
+            <li><a href="#reconnect">Understand reconnect state</a></li>
+            <li><a href="#compose">Compose a read</a></li>
+            <li><a href="#ownership">Keep borrowed state alive</a></li>
+            <li><a href="#failures">Handle stops and failures</a></li>
+            <li><a href="#evidence">Know the evidence boundary</a></li>
+          </ol>
+        </nav>
+
+        <article class="prose">
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Flyology HTTP is experimental. This guide describes the implemented client contract and maintained tests. It does not claim production qualification.</p></aside>
+
+          <section id="protocols"><span class="step-label">SSE 01</span><h2>Use one event-stream API on all three HTTP versions.</h2>
+            <p><a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html"><code>Flyology.HTTP.Client.SSE</code></a> consumes the <a href="https://html.spec.whatwg.org/multipage/server-sent-events.html"><code>text/event-stream</code> format</a>. Server-sent events define an event-stream representation and reconnect processing model. They are not a separate HTTP wire protocol.</p>
+            <p>The existing client selects HTTP/1.1, HTTP/2, or HTTP/3. The SSE package uses the selected response-body stream without exposing protocol framing. Parsing, event dispatch, reconnect delay, last-event ID, deadline, and cancellation behavior remain the same across the three paths.</p>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt>HTTP/1.1</dt><dd>The event stream occupies one response on one HTTP/1.1 exchange.</dd></div>
+                <div class="decision-row"><dt>HTTP/2</dt><dd>The event stream arrives as response DATA on an HTTP/2 stream.</dd></div>
+                <div class="decision-row"><dt>HTTP/3</dt><dd>The event stream arrives as response DATA on an HTTP/3 request stream.</dd></div>
+              </dl>
+            </div>
+            <p>Choose and configure the protocol through the ordinary <a href="../client/">client API</a>. The SSE call sites do not change when the configured protocol changes. To produce an event stream, use the response primitives or bounded mailbox lifecycle in the <a href="../server/#sse">server guide</a>.</p>
+          </section>
+
+          <section id="open"><span class="step-label">SSE 02</span><h2>Open bounded reconnect state without network I/O.</h2>
+            <p>An <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#290ae703502b38d375cf1504e5a0e2771da32113b4fa67a1b221d2a33e339943"><code>Event_Source</code></a> borrows an origin-bound client and retains parser and reconnect state. Its discriminant bounds the current input line, event fields, and event ID retained by the parser.</p>
+            <p>Call <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#ff5649851af70291421e9de37d2574ec5d50c5a29dd8645ed659900268f8edfc"><code>Open</code></a> with a <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#1f13964f8b6e678773246dee11e56649ccf537ba0587fbaf9a277854d61e4cab"><code>Request</code></a> template, caller-selected delay limits, and one absolute deadline. <code>Open</code> resets local state but performs no network I/O. The first read starts the request.</p>
+            <figure class="code-panel"><figcaption>event source and reconnect policy</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">with Flyology.HTTP.Client;
+with Flyology.HTTP.Client.SSE;
+
+package Client renames Flyology.HTTP.Client;
+package SSE renames Flyology.HTTP.Client.SSE;
+
+HTTP    : aliased Client.Client (Capacity =&gt; 2);
+Request : Client.Request;
+Source  : aliased SSE.Event_Source
+  (HTTP'Access, Maximum_Event_Bytes =&gt; 64 * 1_024);
+
+Client.Set_Target (Request, "/events");
+SSE.Open
+  (Source, Request,
+   Initial_Reconnect_Delay =&gt; 1.0,
+   Maximum_Reconnect_Delay =&gt; 60.0,
+   Deadline                =&gt; Client.Deadline_After (300.0));</code></pre></figure>
+            <p>The source copies the target, headers, and redirect policy. It makes that copy a bodyless <code>GET</code> and controls the <code>Accept: text/event-stream</code> and <code>Last-Event-ID</code> fields. Configure same-origin redirects on the request template when the stream endpoint can redirect.</p>
+            <p>The <a href="../../api/b92f96375f27b7e2189e49f3d82bc9f794f925640e5999d0337d29ec6390f5e9.html#106cdf1aea94671a3f3aaadf916eb13597293cdb467775c625fbf7c557c0536a"><code>Deadline_After</code></a> call above produces one absolute deadline. That deadline covers the initial request, every response-body read, every reconnect wait, and every later request. A successful event does not restart it.</p>
+          </section>
+
+          <section id="blocking"><span class="step-label">SSE 03</span><h2>Read one dispatched event at a time.</h2>
+            <p>The blocking <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#4df0336cfcbc3d5c739016ce7aa77064ca493e59dde9eb2ab547115335c2d0e9"><code>Read</code></a> procedure returns a <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#e5795521e8ae569c55253122dd48e17a2dbd8fdafb7f015c9306c64f003097f8"><code>Read_Result</code></a> and, when available, one <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#5192c1a96b13cf3221e8f1fead3dfaf4ca6596c3e8c706e521c9b4cb64a69b8c"><code>Event</code></a>. It waits through connection establishment, partial body input, and any reconnects needed before the next event.</p>
+            <figure class="code-panel"><figcaption>blocking event loop</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Event  : SSE.Event;
+Result : SSE.Read_Result;
+
+loop
+   SSE.Read (Source, Result, Event);
+   exit when Result = SSE.Stream_Stopped;
+
+   Consume
+     (SSE.Event_Type (Event),
+      SSE.Data (Event),
+      SSE.Last_Event_ID (Event));
+end loop;</code></pre></figure>
+            <p><a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#e4704668f18190ae73f37cd28654f3cf0bd362570ad333c98973f232b828a9ff"><code>Data</code></a> joins multiple <code>data</code> fields with LF. <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#affe1824849ee732aea4a37465f14e2a1fc2548b85be489859978e389bc39f97"><code>Event_Type</code></a> returns <code>message</code> when the stream supplies no <code>event</code> field. The event overload of <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#eeb72a7db7eee9034604cfd05acde1e14adc0c44e7e67c73342c616628538243"><code>Last_Event_ID</code></a> returns the ID current when that event was dispatched.</p>
+            <p>Input is decoded as UTF-8. Malformed sequences become U+FFFD. Lines without a recognized field and comment lines do not produce an event.</p>
+          </section>
+
+          <section id="reconnect"><span class="step-label">SSE 04</span><h2>Let the source carry reconnect state.</h2>
+            <p>Clean end of body and recoverable transport failure wait for the current reconnect delay, then start another request. An accepted decimal <code>retry</code> field replaces that delay in milliseconds.</p>
+            <p>An accepted <code>id</code> field becomes the next <code>Last-Event-ID</code> value when the dispatch boundary commits it. An empty <code>id</code> field clears the value.</p>
+            <p>The source overload of <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#1158de77a8f049d11756154c0034b3ada9aa24d006f0b60ffa53e994b0c37b6f"><code>Last_Event_ID</code></a> reports the value for the next reconnect. <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#52e9dd759849a2c3fbc93b0b66cb0537071f949829cfe3f4a61c4febd56b6bb5"><code>Reconnect_Delay</code></a> reports the current delay.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>Reconnect is part of the EventSource processing model, not an optional transport retry hidden below the API. Set an absolute deadline or supply cancellation when the application must bound the complete lifecycle.</p></aside>
+          </section>
+
+          <section id="compose"><span class="step-label">SSE 05</span><h2>Compose the same read with surrounding work.</h2>
+            <p>The composable <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#b0e434a5a5724d86e0b8d903067ef45d317050ec5023ca5175597173c6663dc3"><code>Read</code></a> function constructs a <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#95836fa8fa6787f971650709425eaa6fd11db7698f84c86f6ab3539ae85cc3b8"><code>Read_Operation</code></a> in the caller’s completion set. Wait for that set alone, or combine the operation with timers, gates, cancellation, and other work described in the <a href="../operations/">operations guide</a>.</p>
+            <figure class="code-panel"><figcaption>owner-driven event read</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Set : aliased Flyology.Operations.Completion_Set (4);
+
+declare
+   Operation : SSE.Read_Operation :=
+     SSE.Read (Set'Access, Source'Access, Token =&gt; null);
+begin
+   Flyology.Operations.Wait_All (Set);
+   SSE.Finish (Operation, Result, Event);
+end;</code></pre></figure>
+            <p>Call <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#a231aef0a9bf503dc009c39c764ff008cfbe3d88318a24448ee23145cd974858"><code>Finish</code></a> after terminal completion to consume the typed result or raise the retained failure. The example uses the four-slot completion set maintained by the repository examples and protocol integration tests. Account separately for any surrounding operations placed in the same set.</p>
+            <p>For repeated reads, establish an operation once and start it again with the reusable <a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#b64f35b032db9ba3730487042d8d69eee490db9091576fa3d0d2f083108b8768"><code>Read</code></a> procedure after the preceding result has been finished.</p>
+            <figure class="code-panel"><figcaption>restart an established operation</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">SSE.Read
+  (Source'Access,
+   Token     =&gt; Token'Access,
+   Operation =&gt; Operation);
+
+Flyology.Operations.Wait_All (Set);
+SSE.Finish (Operation, Result, Event);</code></pre></figure>
+            <p>The blocking procedure waits over this composable implementation. It does not maintain a second parser or reconnect state machine.</p>
+          </section>
+
+          <section id="ownership"><span class="step-label">SSE 06</span><h2>Keep borrowed state alive through terminal drain.</h2>
+            <ul>
+              <li>The client must outlive its event source.</li>
+              <li>The event source must outlive an active composable read and remain alive through <code>Finish</code> or cancellation drain.</li>
+              <li>A supplied cancellation token must also outlive that drain.</li>
+              <li>The completion set must outlive the operation created in it.</li>
+              <li>Only one read may be active on an event source. Do not call <code>Open</code> or start another read until the active operation is finished.</li>
+            </ul>
+            <p>A concurrent read, or an attempt to reopen an active source, raises <code>Program_Error</code>. Use distinct event sources when the application needs concurrent streams.</p>
+          </section>
+
+          <section id="failures"><span class="step-label">SSE 07</span><h2>Distinguish a permanent stop from a failed stream.</h2>
+            <div class="decision-list">
+              <dl>
+                <div class="decision-row"><dt><a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#e5795521e8ae569c55253122dd48e17a2dbd8fdafb7f015c9306c64f003097f8"><code>Stream_Stopped</code></a></dt><dd>HTTP 204 permanently stops this source. Later reads return the same result without reconnecting.</dd></div>
+                <div class="decision-row"><dt><a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#3c46fb77f39579baec10d0021ccf36a989ecf2aa3836961411cccbcf3a065d77"><code>Invalid_Event_Stream</code></a></dt><dd>A response has a status other than 200 or 204, or a successful response does not have a valid <code>text/event-stream</code> media type.</dd></div>
+                <div class="decision-row"><dt><a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#6b4c4856a139463d9a3128e426881fddd059977239cf7b5b399cdf114686b8cd"><code>Event_Too_Large</code></a></dt><dd>The retained current line, event fields, and ID would exceed the source’s caller-selected bound.</dd></div>
+                <div class="decision-row"><dt><a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html#08c235d05df01db7d8d2cc7e45db609033a24e9e158bd518a9873d99f2c12a38"><code>Reconnect_Delay_Too_Large</code></a></dt><dd>A valid server <code>retry</code> value exceeds the maximum delay selected by the caller.</dd></div>
+                <div class="decision-row"><dt>Cancellation or deadline</dt><dd>The read raises the ordinary Flyology cancellation or deadline exception after its child operations drain.</dd></div>
+              </dl>
+            </div>
+            <p>These fatal outcomes do not schedule another reconnect. A transport failure is reconnectable only when the client classifies the failed request or body read as recoverable.</p>
+          </section>
+
+          <section id="evidence"><span class="step-label">SSE 08</span><h2>Check protocol tests and reconnect assurance separately.</h2>
+            <p>The behavioral suite exercises EventSource parsing, controlled request headers, fragmented input, reconnect delay, last-event ID updates, UTF-8 replacement, HTTP 204, the blocking overload, and the composable overload. Integration cases run the client through HTTP/1.1, HTTP/2, and HTTP/3 server paths.</p>
+            <p>The maintained <a href="https://github.com/flyology-ada/flyology-http/blob/main/formal/sse_client/ASSURANCE.md">SSE client assurance record</a> maps the production reconnect policy to TLA+. TLC explores bounded lifecycle states. TLAPS proves the stated safety and termination lemmas. Generated traces replay through the Ada policy adapter.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The formal model covers reconnect policy: delay and event-ID alignment, stop conditions, and terminal behavior. It does not prove the byte parser, HTTP implementation, transport, TLS, QUIC, memory safety, or full implementation refinement.</p><p>Protocol integration tests provide separate evidence for those exercised paths.</p></aside>
+            <p>Run <code>./scripts/check-sse-client-formal.sh</code> for the formal gate and <code>./scripts/test.sh</code> for the repository behavioral suite.</p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology HTTP is experimental. The SSE guide describes maintained behavior, not production qualification.</span><div class="footer-links"><a href="../client/">Client</a><a href="../operations/">Operations</a><a href="../../api/13534c26d9525d7c06fad6fcb201146e1041e43b7f05dcd238bbad3ffe2b50ac.html">SSE API</a><a href="../../architecture/">Architecture</a></div></div></footer>
+  </body>
+</html>
