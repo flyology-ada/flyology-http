@@ -4,9 +4,10 @@ Flyology HTTP is an experimental HTTP/1.1 client and server library, with
 opt-in HTTP/2 and HTTP/3 client and application-server engines, for
 [Flyology](https://flyology.org/) tasks. Its
 synchronous Ada APIs work from native and lightweight tasks. The library
-includes bounded client pools, an origin-bound WebSocket client, streaming
-request and response bodies, routing, middleware, server-sent events,
-WebSocket servers, and plain or TLS transports built on Flyology I/O.
+includes bounded client pools, an origin-bound EventSource and WebSocket
+client, streaming request and response bodies, routing, middleware,
+server-sent events, WebSocket servers, and plain or TLS transports built on
+Flyology I/O.
 
 This repository also contains `flyology_quic`, an independently built
 Ada-native QUIC transport crate. `flyology_http` depends on that crate and
@@ -129,6 +130,66 @@ service owns the socket entry and its permissions; the client never removes or
 modifies it. For a manual request, run
 `./showcases/run_http_client_cli.sh --unix-socket /var/run/docker.sock
 http://localhost/version`. The automated tests do not require Docker.
+
+## EventSource clients
+
+`Flyology.HTTP.Client.SSE` incrementally consumes `text/event-stream` responses
+through an existing origin client. The client's configured protocol mode
+selects HTTP/1.1, HTTP/2, or HTTP/3; the SSE parser and reconnect lifecycle are
+shared by all three. The caller supplies the parser bound, initial and maximum
+reconnect delays, one absolute deadline, and an optional cancellation token:
+
+```ada
+package Client renames Flyology.HTTP.Client;
+package SSE renames Flyology.HTTP.Client.SSE;
+
+HTTP    : aliased Client.Client (Capacity => 2);
+Request : Client.Request;
+Source  : aliased SSE.Event_Source
+  (HTTP'Access, Maximum_Event_Bytes => 64 * 1_024);
+Event   : SSE.Event;
+Result  : SSE.Read_Result;
+
+Client.Set_Target (Request, "/events");
+SSE.Open
+  (Source, Request,
+   Initial_Reconnect_Delay => 1.0,
+   Maximum_Reconnect_Delay => 60.0,
+   Deadline                => Client.Deadline_After (300.0));
+
+loop
+   SSE.Read (Source, Result, Event);
+   exit when Result = SSE.Stream_Stopped;
+   Consume
+     (SSE.Event_Type (Event), SSE.Data (Event),
+      SSE.Last_Event_ID (Event));
+end loop;
+```
+
+The same read composes with other owner-driven operations. Construct it in the
+caller's completion set, wait or drive that set with the surrounding work, and
+consume its typed result:
+
+```ada
+Set       : aliased Flyology.Operations.Completion_Set (4);
+Operation : SSE.Read_Operation :=
+  SSE.Read (Set'Access, Source'Access, Token => null);
+
+Flyology.Operations.Wait_All (Set);
+SSE.Finish (Operation, Result, Event);
+```
+
+An established `Read_Operation` can instead be started again with the reusable
+`Read (Source'Access, Token, Operation)` overload. The blocking `Read` overload
+uses this same operation internally and waits for its completion; it does not
+maintain a separate SSE state machine.
+
+Clean EOF and recoverable transport failure reconnect after the current delay.
+An accepted `retry` field replaces that delay in milliseconds, `id` state is
+sent as `Last-Event-ID`, and HTTP 204 permanently stops the source. Malformed
+UTF-8 is decoded with U+FFFD as required by the EventSource decoding model.
+The request template retains its redirect policy; the SSE layer makes its copy
+a bodyless GET and controls `Accept` and `Last-Event-ID`.
 
 ## Unified HTTP/1.1, HTTP/2, and HTTP/3 server
 

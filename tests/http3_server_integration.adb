@@ -7,6 +7,7 @@ with Flyology.Bytes;
 with Flyology.Cancellation;
 with Flyology.HTTP;
 with Flyology.HTTP.Client;
+with Flyology.HTTP.Client.SSE;
 with Flyology.HTTP.HTTP_3;
 with Flyology.HTTP.Server;
 with Flyology.HTTP.Server.Applications;
@@ -15,6 +16,7 @@ with Flyology.IO;
 with Flyology.IO.Sockets;
 with Flyology.IO.TLS.ALPN;
 with Flyology.IO.TLS.OpenSSL;
+with Flyology.Operations;
 with Flyology.QUIC.Connections;
 with Flyology.QUIC.Connections.IO;
 with Flyology.QUIC.Test_Connections;
@@ -22,6 +24,7 @@ with Flyology.QUIC.Test_Connections;
 procedure HTTP3_Server_Integration is
    package App renames Flyology.HTTP.Server.Applications;
    package Client renames Flyology.HTTP.Client;
+   package SSE renames Flyology.HTTP.Client.SSE;
    package H3 renames Flyology.HTTP.HTTP_3;
    package QUIC renames Flyology.QUIC.Connections;
    package QUIC_IO renames Flyology.QUIC.Connections.IO;
@@ -41,6 +44,12 @@ procedure HTTP3_Server_Integration is
    use type Ada.Streams.Stream_Element_Offset;
    use type Flyology.HTTP.Origin_Scheme;
    use type Flyology.HTTP.Protocol;
+   use type SSE.Read_Result;
+
+   UTF8_Replacement : constant String :=
+     (Character'Val (16#EF#),
+      Character'Val (16#BF#),
+      Character'Val (16#BD#));
 
    Certificate : constant String := "tests/fixtures/tls/server-cert.pem";
    Private_Key : constant String := "tests/fixtures/tls/server-key.pem";
@@ -171,7 +180,7 @@ procedure HTTP3_Server_Integration is
    package Routing is new Flyology.HTTP.Server.Routing (Context);
 
    Routes : aliased Routing.Router
-     (Capacity => 9, Slashes => Routing.Strict_Slashes);
+     (Capacity => 10, Slashes => Routing.Strict_Slashes);
    State : aliased Context;
    Server_Backend : aliased OpenSSL.OpenSSL_Provider;
    Probe : Sockets.Socket_Type;
@@ -260,6 +269,45 @@ procedure HTTP3_Server_Integration is
       end if;
    end Discover;
 
+   procedure Event_Stream
+     (Application : in out Context; X : in out App.Exchange) is
+      pragma Unreferenced (Application);
+      LF      : constant Character := Character'Val (10);
+      Last_ID : constant String := X.Request_Header ("last-event-id");
+   begin
+      if X.Request_Protocol /= Flyology.HTTP.HTTP_3_Protocol then
+         X.Text (590, "SSE request did not use HTTP/3");
+         return;
+      end if;
+      if X.Request_Header ("accept") /= "text/event-stream" then
+         X.Text (591, "SSE request omitted Accept");
+         return;
+      end if;
+      if X.Request_Header_Count ("last-event-id") > 1 then
+         X.Text (592, "SSE request repeated Last-Event-ID");
+      elsif X.Request_Header_Count ("last-event-id") = 0 then
+         X.Begin_Stream (200, "text/event-stream; charset=utf-8");
+         X.Write_Chunk ("retr");
+         X.Write_Chunk ("y: 1" & LF & "id: seed" & LF & LF);
+         X.End_Stream;
+      elsif Last_ID = "seed" then
+         X.Begin_Stream (200, "text/event-stream");
+         X.Write_Chunk
+           ("id: one" & LF & "event: tick" & LF & "data: alpha" & LF &
+            "data: beta" & LF & LF);
+         X.End_Stream;
+      elsif Last_ID = "one" then
+         X.Begin_Stream (200, "text/event-stream");
+         X.Write_Chunk ("id: two" & LF & "data: gam");
+         X.Write_Chunk ("ma" & Character'Val (16#FF#) & LF & LF);
+         X.End_Stream;
+      elsif Last_ID = "two" then
+         X.No_Content;
+      else
+         X.Text (593, "SSE reconnect sent an unexpected Last-Event-ID");
+      end if;
+   end Event_Stream;
+
    procedure Early
      (Application : in out Context; X : in out App.Exchange) is
       pragma Unreferenced (Application);
@@ -331,6 +379,7 @@ begin
            Body_Handling => App.Buffer_Body,
            Max_Body      => 6 * 1_024 * 1_024 * 1_024));
    Routes.Get ("/discover", Discover'Access, Name => "discover");
+   Routes.Get ("/sse", Event_Stream'Access, Name => "sse");
    Routes.Get ("/fixed", Fixed'Access, Name => "fixed");
    Routes.Get ("/fixed-zero", Fixed_Zero'Access, Name => "fixed.zero");
    Routes.Get ("/fixed-head", Fixed_Head'Access, Name => "fixed.head");
@@ -952,6 +1001,47 @@ begin
             pragma Assert
               (Flyology.Bytes.To_Byte_String (Client.Read_All (Reply)) =
                  "hello Ada");
+         end;
+         declare
+            SSE_Request : Client.Request;
+            Source      : aliased SSE.Event_Source
+              (HTTP'Access, Maximum_Event_Bytes => 1_024);
+            Event       : SSE.Event;
+            Result      : SSE.Read_Result;
+         begin
+            Client.Set_Target (SSE_Request, "/sse");
+            Client.Add_Header
+              (SSE_Request, "Accept", "application/json");
+            Client.Add_Header
+              (SSE_Request, "Last-Event-ID", "template-id");
+            SSE.Open
+              (Source, SSE_Request,
+               Initial_Reconnect_Delay => 0.0,
+               Maximum_Reconnect_Delay => 1.0,
+               Deadline => Client.Deadline_After (10.0));
+            declare
+               Set : aliased Flyology.Operations.Completion_Set (4);
+               Operation : SSE.Read_Operation :=
+                 SSE.Read (Set'Access, Source'Access);
+            begin
+               Flyology.Operations.Wait_All (Set);
+               SSE.Finish (Operation, Result, Event);
+            end;
+            pragma Assert (Result = SSE.Event_Available);
+            pragma Assert
+              (SSE.Data (Event) =
+                 "alpha" & Character'Val (10) & "beta");
+            pragma Assert (SSE.Event_Type (Event) = "tick");
+            pragma Assert (SSE.Last_Event_ID (Event) = "one");
+            pragma Assert (SSE.Reconnect_Delay (Source) = 0.001);
+            SSE.Read (Source, Result, Event, Token => null);
+            pragma Assert (Result = SSE.Event_Available);
+            pragma Assert
+              (SSE.Data (Event) = "gamma" & UTF8_Replacement);
+            pragma Assert (SSE.Event_Type (Event) = "message");
+            pragma Assert (SSE.Last_Event_ID (Event) = "two");
+            SSE.Read (Source, Result, Event, Token => null);
+            pragma Assert (Result = SSE.Stream_Stopped);
          end;
          --  Cross the concurrent and former lifetime stream tables, then the
          --  initial 512 KiB connection receive window, on one pooled

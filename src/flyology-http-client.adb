@@ -321,10 +321,8 @@ package body Flyology.HTTP.Client is
       Timeout        : Duration := 0.0;
    end record;
 
-   type Client_Borrow is access all Client;
    type Request_Borrow is access constant Request;
    type Source_Borrow is access all Operation_Request_Body_Source'Class;
-   type Sink_Borrow is access all Response_Body_Sink'Class;
    type Token_Borrow is access all Flyology.Cancellation.Token;
    type Completion_Set_Borrow is access all
      Flyology.Operations.Completion_Set'Class;
@@ -379,6 +377,7 @@ package body Flyology.HTTP.Client is
       HTTP_3_Wait_Response_Head,
       HTTP_3_Read_Response_Body,
       HTTP_3_Return_Response_Credit,
+      HTTP_3_Pause_Response_Body,
       HTTP_3_Finish_Response_Body,
       HTTP_3_Cancel_Request,
       HTTP_3_Cancel_Complete,
@@ -407,6 +406,8 @@ package body Flyology.HTTP.Client is
       Sending_Source_End,
       Probing_Early_Response,
       Receiving_Head,
+      Starting_Response_Body,
+      Waiting_For_Response_Body_Lease,
       Receiving_Content,
       HTTP_2_Protocol_Step,
       HTTP_2_Waiting_For_Pump,
@@ -853,6 +854,8 @@ package body Flyology.HTTP.Client is
           and then not State.Pool_Waiter
           and then State.Connection = null
           and then State.Metadata.Connection = null;
+      Owner : Client_State_Access := State.Metadata.Owner;
+      Final_Reference : Boolean := False;
    begin
       if State.Source_Attached and then State.Source_Item /= null then
          begin
@@ -874,6 +877,10 @@ package body Flyology.HTTP.Client is
       State.Token_Item := null;
       State.Request_Head := Null_Unbounded_String;
       H3.Clear (State.HTTP_3_Headers);
+      if State.Metadata.Retains_Owner and then Owner /= null then
+         State.Metadata.Retains_Owner := False;
+         Owner.Lifetime.Release_Response (Final_Reference);
+      end if;
       if Transport_Resolved then
          State.Client_Item := null;
          Flyology.HTTP.Headers.Clear (State.Metadata.Fields);
@@ -886,6 +893,9 @@ package body Flyology.HTTP.Client is
       State.HTTP_3_Output := (others => 0);
       Free_Stream_Element_Array (State.HTTP_3_Output_Item);
       Free_Stream_Element_Array (State.HTTP_3_Input_Item);
+      if Final_Reference then
+         Release_State (Owner);
+      end if;
    end Release_Exchange_Borrows;
 
    procedure Complete_Exchange
@@ -1124,6 +1134,12 @@ package body Flyology.HTTP.Client is
       if Connection_Drivers.Is_Engaged (State.IO) then
          Connection_Drivers.Release (State.IO);
       end if;
+      if State.Metadata.Engine = HTTP_3_Response then
+         State.Metadata.HTTP_3_Decoded_Length :=
+           QUIC.Stream_Offset (State.HTTP_3_Decoded_Length);
+         State.Metadata.HTTP_3_Last_Stream_Credit :=
+           State.HTTP_3_Last_Stream_Credit;
+      end if;
       if State.Metadata.Engine = HTTP_2_Response
         and then State.Metadata.Connection /= null
         and then State.Metadata.Connection.HTTP_2 /= null
@@ -1150,8 +1166,10 @@ package body Flyology.HTTP.Client is
       Candidate := new Response_Data'(State.Metadata);
       Candidate.Started := Ada.Real_Time.Clock;
       Candidate.Timeout := Remaining (State.Deadline);
-      Candidate.Owner.Lifetime.Retain_Response;
-      Candidate.Retains_Owner := True;
+      if not Candidate.Retains_Owner then
+         Candidate.Owner.Lifetime.Retain_Response;
+         Candidate.Retains_Owner := True;
+      end if;
       State.Reply_Data := Candidate;
       Candidate := null;
 
@@ -1161,6 +1179,7 @@ package body Flyology.HTTP.Client is
       State.Connection := null;
       State.Slot_Index := 0;
       State.Creating := False;
+      State.Metadata.Retains_Owner := False;
       State.Metadata := (others => <>);
       Complete_Exchange
         (Item, Response_Complete, Flyology.Operations.Succeeded);
@@ -1577,6 +1596,108 @@ package body Flyology.HTTP.Client is
             raise;
       end;
    end Exchange_To_Sink;
+
+   procedure Resolve_Redirect
+     (Base_Origin : Origin;
+      Base_Target : String;
+      Location    : String;
+      Target      : out Unbounded_String;
+      Is_Same     : out Boolean);
+
+   procedure Exchange_To_Response
+     (Item      : not null Client_Borrow;
+      Value     : not null access constant Request;
+      Deadline  : Monotonic_Deadline;
+      Token     : access Flyology.Cancellation.Token;
+      Operation : in out Exchange_Operation) is
+   begin
+      Start_Exchange
+        (Operation, Item, Value, Source => null, Sink => null,
+         Target => Response_Head_Target, Deadline => Deadline,
+         Token => Token);
+   end Exchange_To_Response;
+
+   procedure Resume_Response_To_Sink
+     (Item      : not null Client_Borrow;
+      Value     : not null access constant Request;
+      Reply     : not null Response_Borrow;
+      Sink      : not null Sink_Borrow;
+      Deadline  : Monotonic_Deadline;
+      Token     : access Flyology.Cancellation.Token;
+      Operation : in out Exchange_Operation)
+   is
+      Transferred : Response_Data_Access;
+   begin
+      if Reply.Data = null then
+         raise Program_Error with "HTTP response is not initialized";
+      elsif Reply.Data.Complete or else Reply.Data.Connection = null then
+         raise Program_Error with "HTTP response body is already complete";
+      end if;
+
+      --  Start reserves and initializes the ordinary exchange operation but
+      --  defers its first drive.  Replacing the fresh metadata with the live
+      --  response then enters the same H1/H2/H3 body states used by a
+      --  full-exchange sink operation.
+      Start_Exchange
+        (Operation, Item, Value, Source => null, Sink => Sink,
+         Target => Sink_Target, Deadline => Deadline, Token => Token,
+         Defer_Drive => True);
+      if Operation.State.Start_Rejected then
+         Flyology.Operations.Drive
+           (Flyology.Operations.Operation'Class (Operation),
+            Flyology.Operations.Start_Operation);
+         return;
+      end if;
+
+      Transferred := Reply.Data;
+      Reply.Data := null;
+      Operation.State.Metadata := Transferred.all;
+      Operation.State.Connection := Operation.State.Metadata.Connection;
+      Operation.State.Slot_Index := Operation.State.Metadata.Slot_Index;
+      Operation.State.Result.Admission := Response_Observed;
+      Operation.State.Result.Last_Phase := Receiving_Response_Body;
+      Operation.State.Was_Reused := False;
+      Operation.State.HTTP_2_Stage := HTTP_2_Response_Body;
+      Operation.State.HTTP_3_Stage := HTTP_3_Read_Response_Body;
+      Operation.State.HTTP_3_Decoded_Length := Body_Size
+        (Operation.State.Metadata.HTTP_3_Decoded_Length);
+      Operation.State.HTTP_3_Last_Stream_Credit :=
+        Operation.State.Metadata.HTTP_3_Last_Stream_Credit;
+      Operation.State.Driver_State :=
+        (case Operation.State.Metadata.Engine is
+            when HTTP_1_Response => Starting_Response_Body,
+            when HTTP_2_Response => HTTP_2_Protocol_Step,
+            when HTTP_3_Response => HTTP_3_Protocol_Step);
+      Transferred.Retains_Owner := False;
+      Transferred.Connection := null;
+      Free_Response_Data (Transferred);
+      Flyology.Operations.Drive
+        (Flyology.Operations.Operation'Class (Operation),
+         Flyology.Operations.Start_Operation);
+   exception
+      when others =>
+         if Transferred /= null then
+            Transferred.Retains_Owner := False;
+            Transferred.Connection := null;
+            Free_Response_Data (Transferred);
+         end if;
+         raise;
+   end Resume_Response_To_Sink;
+
+   procedure Resolve_Redirect_Target
+     (Item        : not null Client_Borrow;
+      Base_Target : String;
+      Location    : String;
+      Target      : out Unbounded_String;
+      Is_Same     : out Boolean) is
+   begin
+      if Item.Control.State = null then
+         raise Program_Error with "HTTP client is not configured";
+      end if;
+      Resolve_Redirect
+        (Item.Control.State.Origin_Value, Base_Target, Location,
+         Target, Is_Same);
+   end Resolve_Redirect_Target;
 
    function Admission
      (Operation : Exchange_Operation) return Admission_Certainty is
@@ -3722,6 +3843,22 @@ package body Flyology.HTTP.Client is
          end case;
       end Receive_One;
 
+      procedure Start_Response_Body is
+         Acquisition : Connection_Drivers.Acquisition_Result;
+      begin
+         Connection_Drivers.Start
+           (State.IO, State.Connection.Channel'Unchecked_Access,
+            Acquisition, Remaining (State.Deadline), State.Token_Item);
+         if Acquisition = Connection_Drivers.Acquired then
+            State.Driver_State := Receiving_Content;
+            Reschedule;
+         else
+            State.Driver_State := Waiting_For_Response_Body_Lease;
+            Connection_Drivers.Arm_Acquisition (State.IO, Item);
+            Connection_Drivers.Arm_Deadline (State.IO, Item);
+         end if;
+      end Start_Response_Body;
+
       procedure Deliver
         (Data : Ada.Streams.Stream_Element_Array) is
          Count : constant Natural := Natural (Data'Length);
@@ -3767,6 +3904,14 @@ package body Flyology.HTTP.Client is
             State.Response_Length := State.Response_Length + Count;
          end if;
       end Deliver;
+
+      function Sink_Paused return Boolean is
+        (State.Target = Sink_Target
+         and then State.Sink_Item /= null
+         and then State.Sink_Item.all in
+           Pausable_Response_Body_Sink'Class
+         and then Pause_Requested
+           (Pausable_Response_Body_Sink'Class (State.Sink_Item.all)));
 
       procedure Finish_Decoded_Body is
       begin
@@ -3901,6 +4046,10 @@ package body Flyology.HTTP.Client is
             State.Peer_Closed);
          if Last >= State.Buffer'First then
             Deliver (State.Buffer (State.Buffer'First .. Last));
+         end if;
+         if Sink_Paused then
+            Finish_Response_Head (Item);
+            return;
          end if;
          if Complete then
             Finish_Decoded_Body;
@@ -4292,6 +4441,10 @@ package body Flyology.HTTP.Client is
             when H2_Connections.Body_Progress =>
                if Last >= State.Buffer'First then
                   Deliver (State.Buffer (State.Buffer'First .. Last));
+               end if;
+               if Sink_Paused then
+                  Finish_Response_Head (Item);
+                  return;
                end if;
                if Finished then
                   State.Metadata.Trailers := Trailers;
@@ -5134,7 +5287,20 @@ package body Flyology.HTTP.Client is
                            Deliver
                              (State.Buffer (State.Buffer'First .. Last));
                         end if;
-                        if HTTP_3_Receive_Credit_Due
+                        if Sink_Paused
+                          and then HTTP_3_Receive_Credit_Due
+                          (State.Connection.all,
+                           QUIC.Stream_Offset (State.HTTP_3_Decoded_Length),
+                           State.HTTP_3_Last_Stream_Credit)
+                        then
+                           State.HTTP_3_After_Credit :=
+                             HTTP_3_Pause_Response_Body;
+                           State.HTTP_3_Stage :=
+                             HTTP_3_Return_Response_Credit;
+                           Reschedule;
+                        elsif Sink_Paused then
+                           Finish_Response_Head (Item);
+                        elsif HTTP_3_Receive_Credit_Due
                           (State.Connection.all,
                            QUIC.Stream_Offset (State.HTTP_3_Decoded_Length),
                            State.HTTP_3_Last_Stream_Credit)
@@ -5157,7 +5323,20 @@ package body Flyology.HTTP.Client is
                         State.Metadata.Reusable :=
                           H3_Connections.Is_Usable
                             (State.Connection.HTTP_3_Streams);
-                        if HTTP_3_Receive_Credit_Due
+                        if Sink_Paused
+                          and then HTTP_3_Receive_Credit_Due
+                          (State.Connection.all,
+                           QUIC.Stream_Offset (State.HTTP_3_Decoded_Length),
+                           State.HTTP_3_Last_Stream_Credit)
+                        then
+                           State.HTTP_3_After_Credit :=
+                             HTTP_3_Pause_Response_Body;
+                           State.HTTP_3_Stage :=
+                             HTTP_3_Return_Response_Credit;
+                           Reschedule;
+                        elsif Sink_Paused then
+                           Finish_Response_Head (Item);
+                        elsif HTTP_3_Receive_Credit_Due
                           (State.Connection.all,
                            QUIC.Stream_Offset (State.HTTP_3_Decoded_Length),
                            State.HTTP_3_Last_Stream_Credit)
@@ -5207,6 +5386,9 @@ package body Flyology.HTTP.Client is
                         Fail_Exchange (Item, Transport_Failed);
                   end case;
                end;
+
+            when HTTP_3_Pause_Response_Body =>
+               Finish_Response_Head (Item);
 
             when HTTP_3_Finish_Response_Body =>
                Finish_Decoded_Body;
@@ -5504,6 +5686,17 @@ package body Flyology.HTTP.Client is
             Probe_Early_Response;
          when Receiving_Head =>
             Receive_Head;
+         when Starting_Response_Body =>
+            Start_Response_Body;
+         when Waiting_For_Response_Body_Lease =>
+            Connection_Drivers.Poll_Acquisition (State.IO, Acquisition);
+            if Acquisition = Connection_Drivers.Acquired then
+               State.Driver_State := Receiving_Content;
+               Reschedule;
+            else
+               Connection_Drivers.Arm_Acquisition (State.IO, Item);
+               Connection_Drivers.Arm_Deadline (State.IO, Item);
+            end if;
          when Receiving_Content =>
             Receive_Content_Step;
          when HTTP_2_Protocol_Step =>

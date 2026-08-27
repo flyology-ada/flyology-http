@@ -1229,6 +1229,9 @@ private
    --  a multiplexed protocol stream.
    type Client_State (Capacity : Positive);
    type Client_State_Access is access Client_State;
+   type Client_Borrow is access all Client;
+   type Response_Borrow is access all Response;
+   type Sink_Borrow is access all Response_Body_Sink'Class;
 
    type Unix_Socket_Transport is record
       Path : Ada.Strings.Unbounded.Unbounded_String;
@@ -1293,9 +1296,73 @@ private
    type Exchange_State (<>);
    type Exchange_State_Access is access Exchange_State;
 
+   --  Private extension used by streaming child packages that must return a
+   --  logical record without abandoning the live HTTP response.  The
+   --  exchange engine pauses only after Write has consumed the complete
+   --  supplied slice.
+   type Pausable_Response_Body_Sink is
+     limited interface and Response_Body_Sink;
+
+   --  @exclude
+   --  @param Item Streaming sink to inspect after a delivered slice
+   --  @return True when the live response must be returned to its owner
+   function Pause_Requested
+     (Item : Pausable_Response_Body_Sink) return Boolean is abstract;
+
    type Exchange_Operation is new Flyology.Operations.Operation with record
       State : Exchange_State_Access := null;
    end record;
+
+   --  @exclude
+   --  @param Item Client borrowed by the streaming child
+   --  @param Value Request borrowed by the streaming child
+   --  @param Deadline Absolute exchange deadline
+   --  @param Token Optional cancellation token
+   --  @param Operation Established response-head operation to start
+   procedure Exchange_To_Response
+     (Item      : not null Client_Borrow;
+      Value     : not null access constant Request;
+      Deadline  : Monotonic_Deadline;
+      Token     : access Flyology.Cancellation.Token;
+      Operation : in out Exchange_Operation)
+     with Pre => not Flyology.Operations.Is_Active (Operation)
+       and then not Flyology.Operations.Is_Terminal (Operation);
+
+   --  Resume a response paused by Pausable_Response_Body_Sink. Reply becomes
+   --  vacant once the operation starts.
+   --  @exclude
+   --  @param Item Client borrowed by the streaming child
+   --  @param Value Request borrowed by the streaming child
+   --  @param Reply Live response transferred into Operation
+   --  @param Sink Immediate response-body consumer
+   --  @param Deadline Absolute exchange deadline
+   --  @param Token Optional cancellation token
+   --  @param Operation Established response-body operation to start
+   procedure Resume_Response_To_Sink
+     (Item      : not null Client_Borrow;
+      Value     : not null access constant Request;
+      Reply     : not null Response_Borrow;
+      Sink      : not null Sink_Borrow;
+      Deadline  : Monotonic_Deadline;
+      Token     : access Flyology.Cancellation.Token;
+      Operation : in out Exchange_Operation)
+     with Pre => not Flyology.Operations.Is_Active (Operation)
+       and then not Flyology.Operations.Is_Terminal (Operation);
+
+   --  Resolve one redirect reference against the configured origin and
+   --  current request target without applying redirect policy.
+   --  @exclude
+   --  @param Item Configured client whose origin supplies the base authority
+   --  @param Base_Target Current request target
+   --  @param Location Redirect reference
+   --  @param Target Resolved target
+   --  @param Is_Same Whether Target retains the configured origin
+   procedure Resolve_Redirect_Target
+     (Item        : not null Client_Borrow;
+      Base_Target : String;
+      Location    : String;
+      Target      : out Ada.Strings.Unbounded.Unbounded_String;
+      Is_Same     : out Boolean);
 
    --  @exclude
    --  @param Item Owner-driven exchange state

@@ -10,6 +10,7 @@ Flyology HTTP exposes synchronous Ada APIs in both task lanes. Its low-level HTT
 - Guide index: https://http.flyology.org/guide/
 - URI, IRI, and URL guide: https://http.flyology.org/guide/iri/
 - Client guide: https://http.flyology.org/guide/client/
+- Server-sent events guide: https://http.flyology.org/guide/sse/
 - HTTP/2 guide: https://http.flyology.org/guide/http2/
 - Server guide: https://http.flyology.org/guide/server/
 - Composable operations guide: https://http.flyology.org/guide/operations/
@@ -30,6 +31,7 @@ Flyology HTTP exposes synchronous Ada APIs in both task lanes. Its low-level HTT
 - URI, IRI, and WHATWG URL parser: Flyology_IRI (separate `flyology_iri` crate)
 - Root: Flyology.HTTP
 - Client: Flyology.HTTP.Client
+- EventSource client: Flyology.HTTP.Client.SSE
 - Server protocol: Flyology.HTTP.Server
 - Server applications: Flyology.HTTP.Server.Applications
 - HTTP/2 server: Flyology.HTTP.Server.HTTP_2

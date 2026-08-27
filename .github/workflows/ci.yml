@@ -160,6 +160,17 @@ jobs:
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
       - name: Use the in-tree QUIC prerequisite
         run: alr pin flyology_quic --use=flyology_quic
+      - name: Run SSE reconnect formal gate
+        timeout-minutes: 15
+        run: |
+          tla_prefix="${RUNNER_TEMP}/flyology-tla"
+          toolchain_root="${RUNNER_TEMP}/flyology-tla-toolchain"
+          alr -n install --prefix="$tla_prefix" flyology_tla=0.1.0-dev
+          tla_cli="$tla_prefix/bin/flyology-tla"
+          "$tla_cli" toolchain install "$toolchain_root"
+          "$tla_cli" toolchain verify "$toolchain_root"
+          eval "$("$tla_cli" toolchain env "$toolchain_root")"
+          FLYOLOGY_TLA_CLI="$tla_cli" ./scripts/check-sse-client-formal.sh
       - name: Prove QUIC and HTTP policy units
         env:
           FLYOLOGY_PROOF_LEVEL: "2"

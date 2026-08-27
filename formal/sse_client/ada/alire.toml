@@ -1,0 +1,16 @@
+name = "sse_client_conformance"
+description = "SSE client reconnect model trace replay"
+version = "0.1.0-dev"
+
+authors = ["Yurii Rashkovskii"]
+maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
+maintainers-logins = ["yrashk"]
+licenses = "MIT OR Apache-2.0"
+executables = ["sse_client_conformance"]
+
+[[depends-on]]
+flyology_http = "*"
+flyology_tla = "=0.1.0-dev"
+
+[[pins]]
+flyology_http = { path = "../../.." }
