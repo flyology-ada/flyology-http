@@ -9,23 +9,29 @@ with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology;
+with Flyology.Buffers;
 with Flyology.Bytes;
 with Flyology.IO;
 with Flyology.HTTP.Client;
+with Flyology.HTTP.Client.Testing;
 with Flyology.HTTP.Server.Applications;
 with Flyology.HTTP.Server.HTTP_2;
 with Flyology.HTTP.Server.Routing;
 with Flyology.IO.Connections;
 with Flyology.IO.Sockets;
+with Flyology.Operations;
 with Interfaces;
 
 procedure HTTP2_Server_Audit is
    use Ada.Streams;
    use Ada.Strings.Unbounded;
+   use type Flyology.HTTP.Client.Exchange_Result_Kind;
    use type Interfaces.Unsigned_32;
    package App renames Flyology.HTTP.Server.Applications;
+   package Buffers renames Flyology.Buffers;
    package Client renames Flyology.HTTP.Client;
    package Connections renames Flyology.IO.Connections;
+   package Operations renames Flyology.Operations;
    package Sockets renames Flyology.IO.Sockets;
 
    CR : constant Character := Character'Val (13);
@@ -1171,6 +1177,22 @@ begin
    Ada.Text_IO.Put_Line
      ("finding 15: CONTINUATION outside a client field section");
    declare
+      protected Fragmented_Violation_Observation is
+         procedure Observe;
+         function Seen return Boolean;
+      private
+         Rejected : Boolean := False;
+      end Fragmented_Violation_Observation;
+
+      protected body Fragmented_Violation_Observation is
+         procedure Observe is
+         begin
+            Rejected := True;
+         end Observe;
+
+         function Seen return Boolean is (Rejected);
+      end Fragmented_Violation_Observation;
+
       task Peer_Task is
          pragma Task_Info (Flyology.Native_Task);
       end Peer_Task;
@@ -1243,9 +1265,57 @@ begin
             delay 0.50;
             Sockets.Close_Socket (Socket);
          end Serve;
+
+         --  Split the violating frame header across two transport reads after
+         --  a stream reset.  A settlement probe must retain the connection
+         --  through partial input instead of treating the first readable byte
+         --  as the end of its grace interval.
+         procedure Serve_Fragmented_Violation is
+            Socket  : Sockets.Socket_Type;
+            Where   : Sockets.Endpoint;
+            Opening : Stream_Element_Array (1 .. Preface'Length);
+            Opened  : Natural;
+         begin
+            Sockets.Accept_Connection
+              (Peer_Listener, Socket, Where, Timeout => 10.0);
+            Sockets.Receive_Exactly (Socket, Opening, Timeout => 10.0);
+            Send_Frame (Socket, Settings_Frame, 0, 0, Empty);
+            Await_Request (Socket, Opened);
+            Send_Frame
+              (Socket, Headers_Frame, End_Headers_Flag, Opened,
+               Stream_Element_Array'(1 => 16#88#));
+            Send_Frame
+              (Socket, Reset_Stream_Frame, 0, Opened,
+               Stream_Element_Array'
+                 (1 => 0, 2 => 0, 3 => 0, 4 => 16#08#));
+            declare
+               Violation : constant Stream_Element_Array :=
+                 Frame_Header (1, Continuation_Frame, 0, Opened) &
+                   Stream_Element_Array'(1 => 16#88#);
+            begin
+               Sockets.Send_All
+                 (Socket,
+                  Violation (Violation'First .. Violation'First),
+                  Timeout => 10.0);
+               delay 0.05;
+               Sockets.Send_All
+                 (Socket,
+                  Violation (Violation'First + 1 .. Violation'Last),
+                  Timeout => 10.0);
+            end;
+            while not Fragmented_Violation_Observation.Seen loop
+               Read_Frame_Header (Socket, Info, Wait => 2.0);
+               Read_Payload (Socket, Info, Payload, Wait => 2.0);
+               if Info.Kind = Goaway_Frame then
+                  Fragmented_Violation_Observation.Observe;
+               end if;
+            end loop;
+            Sockets.Close_Socket (Socket);
+         end Serve_Fragmented_Violation;
       begin
          Serve (Fragmented => True);
          Serve (Fragmented => False);
+         Serve_Fragmented_Violation;
       exception
          when others =>
             null;
@@ -1255,9 +1325,11 @@ begin
         "http://127.0.0.1:" & Decimal (Natural (Peer_Address.Port));
       Fragmented_Client : aliased Client.Client (Capacity => 1);
       Forged_Client     : aliased Client.Client (Capacity => 1);
+      Fragmented_Violation_Client : aliased Client.Client (Capacity => 1);
       Served  : Boolean := False;
       Forged  : Boolean := False;
       Refused : Boolean := False;
+      Fragmented_Result : Boolean := False;
       Detail  : Unbounded_String;
    begin
       Client.Configure
@@ -1266,6 +1338,11 @@ begin
       Client.Configure
         (Forged_Client, Flyology.HTTP.Parse_Origin (Origin),
          Client.HTTP_2_Prior_Knowledge);
+      Client.Configure
+        (Fragmented_Violation_Client, Flyology.HTTP.Parse_Origin (Origin),
+         Client.HTTP_2_Prior_Knowledge);
+      Client.Testing.Set_HTTP_2_Settlement_Grace
+        (Fragmented_Violation_Client, 0.25);
 
       declare
          Ask : Client.Request;
@@ -1318,8 +1395,39 @@ begin
       Check
         (not Forged,
          "residue never prepends a response field section");
+
+      declare
+         Ask         : aliased Client.Request;
+         Pool        : aliased Buffers.Pool (Block_Size => 16, Capacity => 1);
+         Destination : Buffers.Unique_Buffer (Pool'Access);
+         Set         : aliased Operations.Completion_Set (3);
+         Result      : Client.Exchange_Result;
+         Reply       : Client.Response;
+      begin
+         Client.Set_Target (Ask, "/fragmented-violation");
+         Buffers.Acquire (Destination);
+         declare
+            Operation : Client.Exchange_Operation :=
+              Client.Exchange_To_Buffer
+                (Set'Access, Fragmented_Violation_Client'Access, Ask'Access,
+                 Destination, Client.Deadline_After (2.0));
+         begin
+            Operations.Wait_All (Set);
+            Client.Finish (Operation, Result, Reply, Destination);
+         end;
+         Buffers.Release (Destination);
+         Fragmented_Result :=
+           Client.Kind (Result) = Client.Response_Invalid;
+      end;
+      Check
+        (Fragmented_Result,
+         "a reset stream reports an invalid composable response");
+      Check
+        (Fragmented_Violation_Observation.Seen,
+         "a fragmented late CONTINUATION receives GOAWAY");
       Client.Shutdown (Fragmented_Client, Timeout => 5.0);
       Client.Shutdown (Forged_Client, Timeout => 5.0);
+      Client.Shutdown (Fragmented_Violation_Client, Timeout => 5.0);
    end;
    Sockets.Close_Socket (Peer_Listener);
 
