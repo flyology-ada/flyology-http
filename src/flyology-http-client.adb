@@ -484,6 +484,7 @@ package body Flyology.HTTP.Client is
       HTTP_2_Cancelling : Boolean := False;
       HTTP_2_Settling   : Boolean := False;
       HTTP_2_Settlement_Waited : Boolean := False;
+      HTTP_2_Settlement_Deadline : Monotonic_Deadline := No_Deadline;
       HTTP_2_Flush_Pending : Boolean := False;
       HTTP_2_Retryable_Refusal : Boolean := False;
       Metadata           : Response_Data;
@@ -1286,6 +1287,7 @@ package body Flyology.HTTP.Client is
       Operation.State.HTTP_2_Cancelling := False;
       Operation.State.HTTP_2_Settling := False;
       Operation.State.HTTP_2_Settlement_Waited := False;
+      Operation.State.HTTP_2_Settlement_Deadline := No_Deadline;
       Operation.State.HTTP_2_Flush_Pending := False;
       Operation.State.HTTP_2_Retryable_Refusal := False;
       Operation.State.HTTP_3_Stage := HTTP_3_Handshake;
@@ -3974,6 +3976,7 @@ package body Flyology.HTTP.Client is
                --  releases its pump claim.
                State.HTTP_2_Settling := True;
                State.HTTP_2_Settlement_Waited := False;
+               State.HTTP_2_Settlement_Deadline := No_Deadline;
                State.Driver_State := HTTP_2_Waiting_For_Pump;
                Reschedule;
             else
@@ -4506,6 +4509,7 @@ package body Flyology.HTTP.Client is
             State.HTTP_2_Finished := True;
             State.HTTP_2_Cancelling := False;
             State.HTTP_2_Settlement_Waited := False;
+            State.HTTP_2_Settlement_Deadline := No_Deadline;
             if State.Pending_Result = Response_Complete then
                Finish_Success (Item);
             else
@@ -4523,14 +4527,19 @@ package body Flyology.HTTP.Client is
             Release_HTTP_2_Pump;
             State.HTTP_2_Settling := False;
             State.HTTP_2_Settlement_Waited := False;
+            State.HTTP_2_Settlement_Deadline := No_Deadline;
             Finish_Success (Item);
          end Finish_Settlement;
 
          procedure Arm_Settlement_Probe is
-            Wait : Duration :=
-              State.Client_Item.Control.State.HTTP_2_Settlement_Grace;
+            Wait : Duration;
          begin
-            State.HTTP_2_Settlement_Waited := True;
+            if not State.HTTP_2_Settlement_Waited then
+               State.HTTP_2_Settlement_Waited := True;
+               State.HTTP_2_Settlement_Deadline := Deadline_After
+                 (State.Client_Item.Control.State.HTTP_2_Settlement_Grace);
+            end if;
+            Wait := Remaining (State.HTTP_2_Settlement_Deadline);
             Connection_Drivers.Arm_Transport
               (State.IO, Item, Connection_Drivers.Need_Read,
                H2_Connections.Outbound
@@ -4591,11 +4600,16 @@ package body Flyology.HTTP.Client is
                   --  violation immediately after a stream-local reset.  The
                   --  production default remains zero-cost, but when the
                   --  explicit test grace is enabled keep the owner-driven
-                  --  pump alive for one bounded read before releasing the
-                  --  failed stream and closing its short-lived client.
-                  if not State.HTTP_2_Settlement_Waited
+                  --  pump alive until its bounded deadline. A readable event
+                  --  can contain only part of the following frame, so it does
+                  --  not by itself complete settlement.
+                  if not Expired (State.Deadline)
                     and then State.Client_Item.Control.State
                       .HTTP_2_Settlement_Grace > 0.0
+                    and then
+                      (not State.HTTP_2_Settlement_Waited
+                         or else not Expired
+                           (State.HTTP_2_Settlement_Deadline))
                   then
                      Arm_Settlement_Probe;
                   else
@@ -4604,9 +4618,13 @@ package body Flyology.HTTP.Client is
                elsif State.HTTP_2_Settling
                  and then not Step.Outbound_Pending
                then
-                  if not State.HTTP_2_Settlement_Waited
+                  if not Expired (State.Deadline)
                     and then State.Client_Item.Control.State
                       .HTTP_2_Settlement_Grace > 0.0
+                    and then
+                      (not State.HTTP_2_Settlement_Waited
+                         or else not Expired
+                           (State.HTTP_2_Settlement_Deadline))
                   then
                      Arm_Settlement_Probe;
                   else
@@ -7036,10 +7054,11 @@ package body Flyology.HTTP.Client is
 
       procedure Settle_HTTP_2_Control is
          Claimed : Boolean;
-         Probed  : Boolean := False;
          Grace   : constant Duration :=
            (if Item.Data.Owner = null then 0.0
             else Item.Data.Owner.HTTP_2_Settlement_Grace);
+         Grace_Deadline : constant Monotonic_Deadline :=
+           Deadline_After (Grace);
 
          procedure Pump (IO : in out Connection_Drivers.Capability) is
             Step : H2_Connections.Pump_Step;
@@ -7066,12 +7085,9 @@ package body Flyology.HTTP.Client is
                         null;
                      when H2_Connections.Pump_Need_Read =>
                         if not Step.Outbound_Pending
-                          and then (Probed or else Grace <= 0.0)
+                          and then Expired (Grace_Deadline)
                         then
                            exit;
-                        end if;
-                        if not Step.Outbound_Pending then
-                           Probed := True;
                         end if;
                         Connection_Drivers.Wait
                           (IO,
@@ -7080,7 +7096,8 @@ package body Flyology.HTTP.Client is
                            Connection_Drivers.Duplex_Interest,
                            Timeout =>
                              (if Step.Outbound_Pending
-                              then Flyology.IO.Infinite else Grace),
+                              then Flyology.IO.Infinite
+                              else Remaining (Grace_Deadline)),
                            Result => Waited);
                      when H2_Connections.Pump_Need_Write =>
                         Interest :=
