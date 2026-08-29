@@ -12,7 +12,20 @@ if (!reportDir || !profile || !lane) {
 const allowed = new Set(["OK", "NON-STRICT", "INFORMATIONAL"]);
 const fields = ["behavior", "behaviorClose"];
 const counts = Object.fromEntries(fields.map((field) => [field, new Map()]));
+const expectedUnimplemented = new Set();
 let failed = false;
+
+if (profile === "compression" || profile === "compression-wss") {
+  //  Autobahn 13.3.* and 13.5.* require server_max_window_bits=9. The public
+  //  server contract deliberately declines values below 15 because outbound
+  //  compression uses a 32 KiB history. Keep the cases in the campaign and
+  //  require their exact refusal instead of broadly allowing UNIMPLEMENTED.
+  for (const subcategory of [3, 5]) {
+    for (let caseNumber = 1; caseNumber <= 18; caseNumber += 1) {
+      expectedUnimplemented.add(`case_13_${subcategory}_${caseNumber}.json`);
+    }
+  }
+}
 
 let files;
 try {
@@ -47,10 +60,22 @@ for (const name of files) {
       continue;
     }
     counts[field].set(verdict, (counts[field].get(verdict) ?? 0) + 1);
-    if (!allowed.has(verdict)) {
+    const expectedRefusal =
+      field === "behavior" &&
+      verdict === "UNIMPLEMENTED" &&
+      [...expectedUnimplemented].find((suffix) => name.endsWith(suffix));
+    if (expectedRefusal) {
+      expectedUnimplemented.delete(expectedRefusal);
+    } else if (!allowed.has(verdict)) {
+      console.error(`${name}: unexpected ${field} verdict ${verdict}`);
       failed = true;
     }
   }
+}
+
+for (const suffix of [...expectedUnimplemented].sort()) {
+  console.error(`missing expected documented compression refusal ${suffix}`);
+  failed = true;
 }
 
 function printCounts(label, values) {
