@@ -6881,7 +6881,11 @@ package body Flyology.HTTP.Client is
          Cancelled   : Boolean := False;
          Selected    : Natural;
       begin
-         H2_Connections.Wait_Source
+         --  Try_Claim_Pump registered this stream as a fair pump waiter.
+         --  Observe that handoff directly: the stream-data source can consume
+         --  the same latched notification before response data is published,
+         --  leaving the reserved pump owner asleep behind its siblings.
+         H2_Connections.Pump_Wait_Source
            (Item.Data.Connection.HTTP_2.all, Item.Data.HTTP_2_Stream,
             Stream_FD, Ready_Now);
          if Ready_Now then

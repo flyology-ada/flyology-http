@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import {
   lstat,
   readFile,
@@ -23,6 +24,7 @@ const fullGitObject = /^[0-9a-f]{40}$/;
 const sha256 = /^[0-9a-f]{64}$/;
 const sha256Digest = /^sha256:[0-9a-f]{64}$/;
 const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const inTreeQuicPin = "\n[[pins]]\nflyology_quic = { path='flyology_quic' }\n";
 
 function fail(context, message) {
   throw new Error(`${context}: ${message}`);
@@ -102,24 +104,72 @@ function sourceStatus(projectRoot) {
   };
 }
 
+function inTreeQuicProvisioning(projectRoot, status) {
+  if (
+    status.entries !== 1 ||
+    status.trackedChanges !== 1 ||
+    status.untracked !== 0
+  ) {
+    return null;
+  }
+  const raw = git(
+    projectRoot,
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--ignore-submodules=none"
+  );
+  if (raw !== "M alire.toml") return null;
+
+  const committed = execFileSync("git", ["show", "HEAD:alire.toml"], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const actual = readFileSync(resolve(projectRoot, "alire.toml"), "utf8");
+  if (actual !== `${committed}${inTreeQuicPin}`) return null;
+
+  const diff = execFileSync(
+    "git",
+    ["diff", "--no-ext-diff", "--", "alire.toml"],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
+  return {
+    kind: "alire-in-tree-pin",
+    manifest: "alire.toml",
+    dependency: "flyology_quic",
+    path: "flyology_quic",
+    diffSha256: digest(diff),
+  };
+}
+
 export function captureSourceSnapshot(projectRoot) {
   const submoduleRaw = git(projectRoot, "submodule", "status", "--recursive");
+  const status = sourceStatus(projectRoot);
+  const provisioning = status.clean
+    ? null
+    : inTreeQuicProvisioning(projectRoot, status);
   const source = {
     revision: git(projectRoot, "rev-parse", "HEAD"),
     tree: git(projectRoot, "rev-parse", "HEAD^{tree}"),
     headRef: optionalGit(projectRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
-    status: sourceStatus(projectRoot),
+    status,
     submodules: {
       digest: digest(submoduleRaw),
       entries: submoduleRaw ? submoduleRaw.split("\n").length : 0,
     },
   };
-  if (!source.status.clean) {
+  if (!source.status.clean && !provisioning) {
     throw new Error(
-      `WebSocket run requires a clean worktree ` +
+      `WebSocket run requires a clean worktree or the exact in-tree QUIC pin ` +
         `(${source.status.trackedChanges} tracked, ${source.status.untracked} untracked)`
     );
   }
+  if (provisioning) source.provisioning = provisioning;
   return source;
 }
 
@@ -260,6 +310,11 @@ function requireSameInitialState(initial, finalSource, finalConfigSha256) {
     ["source.headRef", initial.source.headRef, finalSource.headRef],
     ["source.status", JSON.stringify(initial.source.status), JSON.stringify(finalSource.status)],
     [
+      "source.provisioning",
+      JSON.stringify(initial.source.provisioning || null),
+      JSON.stringify(finalSource.provisioning || null),
+    ],
+    [
       "source.submodules",
       JSON.stringify(initial.source.submodules),
       JSON.stringify(finalSource.submodules),
@@ -373,11 +428,47 @@ export function validateRunMetadata(metadata, expected, context = "run metadata"
   requireString(source.tree, `${context}.source.tree`, fullGitObject);
   if (source.headRef !== null) requireString(source.headRef, `${context}.source.headRef`);
   const status = requireObject(source.status, `${context}.source.status`);
-  requireEqual(status.clean, true, `${context}.source.status.clean`);
   requireString(status.digest, `${context}.source.status.digest`, sha256);
-  requireEqual(status.entries, 0, `${context}.source.status.entries`);
-  requireEqual(status.trackedChanges, 0, `${context}.source.status.trackedChanges`);
-  requireEqual(status.untracked, 0, `${context}.source.status.untracked`);
+  if (status.clean) {
+    requireEqual(status.entries, 0, `${context}.source.status.entries`);
+    requireEqual(status.trackedChanges, 0, `${context}.source.status.trackedChanges`);
+    requireEqual(status.untracked, 0, `${context}.source.status.untracked`);
+    requireEqual(source.provisioning, undefined, `${context}.source.provisioning`);
+  } else {
+    requireEqual(status.clean, false, `${context}.source.status.clean`);
+    requireEqual(status.entries, 1, `${context}.source.status.entries`);
+    requireEqual(status.trackedChanges, 1, `${context}.source.status.trackedChanges`);
+    requireEqual(status.untracked, 0, `${context}.source.status.untracked`);
+    const provisioning = requireObject(
+      source.provisioning,
+      `${context}.source.provisioning`
+    );
+    requireEqual(
+      provisioning.kind,
+      "alire-in-tree-pin",
+      `${context}.source.provisioning.kind`
+    );
+    requireEqual(
+      provisioning.manifest,
+      "alire.toml",
+      `${context}.source.provisioning.manifest`
+    );
+    requireEqual(
+      provisioning.dependency,
+      "flyology_quic",
+      `${context}.source.provisioning.dependency`
+    );
+    requireEqual(
+      provisioning.path,
+      "flyology_quic",
+      `${context}.source.provisioning.path`
+    );
+    requireString(
+      provisioning.diffSha256,
+      `${context}.source.provisioning.diffSha256`,
+      sha256
+    );
+  }
   const submodules = requireObject(source.submodules, `${context}.source.submodules`);
   requireString(submodules.digest, `${context}.source.submodules.digest`, sha256);
   if (!Number.isInteger(submodules.entries) || submodules.entries < 0) {

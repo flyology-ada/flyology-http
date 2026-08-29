@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      scheduled_qualification:
+        description: Run the schedule-only HTTP/2 and WebSocket qualifications
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "23 6 * * *"
 
@@ -234,7 +240,8 @@ jobs:
         run: ./scripts/http-client-differential.sh run
       - name: Run HTTP/2 qualification
         run: |
-          if [ "${{ github.event_name }}" = schedule ]; then
+          if [ "${{ github.event_name }}" = schedule ] \
+            || [ "${{ inputs.scheduled_qualification }}" = true ]; then
             ./scripts/http2-test.sh nightly
           else
             ./scripts/http2-test.sh qualification
@@ -306,7 +313,10 @@ jobs:
 
   websocket-conformance:
     name: WebSocket conformance (${{ matrix.profile }}, ${{ matrix.lane }})
-    if: github.event_name == 'schedule'
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.scheduled_qualification)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:

@@ -203,8 +203,9 @@ async function createRepository(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "tests/autobahn"), { recursive: true });
   await writeFile(join(root, "tests/autobahn/fuzzingclient.json"), "{}\n");
+  await writeFile(join(root, "alire.toml"), 'name = "fixture"\n');
   await writeFile(join(root, "source.txt"), "source\n");
-  await writeFile(join(root, ".gitignore"), "/build/\n");
+  await writeFile(join(root, ".gitignore"), "/alire_install/\n/build/\n");
   git(root, "init", "-q");
   git(root, "add", ".");
   git(
@@ -412,6 +413,51 @@ test("initial capture rejects real tracked and untracked dirt", async (t) => {
   await assert.rejects(() => beginFixture(untracked), /0 tracked, 1 untracked/);
 });
 
+test("capture records only the exact provisioned in-tree QUIC pin", async (t) => {
+  const root = await createRepository(t);
+  await mkdir(join(root, "alire_install/bin"), { recursive: true });
+  await writeFile(join(root, "alire_install/bin/alr"), "ignored tool fixture\n");
+  await writeFile(
+    join(root, "alire.toml"),
+    'name = "fixture"\n\n[[pins]]\nflyology_quic = { path=\'flyology_quic\' }\n'
+  );
+  const initial = await beginFixture(root);
+  assert.equal(initial.source.status.clean, false);
+  assert.equal(initial.source.status.entries, 1);
+  assert.deepEqual(
+    {
+      ...initial.source.provisioning,
+      diffSha256: "digest",
+    },
+    {
+      kind: "alire-in-tree-pin",
+      manifest: "alire.toml",
+      dependency: "flyology_quic",
+      path: "flyology_quic",
+      diffSha256: "digest",
+    }
+  );
+  const metadata = await finalizeRunMetadata({
+    initial,
+    projectRoot: root,
+    observed: observedFacts("plain"),
+    finalizedAt: "2026-08-05T12:44:56.000Z",
+  });
+  assert.equal(metadata.source.provisioning.dependency, "flyology_quic");
+
+  await writeFile(join(root, "source.txt"), "other tracked change\n");
+  await assert.rejects(() => beginFixture(root), /exact in-tree QUIC pin/);
+});
+
+test("capture rejects a different Alire pin as source dirt", async (t) => {
+  const root = await createRepository(t);
+  await writeFile(
+    join(root, "alire.toml"),
+    'name = "fixture"\n\n[[pins]]\nflyology_quic = { path=\'../other\' }\n'
+  );
+  await assert.rejects(() => beginFixture(root), /exact in-tree QUIC pin/);
+});
+
 test("finalization rejects real mid-run edits, config changes, and commits", async (t) => {
   const edited = await createRepository(t);
   const editInitial = await beginFixture(edited);
@@ -495,6 +541,13 @@ test("metadata schema validates actual environment and transport-specific TLS", 
   const leaked = metadataFor(profiles[0]);
   leaked.environment.privacy.hostnameRecorded = true;
   assert.throws(() => validateRunMetadata(leaked, expectedFor(profiles[0])), /hostnameRecorded/);
+
+  const nonBooleanClean = metadataFor(profiles[0]);
+  nonBooleanClean.source.status.clean = 0;
+  assert.throws(
+    () => validateRunMetadata(nonBooleanClean, expectedFor(profiles[0])),
+    /source\.status\.clean/
+  );
 });
 
 test("campaign guard defines common facts and transport-specific TLS facts", () => {
