@@ -19,10 +19,11 @@ description: Preserve Flyology HTTP's project boundaries, verification workflow,
   it must generate `docs/api/index.html` without errors.
 - Write modest, factual prose. Flyology HTTP is experimental; do not imply
   production qualification, HTTP/2 support, or portable benchmark results.
-- Hand-written Guide, Architecture, and Journal pages follow
-  `website/AGENTS.md`. Link the first visible explanatory mention of each
-  project-owned public API entity on a page to its verified generated GNATdoc
-  unit or declaration entry. This includes the separate `flyology_iri` crate.
+- Use the `flyology-website-content` skill for hand-written Guide,
+  Architecture, and Journal pages. Link the first visible explanatory mention
+  of each project-owned public API entity on a page to its verified generated
+  GNATdoc unit or declaration entry. This includes the separate
+  `flyology_iri` crate.
 - Use focused Problem/Solution commit messages consistent with the parent
   Flyology repository.
 
