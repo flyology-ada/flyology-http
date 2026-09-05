@@ -7,6 +7,7 @@ alr=$("$http_root/scripts/find-alr.sh")
 test_rts="$http_root/build/rts"
 
 "$http_root/tests/alire_action_context.sh"
+"$http_root/tests/ci_formal_toolchain_pin.sh"
 
 if [ -z "${FLYOLOGY_ROOT:-}" ] \
   && [ ! -f "$http_root/../scripts/prepare-rts.sh" ] \
