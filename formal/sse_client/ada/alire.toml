@@ -14,3 +14,4 @@ flyology_tla = "=0.1.0-dev"
 
 [[pins]]
 flyology_http = { path = "../../.." }
+flyology_tla = { url = "git+https://github.com/flyology-ada/tla.git", commit = "3d55b54876a0446134a348f44b2c01e5ebbbea03" }

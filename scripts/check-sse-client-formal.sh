@@ -67,7 +67,7 @@ grep -q '13 distinct states found' "$temporary_root/trace.log"
   "$temporary_root/raw.json" "$temporary_root/sse-client.trace.json" \
   "$model_root/SSEClientTrace.tla" \
   --config "$model_root/SSEClientTrace.cfg" \
-  --toolchain tla2tools-1.8.0+9787e65 20 32
+  --toolchain tla2tools-1.8.0+b123b22 20 32
 "$tla_cli" trace validate "$temporary_root/sse-client.trace.json" 20 32
 cmp "$trace" "$temporary_root/sse-client.trace.json"
 

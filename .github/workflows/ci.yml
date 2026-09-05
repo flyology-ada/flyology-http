@@ -166,12 +166,23 @@ jobs:
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
       - name: Use the in-tree QUIC prerequisite
         run: alr pin flyology_quic --use=flyology_quic
+      # TLA+ Tools v1.8.0 is a rolling release whose same-name asset is
+      # replaced upstream. This flyology_tla revision records and verifies the
+      # reviewed replacement's exact digest and embedded source revision.
+      - name: Check out the pinned Flyology TLA harness
+        timeout-minutes: 5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: flyology-ada/tla
+          ref: 3d55b54876a0446134a348f44b2c01e5ebbbea03
+          path: build/flyology-tla
+          persist-credentials: false
       - name: Run SSE reconnect formal gate
         timeout-minutes: 15
         run: |
           tla_prefix="${RUNNER_TEMP}/flyology-tla"
           toolchain_root="${RUNNER_TEMP}/flyology-tla-toolchain"
-          alr -n install --prefix="$tla_prefix" flyology_tla=0.1.0-dev
+          (cd build/flyology-tla && alr -n install --prefix="$tla_prefix")
           tla_cli="$tla_prefix/bin/flyology-tla"
           "$tla_cli" toolchain install "$toolchain_root"
           "$tla_cli" toolchain verify "$toolchain_root"
