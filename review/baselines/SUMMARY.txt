@@ -1,0 +1,49 @@
+2026-09-22T06:11:32Z START 01-alr-build
+01-alr-build                       rc=0   secs=26     disk_free=13Gi
+2026-09-22T06:11:58Z START 02-test-sh
+02-test-sh                         rc=0   secs=228    disk_free=11Gi
+2026-09-22T06:15:46Z START 03-prove
+03-prove                           rc=1   secs=139    disk_free=11Gi
+2026-09-22T06:18:05Z START 04-check-test-hook-elision
+04-check-test-hook-elision         rc=0   secs=159    disk_free=12Gi
+2026-09-22T06:20:44Z START 05-iri-wpt-gate
+05-iri-wpt-gate                    rc=0   secs=2      disk_free=12Gi
+2026-09-22T06:20:46Z START 06-http2-prepare
+06-http2-prepare                   rc=0   secs=5      disk_free=12Gi
+2026-09-22T06:20:51Z START 07-http2-all
+07-http2-all                       rc=0   secs=394    disk_free=12Gi
+2026-09-22T06:27:25Z START 08-http-client-differential
+08-http-client-differential        rc=2   secs=1      disk_free=12Gi
+2026-09-22T06:27:26Z START 09-http-client-conformance
+09-http-client-conformance         rc=0   secs=189    disk_free=12Gi
+2026-09-22T06:30:35Z START 10-http3-interop
+10-http3-interop                   rc=0   secs=89     disk_free=11Gi
+2026-09-22T06:32:04Z START 11-http3-h3spec
+11-http3-h3spec                    rc=0   secs=85     disk_free=11Gi
+2026-09-22T06:33:29Z START 12-http3-stress
+12-http3-stress                    rc=0   secs=100    disk_free=11Gi
+2026-09-22T06:35:09Z START 13-http2-h2spec-docker
+13-http2-h2spec-docker             rc=0   secs=6      disk_free=11Gi
+2026-09-22T06:35:15Z START 14-autobahn-core-native
+14-autobahn-core-native            rc=1   secs=1      disk_free=11Gi
+2026-09-22T06:35:16Z START 15-autobahn-core-lightweight
+15-autobahn-core-lightweight       rc=1   secs=0      disk_free=11Gi
+2026-09-22T06:35:16Z START 16-autobahn-compression
+16-autobahn-compression            rc=1   secs=1      disk_free=11Gi
+2026-09-22T06:35:17Z ALL DONE
+2026-09-22T06:35:29Z START 17-differential-prepare
+17-differential-prepare            rc=0   secs=3      disk_free=11Gi
+2026-09-22T06:35:32Z START 18-differential-run
+18-differential-run                rc=0   secs=83     disk_free=11Gi
+2026-09-22T06:36:55Z START 19-prove-level2
+19-prove-level2                    rc=0   secs=157    disk_free=11Gi
+2026-09-22T06:39:32Z FOLLOW-UP DONE
+2026-09-22T06:44:54Z START 20-autobahn-core-native
+20-autobahn-core-native            rc=0   secs=127    disk_free=10Gi
+2026-09-22T06:47:01Z START 21-autobahn-core-lightweight
+21-autobahn-core-lightweight       rc=0   secs=105    disk_free=10Gi
+2026-09-22T06:48:46Z START 22-autobahn-limits-native
+22-autobahn-limits-native          rc=0   secs=111    disk_free=11Gi
+2026-09-22T06:50:37Z START 23-autobahn-compression-native
+23-autobahn-compression-native     rc=0   secs=483    disk_free=11Gi
+2026-09-22T06:58:40Z AUTOBAHN DONE

@@ -1,0 +1,28 @@
+AREA              P0  P1  P2  DUP  REF  TOT
+CLIENT-POOL        0   2   5    1    0    8
+H1-CLIENT          0   3   4    0    0    7
+H1-SERVER          0   1   4    0    2    7
+H2                 2   4   5    0    0   11
+H3-QPACK           2   7   5    0    0   14
+IRI                0   1   3    0    0    4
+LIFETIME           0   2   1    1    0    4
+QUIC-TLS           0   2   2    1    0    5
+QUIC-TRANSPORT     1   4   6    0    0   11
+ROUTING-MW         0   2   3    0    0    5
+SSE                0   3   0    0    0    3
+WEBSOCKET          0   2   2    0    0    4
+TOTAL              5  33  40    3    2   83
+
+FILED (P0+P1+P2): 78
+duplicates folded: 3 | refuted probes: 2
+
+=== severity moved during verification ===
+  H1-SERVER-5          P2 -> P1
+  H3-QPACK-3           P0 -> P1
+  IRI-4                P2 -> P1
+  LIFETIME-2           P2 -> P1
+  LIFETIME-3           P2 -> P1
+  QUIC-TLS-3           P2 -> P1
+  QUIC-TRANSPORT-5     P2 -> P1
+  ROUTING-MW-2         P2 -> P1
+  WEBSOCKET-2          P2 -> P1

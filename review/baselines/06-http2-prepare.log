@@ -1,0 +1,12 @@
+Collecting h2==4.3.0 (from -r /Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/tests/requirements-http2.txt (line 1))
+  Using cached h2-4.3.0-py3-none-any.whl.metadata (5.1 kB)
+Collecting hyperframe<7,>=6.1 (from h2==4.3.0->-r /Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/tests/requirements-http2.txt (line 1))
+  Using cached hyperframe-6.1.0-py3-none-any.whl.metadata (4.3 kB)
+Collecting hpack<5,>=4.1 (from h2==4.3.0->-r /Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/tests/requirements-http2.txt (line 1))
+  Using cached hpack-4.2.0-py3-none-any.whl.metadata (3.3 kB)
+Using cached h2-4.3.0-py3-none-any.whl (61 kB)
+Using cached hpack-4.2.0-py3-none-any.whl (34 kB)
+Using cached hyperframe-6.1.0-py3-none-any.whl (13 kB)
+Installing collected packages: hyperframe, hpack, h2
+
+Successfully installed h2-4.3.0 hpack-4.2.0 hyperframe-6.1.0

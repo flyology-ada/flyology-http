@@ -1,0 +1,11 @@
+file:///Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/scripts/websocket-run-provenance.mjs:167
+    throw new Error(
+          ^
+
+Error: WebSocket run requires a clean worktree or the exact in-tree QUIC pin (0 tracked, 44 untracked)
+    at captureSourceSnapshot (file:///Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/scripts/websocket-run-provenance.mjs:167:11)
+    at beginRunMetadata (file:///Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/scripts/websocket-run-provenance.mjs:199:13)
+    at async main (file:///Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/scripts/websocket-run-provenance.mjs:631:7)
+    at async file:///Users/yrashk/Projects/flyology-ada/flyology-http/.claude/worktrees/exciting-lumiere-963c47/scripts/websocket-run-provenance.mjs:669:3
+
+Node.js v25.2.1

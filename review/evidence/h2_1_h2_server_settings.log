@@ -1,0 +1,10 @@
+# H2-1 pinned peer check: h2 4.3.0 (tests/requirements-http2.txt) server first flight
+h2 version: 4.3.0
+server first flight bytes: 00 00 2a 04 00 00 00 00 00 00 01 00 00 10 00 00 02 00 00 00 00 00 04 00 00 ff ff 00 05 00 00 40 00 00 08 00 00 00 00 00 03 00 00 00 64 00 06 00 01 00 00
+  setting 0x01 = 4096
+  setting 0x02 = 0
+  setting 0x04 = 65535
+  setting 0x05 = 16384
+  setting 0x08 = 0
+  setting 0x03 = 100
+  setting 0x06 = 65536

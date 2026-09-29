@@ -1,0 +1,7 @@
+# H2-6 pinned peer check: hpack 4.2.0 decoder, max_allowed_table_size = 0
+# input: tests/repros/obj/repro_h2_6_block.bin (emitted by repro_h2_6 after the peer set SETTINGS_HEADER_TABLE_SIZE = 0)
+hpack version: 4.2.0
+block: 82 86 01 09 6c 6f 63 61 6c 68 6f 73 74 84
+RESULT: InvalidTableSizeError: Encoder did not shrink table size to within the max
+with 0x20 prefix: [(':method', 'GET'), (':scheme', 'http'), (':authority', 'localhost'), (':path', '/')]
+RESULT: accepted

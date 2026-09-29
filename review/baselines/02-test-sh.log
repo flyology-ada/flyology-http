@@ -1,0 +1,2231 @@
+formal CI toolchain source and trace provenance pins passed
+Note: Running pre-build actions for flyology=0.1.1-dev...
+Note: Building flyology_http=0.1.3-dev/flyology_http.gpr...
+Success: Build finished successfully in 1.74 seconds.
+formal CI toolchain source and trace provenance pins passed
+Note: Building flyology_iri_tests=0.1.1-dev/flyology_iri_tests.gpr...
+Compile
+   [Ada]          flyology_iri_tests.adb
+   [Ada]          flyology_iri_url_cli.adb
+   [Ada]          flyology_iri-web.adb
+   [Ada]          flyology_iri-idna.adb
+   [Ada]          flyology_iri.adb
+   [Ada]          flyology_iri_differential.adb
+Build Libraries
+   [gprlib]       Flyology_IRI.lexch
+   [archive]      libFlyology_IRI.a
+   [index]        libFlyology_IRI.a
+Bind
+   [gprbind]      flyology_iri_tests.bexch
+   [gprbind]      flyology_iri_url_cli.bexch
+   [Ada]          flyology_iri_tests.ali
+   [Ada]          flyology_iri_url_cli.ali
+Link
+   [link]         flyology_iri_tests.adb
+   [link]         flyology_iri_url_cli.adb
+Success: Build finished successfully in 3.82 seconds.
+flyology_iri tests passed
+WPT URL conformance: 919/919 (100.0%), mismatches=0
+Note: Changes detected in pinned dependencies: flyology_quic
+Note: Synchronizing workspace...
+Dependencies automatically updated as follows:
+
+   ^  flyology_allocators 0.1.0                 (upgraded from 0.1.0-dev)
+   ^b gnat                16.2.0-patchset.1.1.1 (gnat_flyology_native,upgraded from 16.1.0,binary)
+
+Success: Partial build finished successfully in 0.10 seconds.
+Note: Build was requested to stop after stage: generation; build artifacts may be missing.
+Compile
+   [Ada]          flyology-quic-ack_frame_policy-smoke.adb
+   [Ada]          flyology-quic-ack_range_policy-smoke.adb
+   [Ada]          flyology-quic-application_connection-smoke.adb
+   [Ada]          flyology-quic-application_space-batch_smoke.adb
+   [Ada]          flyology-quic-application_space-smoke.adb
+   [Ada]          flyology-quic-application_frame_policy-smoke.adb
+   [Ada]          flyology-quic-connection_state_policy-smoke.adb
+   [Ada]          flyology-quic-connection_driver-smoke.adb
+   [Ada]          flyology-quic-connections-recovery_smoke.adb
+   [Ada]          flyology-quic-crypto_frame_policy-smoke.adb
+   [Ada]          flyology-quic-crypto_openssl-smoke.adb
+   [Ada]          flyology-quic-crypto_reassembly_policy-smoke.adb
+   [Ada]          flyology-quic-flow_control_policy-smoke.adb
+   [Ada]          flyology-quic-handshake_connection-smoke.adb
+   [Ada]          flyology-quic-handshake_packet_policy-smoke.adb
+   [Ada]          flyology-quic-handshake_sender-smoke.adb
+   [Ada]          flyology-quic-handshake_space-smoke.adb
+   [Ada]          flyology-quic-initial_frame_policy-smoke.adb
+   [Ada]          flyology-quic-initial_connection-smoke.adb
+   [Ada]          flyology-quic-initial_receiver-smoke.adb
+   [Ada]          flyology-quic-initial_sender-smoke.adb
+flyology-quic-application_space-batch_smoke.adb:4:04: warning: "Unsigned_64" is already use-visible through previous use_type_clause at flyology-quic-application_space.ads:22 [-gnatwr]
+flyology-quic-application_space-batch_smoke.adb:4:04: warning: use clause for type "Timestamp" defined at flyology-quic-application_space.ads:29 has no effect [-gnatwu]
+   [Ada]          flyology-quic-initial_space-smoke.adb
+   [Ada]          flyology-quic-initial_packet_policy-smoke.adb
+   [Ada]          flyology-quic-long_header_policy-smoke.adb
+flyology-quic-application_frame_policy-smoke.adb:3:04: warning: "Unsigned_64" is already use-visible through previous use_type_clause at flyology-quic-application_frame_policy.ads:16 [-gnatwr]
+flyology-quic-application_frame_policy-smoke.adb:3:04: warning: use clause for type "Value_Type" defined at flyology-quic-varint_policy.ads:16 has no effect [-gnatwu]
+   [Ada]          flyology-quic-one_rtt_packet_policy-smoke.adb
+   [Ada]          flyology-quic-one_rtt_sender-smoke.adb
+   [Ada]          flyology-quic-packet_number_policy-smoke.adb
+   [Ada]          flyology-quic-protection_policy-smoke.adb
+   [Ada]          flyology-quic-receive_flow_control_policy-smoke.adb
+   [Ada]          flyology-quic-recovery_policy-smoke.adb
+   [Ada]          flyology-quic-sent_packet_policy-smoke.adb
+   [Ada]          flyology-quic-stream_frame_policy-smoke.adb
+   [Ada]          flyology-quic-stream_id_policy-smoke.adb
+   [Ada]          flyology-quic-stream_reassembly_policy-smoke.adb
+   [Ada]          flyology-quic-stream_table_policy-smoke.adb
+   [Ada]          flyology-quic-tls_authentication_policy-smoke.adb
+   [Ada]          flyology-quic-tls_extension_policy-smoke.adb
+   [Ada]          flyology-quic-tls_handshake_policy-smoke.adb
+flyology-quic-application_space-smoke.adb:4:04: warning: "Unsigned_64" is already use-visible through previous use_type_clause at flyology-quic-application_space.ads:22 [-gnatwr]
+flyology-quic-application_space-smoke.adb:4:04: warning: use clause for type "Byte_Count" defined at flyology-quic-recovery_policy.ads:16 has no effect [-gnatwu]
+   [Ada]          flyology-quic-tls_key_schedule-smoke.adb
+   [Ada]          flyology-quic-tls_session-smoke.adb
+   [Ada]          flyology-quic-tls_signature_policy-smoke.adb
+   [Ada]          flyology-quic-tls_transport_smoke.adb
+flyology-quic-connection_driver-smoke.adb:20:04: warning: "Unsigned_64" is already use-visible through previous use_type_clause at flyology-quic-connection_driver.ads:20 [-gnatwr]
+flyology-quic-connection_driver-smoke.adb:20:04: warning: use clause for type "Value_Type" defined at flyology-quic-varint_policy.ads:16 has no effect [-gnatwu]
+   [Ada]          flyology-quic-transport_parameter_policy-smoke.adb
+   [Ada]          flyology-quic-varint_policy-smoke.adb
+   [Ada]          flyology_allocators-layouts.adb
+   [Ada]          flyology_allocators-storage.adb
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit_kernel.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span_kernel.adb
+   [Ada]          flyology_allocators-waits.adb
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf_kernel.adb
+flyology-quic-stream_reassembly_policy-smoke.adb:69:07: warning: "Window" is not modified, could be declared constant [-gnatwk]
+   [Ada]          flyology_allocators-allocation_algorithms.ads
+   [Ada]          flyology_allocators-allocation_algorithms-contract.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy.ads
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf.ads
+   [Ada]          flyology_allocators-regions.adb
+   [Ada]          flyology_allocators-policy.adb
+   [Ada]          flyology_allocators-arenas.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy_kernel.adb
+   [Ada]          flyology_allocators.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span.ads
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit.ads
+   [Ada]          flyology_allocators-atomics.adb
+   [C]            flyology_wake_source.c
+   [C]            flyology_sockets.c
+   [C]            flyology_shared_memory.c
+   [C]            flyology_subprocesses.c
+   [C]            flyology_wall_clock.c
+   [C]            flyology_tls_openssl.c
+   [C]            flyology_debug_producer_selection.c
+   [Ada]          flyology-wall_clock_testing.ads
+   [Ada]          flyology-wall_clock_io_testing.ads
+   [Ada]          flyology-file_watch_test_hooks.ads
+   [Ada]          flyology-structured_server_test_hooks.ads
+flyology_allocators-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology_allocators-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-subprocess_test_hooks.ads
+   [Ada]          flyology-task_lifecycle_test_hooks.ads
+   [Ada]          flyology-worker_pool_test_hooks.ads
+   [Ada]          flyology-connection_test_hooks.ads
+   [Ada]          flyology-tls_test_hooks.adb
+   [Ada]          flyology-dns_test_observations.ads
+   [Ada]          flyology-buffer_test_hooks.ads
+   [Ada]          flyology_config.ads
+   [Ada]          flyology-data_structures-clock_abi.ads
+   [Ada]          flyology.ads
+   [Ada]          flyology-shared_memory_native.adb
+   [Ada]          flyology-wall_clock_native.adb
+   [Ada]          flyology-wake_sources.adb
+   [Ada]          flyology-sendfile_bridge.adb
+   [Ada]          flyology-file_watch_native.adb
+   [Ada]          flyology-io-files-transfers.adb
+   [Ada]          flyology-observability.adb
+   [Ada]          flyology-operations.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span_kernel.ads
+   [Ada]          flyology-channels-bounded.adb
+   [Ada]          flyology-observability-stall_watchdogs.adb
+   [Ada]          flyology-io-dns-testing.adb
+   [Ada]          flyology-debug_producer_selection.adb
+   [Ada]          flyology-io-dns.adb
+   [Ada]          flyology-io-file_watches-recursive.adb
+   [Ada]          flyology-tls_policy.adb
+   [Ada]          flyology-supervision-task_generations.adb
+flyology-wall_clock_native.adb:4:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wall_clock_native.adb:4:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-process_generations-command_lines.adb
+   [Ada]          flyology-timer_set_policy.adb
+flyology-wake_sources.adb:3:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wake_sources.adb:3:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-shared_memory_policy.adb
+   [Ada]          flyology-placement_policy.adb
+   [Ada]          flyology-task_results.adb
+   [Ada]          flyology-supervision.adb
+   [Ada]          flyology-process_generations.ads
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf_kernel.ads
+   [Ada]          flyology-supervision-input_task_generations.adb
+   [Ada]          flyology-data_structures-atomics.adb
+   [Ada]          flyology-data_structures-policy.adb
+flyology-io-files-transfers.adb:8:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files-transfers.adb:8:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-buffers-drivers.adb
+   [Ada]          flyology-data_structures-storage_types.ads
+   [Ada]          flyology-connection_policy.adb
+   [Ada]          flyology-data_structures-envelopes.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit_kernel.ads
+   [Ada]          flyology-process_generations-protocol.adb
+   [Ada]          flyology-file_transfer_policy.adb
+flyology-data_structures-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-data_structures-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-data_structures-storage_types-unsigned_64s.adb
+   [Ada]          flyology-shared_memory-unix_sockets.adb
+   [Ada]          flyology-data_structures-storage_types-immutable.adb
+   [Ada]          flyology-bytes.adb
+   [Ada]          flyology-data_structures-byte_strings.adb
+   [Ada]          flyology-io-sockets-gnat_adapters.adb
+   [Ada]          flyology-channels.ads
+   [Ada]          flyology-atomic_primitives.adb
+   [Ada]          flyology-socket_policy.adb
+   [Ada]          flyology-io-tls.adb
+flyology-task_results.adb:5:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-task_results.adb:5:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-io-files.adb
+   [Ada]          flyology-process_generations-transport.adb
+   [Ada]          flyology-task_scopes.adb
+   [Ada]          flyology-execution_groups-topology.adb
+   [Ada]          flyology-dns_policy.adb
+   [Ada]          flyology-supervision-input_children.adb
+   [Ada]          flyology-supervision-static.adb
+flyology-atomic_primitives.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-atomic_primitives.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-io-tls_driver.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy.ads
+   [Ada]          flyology-data_structures-dynamic.ads
+   [Ada]          flyology-file_timeout_policy.adb
+   [Ada]          flyology-shared_memory-segments.adb
+   [Ada]          flyology-supervision_policy.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit.ads
+   [Ada]          flyology-subprocesses-capture.adb
+   [Ada]          flyology-worker_pools.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-adapter.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf.ads
+   [Ada]          flyology-native_executor_policy.adb
+   [Ada]          flyology-buffers.adb
+   [Ada]          flyology-file_open_policy.adb
+   [Ada]          flyology-data_structures-clock_policy.adb
+   [Ada]          flyology-native_executors.adb
+   [Ada]          flyology-process_generations-coordinators.adb
+   [Ada]          flyology-tls_openssl_raw.adb
+   [Ada]          flyology-operations-drivers.adb
+   [Ada]          flyology-structured_server_policy.adb
+   [Ada]          flyology-process_lifecycle.adb
+   [Ada]          flyology-buffers-domains.adb
+   [Ada]          flyology-data_structures-storage_types-elements.adb
+   [Ada]          flyology-io-tls-openssl.adb
+   [Ada]          flyology-process_generation_policy.adb
+flyology-io-files.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-tls_openssl_policy.adb
+   [Ada]          flyology-io-file_watches.adb
+   [Ada]          flyology-io-connections-tls.adb
+   [Ada]          flyology-data_structures-dynamic-hash_maps.adb
+   [Ada]          flyology-wait_policy.adb
+   [Ada]          flyology-data_structures.adb
+   [Ada]          flyology-data_structures-vectors.adb
+   [Ada]          flyology-topology_policy.adb
+   [Ada]          flyology-process_generations-agents.adb
+   [Ada]          flyology-subprocesses-bootstrap.adb
+   [Ada]          flyology-capacity.adb
+   [Ada]          flyology-data_structures-slab_pools.adb
+   [Ada]          flyology-io-timers.adb
+   [Ada]          flyology-subprocesses.adb
+   [Ada]          flyology-io-connections.adb
+   [Ada]          flyology-data_structures-allocation_pools.ads
+   [Ada]          flyology-io-tls-alpn.adb
+   [Ada]          flyology-shared_memory.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy_kernel.ads
+   [Ada]          flyology-data_structures-regions.adb
+   [Ada]          flyology-capacity_policy.adb
+   [Ada]          flyology-data_structures-dynamic-byte_strings.adb
+   [Ada]          flyology-fairness.adb
+   [Ada]          flyology-buffers-channels.adb
+   [Ada]          flyology-io-tls-drivers.adb
+   [Ada]          flyology-channel_policy.adb
+   [Ada]          flyology-cancellation.adb
+   [Ada]          flyology-data_structures-layouts.adb
+   [Ada]          flyology-time_math.adb
+   [Ada]          flyology-supervision-families.adb
+   [Ada]          flyology-io-socket_handoffs.adb
+   [Ada]          flyology-worker_pool_policy.adb
+   [Ada]          flyology-process_generations-messages.adb
+   [Ada]          flyology-memory_regions.adb
+   [Ada]          flyology-wall_clock_policy.adb
+   [Ada]          flyology-descriptor_handoffs.adb
+   [Ada]          flyology-data_structures-handles.ads
+   [Ada]          flyology-supervision-children.adb
+   [Ada]          flyology-data_structures-allocation_algorithms.ads
+   [Ada]          flyology-data_structures-hash_maps.adb
+   [Ada]          flyology-data_structures-rings-spsc.adb
+   [Ada]          flyology-data_structures-rings.ads
+   [Ada]          flyology-data_structures-storage.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span.ads
+   [Ada]          flyology-wall_clock_native_policy.adb
+   [Ada]          flyology-dormancy.adb
+   [Ada]          flyology-wall_clock_waits.adb
+   [Ada]          flyology-data_structures-allocation_pools-adaptive.adb
+   [Ada]          flyology-io-connections-drivers.adb
+   [Ada]          flyology-io.adb
+   [Ada]          flyology-memory_operations.adb
+   [Ada]          flyology-supervision-families-prepared_admissions.adb
+   [Ada]          flyology-io-structured_servers.adb
+   [Ada]          flyology-execution_groups.adb
+   [Ada]          flyology-io-sockets.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-contract.ads
+   [Ada]          flyology-data_structures-waits.adb
+   [Ada]          flyology-data_structures-arenas.ads
+   [Ada]          flyology-buffers-domains-drivers.adb
+   [Ada]          flyology-supervision-service_slots.adb
+   [Ada]          flyology-supervision-adapters.adb
+   [Ada]          flyology-data_structures-rings-mpmc.adb
+   [Ada]          flyology-counter_policy.adb
+   [Ada]          flyology-task_scope_policy.adb
+   [Ada]          flyology-bounded_channels.adb
+   [Ada]          flyology-data_structures-dynamic-vectors.adb
+   [C]            flyology_quic_openssl.c
+   [Ada]          flyology-quic-debug.adb
+flyology-io.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-quic-debug_config.ads
+   [Ada]          flyology-quic-crypto_openssl.adb
+   [Ada]          flyology-quic-ack_range_policy.adb
+   [Ada]          flyology-quic-initial_receiver.adb
+   [Ada]          flyology-quic-protection_policy.adb
+   [Ada]          flyology-quic-application_frame_policy.adb
+   [Ada]          flyology-quic-flow_control_policy.adb
+   [Ada]          flyology-quic-connection_state_policy.adb
+   [Ada]          flyology-quic-initial_frame_policy.adb
+   [Ada]          flyology-quic-stream_table_policy.adb
+   [Ada]          flyology-quic-crypto_reassembly_policy.adb
+   [Ada]          flyology-quic-application_space.adb
+   [Ada]          flyology-quic-connections-io.adb
+   [Ada]          flyology-quic-initial_packet_policy.adb
+   [Ada]          flyology-quic-stream_frame_policy.adb
+   [Ada]          flyology-quic-one_rtt_sender.adb
+   [Ada]          flyology-quic-tls_session.adb
+   [Ada]          flyology-quic-connections.adb
+   [Ada]          flyology-quic-tls_handshake_policy.adb
+   [Ada]          flyology-quic-stream_id_policy.adb
+   [Ada]          flyology-quic.ads
+   [Ada]          flyology-quic-application_connection.adb
+   [Ada]          flyology-quic-tls_extension_policy.adb
+flyology-io-connections.adb:10:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-io-connections.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-quic-long_header_policy.adb
+   [Ada]          flyology-quic-handshake_receiver.adb
+   [Ada]          flyology-quic-sent_packet_policy.adb
+   [Ada]          flyology-quic-recovery_policy.adb
+   [Ada]          flyology-quic-initial_space.adb
+   [Ada]          flyology-quic-handshake_sender.adb
+   [Ada]          flyology-quic-tls_signature_policy.adb
+   [Ada]          flyology-quic-crypto_frame_policy.adb
+   [Ada]          flyology-quic-connection_io.adb
+   [Ada]          flyology-quic-handshake_packet_policy.adb
+   [Ada]          flyology-quic-connection_driver.adb
+   [Ada]          flyology-quic-tls_key_schedule.adb
+   [Ada]          flyology-quic-stream_reassembly_policy.adb
+   [Ada]          flyology-quic-one_rtt_receiver.adb
+   [Ada]          flyology-quic-initial_sender.adb
+   [Ada]          flyology-quic-one_rtt_packet_policy.adb
+   [Ada]          flyology-quic-handshake_space.adb
+   [Ada]          flyology-quic-varint_policy.adb
+   [Ada]          flyology-quic-transport_parameter_policy.adb
+   [Ada]          flyology-quic-ack_frame_policy.adb
+   [Ada]          flyology-quic-packet_number_policy.adb
+   [Ada]          flyology-quic-receive_flow_control_policy.adb
+   [Ada]          flyology-quic-crypto_flight.adb
+   [Ada]          flyology-quic-handshake_connection.adb
+   [Ada]          flyology-quic-tls_authentication_policy.adb
+   [Ada]          flyology-quic-initial_connection.adb
+flyology-io-sockets.adb:10:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-io-sockets.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+Build Libraries
+   [gprlib]       flyology_allocators.lexch
+   [gprlib]       Flyology.lexch
+   [archive]      libflyology_allocators.a
+   [index]        libflyology_allocators.a
+   [gprlib]       Flyology_QUIC.lexch
+   [archive]      libFlyology.a
+   [index]        libFlyology.a
+   [archive]      libFlyology_QUIC.a
+   [index]        libFlyology_QUIC.a
+Bind
+   [gprbind]      flyology-quic-ack_frame_policy-smoke.bexch
+   [gprbind]      flyology-quic-ack_range_policy-smoke.bexch
+   [gprbind]      flyology-quic-application_connection-smoke.bexch
+   [gprbind]      flyology-quic-application_space-batch_smoke.bexch
+   [Ada]          flyology-quic-application_connection-smoke.ali
+   [Ada]          flyology-quic-ack_range_policy-smoke.ali
+   [Ada]          flyology-quic-ack_frame_policy-smoke.ali
+   [gprbind]      flyology-quic-application_space-smoke.bexch
+   [Ada]          flyology-quic-application_space-batch_smoke.ali
+   [gprbind]      flyology-quic-application_frame_policy-smoke.bexch
+   [Ada]          flyology-quic-application_space-smoke.ali
+   [gprbind]      flyology-quic-connection_state_policy-smoke.bexch
+   [Ada]          flyology-quic-application_frame_policy-smoke.ali
+   [gprbind]      flyology-quic-connection_driver-smoke.bexch
+   [Ada]          flyology-quic-connection_state_policy-smoke.ali
+   [gprbind]      flyology-quic-connections-recovery_smoke.bexch
+   [Ada]          flyology-quic-connection_driver-smoke.ali
+   [Ada]          flyology-quic-connections-recovery_smoke.ali
+   [gprbind]      flyology-quic-crypto_frame_policy-smoke.bexch
+   [Ada]          flyology-quic-crypto_frame_policy-smoke.ali
+   [gprbind]      flyology-quic-crypto_openssl-smoke.bexch
+   [Ada]          flyology-quic-crypto_openssl-smoke.ali
+   [gprbind]      flyology-quic-crypto_reassembly_policy-smoke.bexch
+   [Ada]          flyology-quic-crypto_reassembly_policy-smoke.ali
+   [gprbind]      flyology-quic-flow_control_policy-smoke.bexch
+   [Ada]          flyology-quic-flow_control_policy-smoke.ali
+   [gprbind]      flyology-quic-handshake_connection-smoke.bexch
+   [gprbind]      flyology-quic-handshake_packet_policy-smoke.bexch
+   [Ada]          flyology-quic-handshake_connection-smoke.ali
+   [Ada]          flyology-quic-handshake_packet_policy-smoke.ali
+   [gprbind]      flyology-quic-handshake_sender-smoke.bexch
+   [Ada]          flyology-quic-handshake_sender-smoke.ali
+   [gprbind]      flyology-quic-handshake_space-smoke.bexch
+   [gprbind]      flyology-quic-initial_frame_policy-smoke.bexch
+   [Ada]          flyology-quic-handshake_space-smoke.ali
+   [gprbind]      flyology-quic-initial_connection-smoke.bexch
+   [Ada]          flyology-quic-initial_frame_policy-smoke.ali
+   [gprbind]      flyology-quic-initial_receiver-smoke.bexch
+   [Ada]          flyology-quic-initial_connection-smoke.ali
+   [gprbind]      flyology-quic-initial_sender-smoke.bexch
+   [Ada]          flyology-quic-initial_receiver-smoke.ali
+   [gprbind]      flyology-quic-initial_space-smoke.bexch
+   [Ada]          flyology-quic-initial_sender-smoke.ali
+   [gprbind]      flyology-quic-initial_packet_policy-smoke.bexch
+   [Ada]          flyology-quic-initial_space-smoke.ali
+   [Ada]          flyology-quic-initial_packet_policy-smoke.ali
+   [gprbind]      flyology-quic-long_header_policy-smoke.bexch
+   [Ada]          flyology-quic-long_header_policy-smoke.ali
+   [gprbind]      flyology-quic-one_rtt_packet_policy-smoke.bexch
+   [Ada]          flyology-quic-one_rtt_packet_policy-smoke.ali
+   [gprbind]      flyology-quic-one_rtt_sender-smoke.bexch
+   [gprbind]      flyology-quic-packet_number_policy-smoke.bexch
+   [Ada]          flyology-quic-one_rtt_sender-smoke.ali
+   [Ada]          flyology-quic-packet_number_policy-smoke.ali
+   [gprbind]      flyology-quic-protection_policy-smoke.bexch
+   [Ada]          flyology-quic-protection_policy-smoke.ali
+   [gprbind]      flyology-quic-receive_flow_control_policy-smoke.bexch
+   [Ada]          flyology-quic-receive_flow_control_policy-smoke.ali
+   [gprbind]      flyology-quic-recovery_policy-smoke.bexch
+   [gprbind]      flyology-quic-sent_packet_policy-smoke.bexch
+   [Ada]          flyology-quic-recovery_policy-smoke.ali
+   [Ada]          flyology-quic-sent_packet_policy-smoke.ali
+   [gprbind]      flyology-quic-stream_frame_policy-smoke.bexch
+   [Ada]          flyology-quic-stream_frame_policy-smoke.ali
+   [gprbind]      flyology-quic-stream_id_policy-smoke.bexch
+   [gprbind]      flyology-quic-stream_reassembly_policy-smoke.bexch
+   [Ada]          flyology-quic-stream_id_policy-smoke.ali
+   [Ada]          flyology-quic-stream_reassembly_policy-smoke.ali
+   [gprbind]      flyology-quic-stream_table_policy-smoke.bexch
+   [gprbind]      flyology-quic-tls_authentication_policy-smoke.bexch
+   [Ada]          flyology-quic-stream_table_policy-smoke.ali
+   [gprbind]      flyology-quic-tls_extension_policy-smoke.bexch
+   [Ada]          flyology-quic-tls_authentication_policy-smoke.ali
+   [Ada]          flyology-quic-tls_extension_policy-smoke.ali
+   [gprbind]      flyology-quic-tls_handshake_policy-smoke.bexch
+   [Ada]          flyology-quic-tls_handshake_policy-smoke.ali
+   [gprbind]      flyology-quic-tls_key_schedule-smoke.bexch
+   [Ada]          flyology-quic-tls_key_schedule-smoke.ali
+   [gprbind]      flyology-quic-tls_session-smoke.bexch
+   [Ada]          flyology-quic-tls_session-smoke.ali
+   [gprbind]      flyology-quic-tls_signature_policy-smoke.bexch
+   [Ada]          flyology-quic-tls_signature_policy-smoke.ali
+   [gprbind]      flyology-quic-tls_transport_smoke.bexch
+   [gprbind]      flyology-quic-transport_parameter_policy-smoke.bexch
+   [Ada]          flyology-quic-tls_transport_smoke.ali
+   [Ada]          flyology-quic-transport_parameter_policy-smoke.ali
+   [gprbind]      flyology-quic-varint_policy-smoke.bexch
+   [Ada]          flyology-quic-varint_policy-smoke.ali
+Link
+   [link]         flyology-quic-ack_frame_policy-smoke.adb
+   [link]         flyology-quic-ack_range_policy-smoke.adb
+   [link]         flyology-quic-application_connection-smoke.adb
+   [link]         flyology-quic-application_space-batch_smoke.adb
+   [link]         flyology-quic-application_space-smoke.adb
+   [link]         flyology-quic-application_frame_policy-smoke.adb
+   [link]         flyology-quic-connection_state_policy-smoke.adb
+   [link]         flyology-quic-connection_driver-smoke.adb
+   [link]         flyology-quic-connections-recovery_smoke.adb
+   [link]         flyology-quic-crypto_frame_policy-smoke.adb
+   [link]         flyology-quic-crypto_openssl-smoke.adb
+   [link]         flyology-quic-crypto_reassembly_policy-smoke.adb
+   [link]         flyology-quic-flow_control_policy-smoke.adb
+   [link]         flyology-quic-handshake_connection-smoke.adb
+   [link]         flyology-quic-handshake_packet_policy-smoke.adb
+   [link]         flyology-quic-handshake_sender-smoke.adb
+   [link]         flyology-quic-handshake_space-smoke.adb
+   [link]         flyology-quic-initial_frame_policy-smoke.adb
+   [link]         flyology-quic-initial_connection-smoke.adb
+   [link]         flyology-quic-initial_receiver-smoke.adb
+   [link]         flyology-quic-initial_sender-smoke.adb
+   [link]         flyology-quic-initial_space-smoke.adb
+   [link]         flyology-quic-initial_packet_policy-smoke.adb
+   [link]         flyology-quic-long_header_policy-smoke.adb
+   [link]         flyology-quic-one_rtt_packet_policy-smoke.adb
+   [link]         flyology-quic-one_rtt_sender-smoke.adb
+   [link]         flyology-quic-packet_number_policy-smoke.adb
+   [link]         flyology-quic-protection_policy-smoke.adb
+   [link]         flyology-quic-receive_flow_control_policy-smoke.adb
+   [link]         flyology-quic-recovery_policy-smoke.adb
+   [link]         flyology-quic-sent_packet_policy-smoke.adb
+   [link]         flyology-quic-stream_frame_policy-smoke.adb
+   [link]         flyology-quic-stream_id_policy-smoke.adb
+   [link]         flyology-quic-stream_reassembly_policy-smoke.adb
+   [link]         flyology-quic-stream_table_policy-smoke.adb
+   [link]         flyology-quic-tls_authentication_policy-smoke.adb
+   [link]         flyology-quic-tls_extension_policy-smoke.adb
+   [link]         flyology-quic-tls_handshake_policy-smoke.adb
+   [link]         flyology-quic-tls_key_schedule-smoke.adb
+   [link]         flyology-quic-tls_session-smoke.adb
+   [link]         flyology-quic-tls_signature_policy-smoke.adb
+   [link]         flyology-quic-tls_transport_smoke.adb
+   [link]         flyology-quic-transport_parameter_policy-smoke.adb
+   [link]         flyology-quic-varint_policy-smoke.adb
+flyology_quic test: BEGIN flyology-quic-ack_frame_policy-smoke
+flyology_quic test: PASS flyology-quic-ack_frame_policy-smoke
+flyology_quic test: BEGIN flyology-quic-ack_range_policy-smoke
+flyology_quic test: PASS flyology-quic-ack_range_policy-smoke
+flyology_quic test: BEGIN flyology-quic-application_connection-smoke
+flyology_quic test: PASS flyology-quic-application_connection-smoke
+flyology_quic test: BEGIN flyology-quic-application_space-batch_smoke
+flyology_quic test: PASS flyology-quic-application_space-batch_smoke
+flyology_quic test: BEGIN flyology-quic-application_space-smoke
+flyology_quic test: PASS flyology-quic-application_space-smoke
+flyology_quic test: BEGIN flyology-quic-application_frame_policy-smoke
+flyology_quic test: PASS flyology-quic-application_frame_policy-smoke
+flyology_quic test: BEGIN flyology-quic-connection_state_policy-smoke
+flyology_quic test: PASS flyology-quic-connection_state_policy-smoke
+flyology_quic test: BEGIN flyology-quic-connection_driver-smoke
+flyology_quic test: PASS flyology-quic-connection_driver-smoke
+flyology_quic test: BEGIN flyology-quic-connections-recovery_smoke
+flyology_quic test: PASS flyology-quic-connections-recovery_smoke
+flyology_quic test: BEGIN flyology-quic-crypto_frame_policy-smoke
+flyology_quic test: PASS flyology-quic-crypto_frame_policy-smoke
+flyology_quic test: BEGIN flyology-quic-crypto_openssl-smoke
+flyology_quic test: PASS flyology-quic-crypto_openssl-smoke
+flyology_quic test: BEGIN flyology-quic-crypto_reassembly_policy-smoke
+flyology_quic test: PASS flyology-quic-crypto_reassembly_policy-smoke
+flyology_quic test: BEGIN flyology-quic-flow_control_policy-smoke
+flyology_quic test: PASS flyology-quic-flow_control_policy-smoke
+flyology_quic test: BEGIN flyology-quic-handshake_connection-smoke
+flyology_quic test: PASS flyology-quic-handshake_connection-smoke
+flyology_quic test: BEGIN flyology-quic-handshake_packet_policy-smoke
+flyology_quic test: PASS flyology-quic-handshake_packet_policy-smoke
+flyology_quic test: BEGIN flyology-quic-handshake_sender-smoke
+flyology_quic test: PASS flyology-quic-handshake_sender-smoke
+flyology_quic test: BEGIN flyology-quic-handshake_space-smoke
+flyology_quic test: PASS flyology-quic-handshake_space-smoke
+flyology_quic test: BEGIN flyology-quic-initial_frame_policy-smoke
+flyology_quic test: PASS flyology-quic-initial_frame_policy-smoke
+flyology_quic test: BEGIN flyology-quic-initial_connection-smoke
+flyology_quic test: PASS flyology-quic-initial_connection-smoke
+flyology_quic test: BEGIN flyology-quic-initial_receiver-smoke
+flyology_quic test: PASS flyology-quic-initial_receiver-smoke
+flyology_quic test: BEGIN flyology-quic-initial_sender-smoke
+flyology_quic test: PASS flyology-quic-initial_sender-smoke
+flyology_quic test: BEGIN flyology-quic-initial_space-smoke
+flyology_quic test: PASS flyology-quic-initial_space-smoke
+flyology_quic test: BEGIN flyology-quic-initial_packet_policy-smoke
+flyology_quic test: PASS flyology-quic-initial_packet_policy-smoke
+flyology_quic test: BEGIN flyology-quic-long_header_policy-smoke
+flyology_quic test: PASS flyology-quic-long_header_policy-smoke
+flyology_quic test: BEGIN flyology-quic-one_rtt_packet_policy-smoke
+flyology_quic test: PASS flyology-quic-one_rtt_packet_policy-smoke
+flyology_quic test: BEGIN flyology-quic-one_rtt_sender-smoke
+flyology_quic test: PASS flyology-quic-one_rtt_sender-smoke
+flyology_quic test: BEGIN flyology-quic-packet_number_policy-smoke
+flyology_quic test: PASS flyology-quic-packet_number_policy-smoke
+flyology_quic test: BEGIN flyology-quic-protection_policy-smoke
+flyology_quic test: PASS flyology-quic-protection_policy-smoke
+flyology_quic test: BEGIN flyology-quic-receive_flow_control_policy-smoke
+flyology_quic test: PASS flyology-quic-receive_flow_control_policy-smoke
+flyology_quic test: BEGIN flyology-quic-recovery_policy-smoke
+flyology_quic test: PASS flyology-quic-recovery_policy-smoke
+flyology_quic test: BEGIN flyology-quic-sent_packet_policy-smoke
+flyology_quic test: PASS flyology-quic-sent_packet_policy-smoke
+flyology_quic test: BEGIN flyology-quic-stream_frame_policy-smoke
+flyology_quic test: PASS flyology-quic-stream_frame_policy-smoke
+flyology_quic test: BEGIN flyology-quic-stream_id_policy-smoke
+flyology_quic test: PASS flyology-quic-stream_id_policy-smoke
+flyology_quic test: BEGIN flyology-quic-stream_reassembly_policy-smoke
+flyology_quic test: PASS flyology-quic-stream_reassembly_policy-smoke
+flyology_quic test: BEGIN flyology-quic-stream_table_policy-smoke
+flyology_quic test: PASS flyology-quic-stream_table_policy-smoke
+flyology_quic test: BEGIN flyology-quic-tls_authentication_policy-smoke
+flyology_quic test: PASS flyology-quic-tls_authentication_policy-smoke
+flyology_quic test: BEGIN flyology-quic-tls_extension_policy-smoke
+flyology_quic test: PASS flyology-quic-tls_extension_policy-smoke
+flyology_quic test: BEGIN flyology-quic-tls_handshake_policy-smoke
+flyology_quic test: PASS flyology-quic-tls_handshake_policy-smoke
+flyology_quic test: BEGIN flyology-quic-tls_key_schedule-smoke
+flyology_quic test: PASS flyology-quic-tls_key_schedule-smoke
+flyology_quic test: BEGIN flyology-quic-tls_session-smoke
+flyology_quic test: PASS flyology-quic-tls_session-smoke
+flyology_quic test: BEGIN flyology-quic-tls_signature_policy-smoke
+flyology_quic test: PASS flyology-quic-tls_signature_policy-smoke
+flyology_quic test: BEGIN flyology-quic-tls_transport_smoke
+flyology_quic test: PASS flyology-quic-tls_transport_smoke
+flyology_quic test: BEGIN flyology-quic-transport_parameter_policy-smoke
+flyology_quic test: PASS flyology-quic-transport_parameter_policy-smoke
+flyology_quic test: BEGIN flyology-quic-varint_policy-smoke
+flyology_quic test: PASS flyology-quic-varint_policy-smoke
+flyology_http test: BUILD 66 programs (behavioral)
+Setup
+   [mkdir]        object directory for project Flyology_Allocators
+   [mkdir]        object directory for project Flyology
+   [mkdir]        object directory for project Flyology_Cachelines
+   [mkdir]        object directory for project Flyology_QUIC
+   [mkdir]        library directory for project Flyology_Allocators
+   [mkdir]        library directory for project Flyology
+   [mkdir]        library directory for project Flyology_Cachelines
+   [mkdir]        library directory for project Flyology_QUIC
+Compile
+   [Ada]          flyology-rate_limit_policy_smoke.adb
+   [Ada]          flyology-http_chunk_encoding-smoke.adb
+   [Ada]          flyology-websocket_policy-smoke.adb
+   [Ada]          flyology-websocket_client_policy-smoke.adb
+   [Ada]          flyology-http-decoded_path_policy-smoke.adb
+   [Ada]          flyology-http-expect_policy-smoke.adb
+   [Ada]          flyology-http-fixed_response_policy-smoke.adb
+   [Ada]          flyology-http-header_huffman_policy-smoke.adb
+   [Ada]          flyology-http-client_policy-smoke.adb
+   [Ada]          flyology-http-http_2_frames-smoke.adb
+   [Ada]          flyology-http-http_2_huffman-smoke.adb
+   [Ada]          flyology-http-http_2_hpack-smoke.adb
+   [Ada]          flyology-http-http_2_client_connection-smoke.adb
+   [Ada]          flyology-http-http_2_payloads-smoke.adb
+   [Ada]          flyology-http-http_2_policy-smoke.adb
+   [Ada]          flyology-http-http_2_requests-smoke.adb
+   [Ada]          flyology-http-http_2_settings-smoke.adb
+   [Ada]          flyology-http-http_3_control_policy-smoke.adb
+   [Ada]          flyology-http-http_3_connection-smoke.adb
+   [Ada]          flyology-http-http_3_client_connection-smoke.adb
+   [Ada]          development_certificates_smoke.adb
+   [Ada]          http3_public_smoke.adb
+   [Ada]          http3_server_integration.adb
+   [Ada]          http3_handshake_abandon.adb
+   [Ada]          http3_handshake_recovery.adb
+   [Ada]          flyology-http-http_3_frame_policy-smoke.adb
+   [Ada]          flyology-http-http_3_header_policy-smoke.adb
+   [Ada]          flyology-http-http_3_message_policy-smoke.adb
+   [Ada]          flyology-http-http_3_settings_policy-smoke.adb
+   [Ada]          flyology-http-http_3_stream_policy-smoke.adb
+   [Ada]          flyology-http-http_3_stream_receive_policy-smoke.adb
+   [Ada]          flyology-http-qpack_field_section_policy-smoke.adb
+   [Ada]          flyology-http-qpack_integer_policy-smoke.adb
+   [Ada]          flyology-http-qpack_static_table-smoke.adb
+   [Ada]          flyology-http-route_parameter_policy-smoke.adb
+   [Ada]          flyology-websocket_deflate_policy_smoke.adb
+   [Ada]          buffers_smoke.adb
+   [Ada]          tls_smoke.adb
+   [Ada]          http_smoke.adb
+   [Ada]          http_operations_smoke.adb
+   [Ada]          http_client_composable_smoke.adb
+   [Ada]          http_client_composable_stale_reuse.adb
+   [Ada]          http1_sse_client_integration.adb
+   [Ada]          http_client_smoke.adb
+   [Ada]          http_client_addressing.adb
+   [Ada]          http_client_authentication.adb
+   [Ada]          http_client_boundaries_smoke.adb
+   [Ada]          http_client_body_adapters_smoke.adb
+   [Ada]          http_client_upload_controls_smoke.adb
+   [Ada]          http_client_streaming_smoke.adb
+   [Ada]          http_unix_client_smoke.adb
+   [Ada]          http_client_rfc_corpus.adb
+   [Ada]          http_client_parser_matrix.adb
+   [Ada]          http_client_parser_randomized.adb
+   [Ada]          http_client_pool_model.adb
+   [Ada]          http_client_redirects.adb
+   [Ada]          http_client_tls_closure.adb
+   [Ada]          http_client_tls_smoke.adb
+   [Ada]          http2_server_integration.adb
+   [Ada]          websocket_client_smoke.adb
+   [Ada]          websocket_client_tls_smoke.adb
+   [Ada]          http_server_audit.adb
+   [Ada]          http_routing_audit.adb
+   [Ada]          http2_server_audit.adb
+   [Ada]          http_client_audit.adb
+   [Ada]          websocket_server_audit.adb
+   [C]            flyology_quic_openssl.c
+   [Ada]          flyology-quic-debug.adb
+   [Ada]          flyology-quic-debug_config.ads
+   [Ada]          flyology-quic-crypto_openssl.adb
+   [Ada]          flyology-quic-ack_range_policy.adb
+   [Ada]          flyology-quic-initial_receiver.adb
+   [Ada]          flyology-quic-protection_policy.adb
+   [Ada]          flyology-quic-application_frame_policy.adb
+   [Ada]          flyology-quic-flow_control_policy.adb
+   [Ada]          flyology-quic-connection_state_policy.adb
+   [Ada]          flyology-quic-initial_frame_policy.adb
+   [Ada]          flyology-quic-stream_table_policy.adb
+   [Ada]          flyology-quic-crypto_reassembly_policy.adb
+   [Ada]          flyology-quic-application_space.adb
+   [Ada]          flyology-quic-connections-io.adb
+   [Ada]          flyology-quic-initial_packet_policy.adb
+   [Ada]          flyology-quic-stream_frame_policy.adb
+   [Ada]          flyology-quic-one_rtt_sender.adb
+   [Ada]          flyology-quic-tls_session.adb
+   [Ada]          flyology-quic-connections.adb
+   [Ada]          flyology-quic-tls_handshake_policy.adb
+   [Ada]          flyology-quic-stream_id_policy.adb
+   [Ada]          flyology-quic.ads
+   [Ada]          flyology-quic-application_connection.adb
+   [Ada]          flyology-quic-tls_extension_policy.adb
+   [Ada]          flyology-quic-long_header_policy.adb
+   [Ada]          flyology-quic-handshake_receiver.adb
+   [Ada]          flyology-quic-sent_packet_policy.adb
+   [Ada]          flyology-quic-recovery_policy.adb
+   [Ada]          flyology-quic-initial_space.adb
+   [Ada]          flyology-quic-handshake_sender.adb
+   [Ada]          flyology-quic-tls_signature_policy.adb
+   [Ada]          flyology-quic-crypto_frame_policy.adb
+   [Ada]          flyology-quic-connection_io.adb
+   [Ada]          flyology-quic-handshake_packet_policy.adb
+   [Ada]          flyology-quic-connection_driver.adb
+   [Ada]          flyology-quic-tls_key_schedule.adb
+   [Ada]          flyology-quic-stream_reassembly_policy.adb
+   [Ada]          flyology-quic-one_rtt_receiver.adb
+   [Ada]          flyology-quic-initial_sender.adb
+   [Ada]          flyology-quic-one_rtt_packet_policy.adb
+   [Ada]          flyology-quic-handshake_space.adb
+   [Ada]          flyology-quic-varint_policy.adb
+   [Ada]          flyology-quic-transport_parameter_policy.adb
+   [Ada]          flyology-quic-ack_frame_policy.adb
+   [Ada]          flyology-quic-packet_number_policy.adb
+   [Ada]          flyology-quic-receive_flow_control_policy.adb
+   [Ada]          flyology-quic-crypto_flight.adb
+   [Ada]          flyology-quic-handshake_connection.adb
+   [Ada]          flyology-quic-tls_authentication_policy.adb
+   [Ada]          flyology-quic-initial_connection.adb
+   [Ada]          flyology_cachelines-platform.adb
+   [Ada]          flyology_cachelines_config.ads
+   [Ada]          flyology_cachelines-padded.ads
+   [Ada]          flyology_cachelines.adb
+   [Ada]          flyology_cachelines-padded_groups.adb
+   [Ada]          flyology_cachelines-fitted_groups.adb
+   [Ada]          flyology_allocators-layouts.adb
+   [Ada]          flyology_allocators-storage.adb
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit_kernel.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span_kernel.adb
+   [Ada]          flyology_allocators-waits.adb
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf_kernel.adb
+   [Ada]          flyology_allocators-allocation_algorithms.ads
+   [Ada]          flyology_allocators-allocation_algorithms-contract.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy.ads
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf.ads
+   [Ada]          flyology_allocators-regions.adb
+   [Ada]          flyology_allocators-policy.adb
+   [Ada]          flyology_allocators-arenas.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy_kernel.adb
+   [Ada]          flyology_allocators.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span.ads
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit.ads
+   [Ada]          flyology_allocators-atomics.adb
+   [C]            flyology_wake_source.c
+   [C]            flyology_sockets.c
+   [C]            flyology_shared_memory.c
+   [C]            flyology_subprocesses.c
+   [C]            flyology_wall_clock.c
+   [C]            flyology_tls_openssl.c
+flyology_allocators-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology_allocators-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [C]            flyology_debug_producer_selection.c
+   [Ada]          flyology-wall_clock_testing.ads
+   [Ada]          flyology-wall_clock_io_testing.ads
+   [Ada]          flyology-file_watch_test_hooks.ads
+   [Ada]          flyology-structured_server_test_hooks.ads
+   [Ada]          flyology-subprocess_test_hooks.ads
+   [Ada]          flyology-task_lifecycle_test_hooks.ads
+   [Ada]          flyology-worker_pool_test_hooks.ads
+   [Ada]          flyology-connection_test_hooks.ads
+   [Ada]          flyology-tls_test_hooks.adb
+   [Ada]          flyology-dns_test_observations.ads
+   [Ada]          flyology-buffer_test_hooks.ads
+   [Ada]          flyology_config.ads
+   [Ada]          flyology-data_structures-clock_abi.ads
+   [Ada]          flyology.ads
+   [Ada]          flyology-shared_memory_native.adb
+   [Ada]          flyology-wall_clock_native.adb
+   [Ada]          flyology-wake_sources.adb
+   [Ada]          flyology-sendfile_bridge.adb
+   [Ada]          flyology-file_watch_native.adb
+   [Ada]          flyology-io-files-transfers.adb
+   [Ada]          flyology-observability.adb
+   [Ada]          flyology-operations.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span_kernel.ads
+   [Ada]          flyology-channels-bounded.adb
+   [Ada]          flyology-observability-stall_watchdogs.adb
+flyology-wake_sources.adb:3:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wake_sources.adb:3:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-io-dns-testing.adb
+flyology-wall_clock_native.adb:4:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wall_clock_native.adb:4:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-debug_producer_selection.adb
+   [Ada]          flyology-io-dns.adb
+   [Ada]          flyology-io-file_watches-recursive.adb
+   [Ada]          flyology-tls_policy.adb
+   [Ada]          flyology-supervision-task_generations.adb
+   [Ada]          flyology-process_generations-command_lines.adb
+flyology-io-files-transfers.adb:8:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files-transfers.adb:8:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-timer_set_policy.adb
+   [Ada]          flyology-shared_memory_policy.adb
+   [Ada]          flyology-placement_policy.adb
+   [Ada]          flyology-task_results.adb
+   [Ada]          flyology-supervision.adb
+   [Ada]          flyology-process_generations.ads
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf_kernel.ads
+   [Ada]          flyology-supervision-input_task_generations.adb
+   [Ada]          flyology-data_structures-atomics.adb
+   [Ada]          flyology-data_structures-policy.adb
+   [Ada]          flyology-buffers-drivers.adb
+   [Ada]          flyology-data_structures-storage_types.ads
+   [Ada]          flyology-connection_policy.adb
+   [Ada]          flyology-data_structures-envelopes.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit_kernel.ads
+flyology-data_structures-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-data_structures-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-process_generations-protocol.adb
+   [Ada]          flyology-file_transfer_policy.adb
+flyology-task_results.adb:5:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-task_results.adb:5:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-data_structures-storage_types-unsigned_64s.adb
+   [Ada]          flyology-shared_memory-unix_sockets.adb
+   [Ada]          flyology-data_structures-storage_types-immutable.adb
+   [Ada]          flyology-bytes.adb
+   [Ada]          flyology-data_structures-byte_strings.adb
+   [Ada]          flyology-io-sockets-gnat_adapters.adb
+   [Ada]          flyology-channels.ads
+   [Ada]          flyology-atomic_primitives.adb
+   [Ada]          flyology-socket_policy.adb
+   [Ada]          flyology-io-tls.adb
+   [Ada]          flyology-io-files.adb
+   [Ada]          flyology-process_generations-transport.adb
+   [Ada]          flyology-task_scopes.adb
+flyology-atomic_primitives.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-atomic_primitives.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-execution_groups-topology.adb
+   [Ada]          flyology-dns_policy.adb
+   [Ada]          flyology-supervision-input_children.adb
+   [Ada]          flyology-supervision-static.adb
+   [Ada]          flyology-io-tls_driver.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy.ads
+   [Ada]          flyology-data_structures-dynamic.ads
+   [Ada]          flyology-file_timeout_policy.adb
+   [Ada]          flyology-shared_memory-segments.adb
+   [Ada]          flyology-supervision_policy.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit.ads
+   [Ada]          flyology-subprocesses-capture.adb
+   [Ada]          flyology-worker_pools.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-adapter.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf.ads
+   [Ada]          flyology-native_executor_policy.adb
+   [Ada]          flyology-buffers.adb
+   [Ada]          flyology-file_open_policy.adb
+   [Ada]          flyology-data_structures-clock_policy.adb
+   [Ada]          flyology-native_executors.adb
+   [Ada]          flyology-process_generations-coordinators.adb
+   [Ada]          flyology-tls_openssl_raw.adb
+   [Ada]          flyology-operations-drivers.adb
+flyology-io-files.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-structured_server_policy.adb
+   [Ada]          flyology-process_lifecycle.adb
+   [Ada]          flyology-buffers-domains.adb
+   [Ada]          flyology-data_structures-storage_types-elements.adb
+   [Ada]          flyology-io-tls-openssl.adb
+   [Ada]          flyology-process_generation_policy.adb
+   [Ada]          flyology-tls_openssl_policy.adb
+   [Ada]          flyology-io-file_watches.adb
+   [Ada]          flyology-io-connections-tls.adb
+   [Ada]          flyology-data_structures-dynamic-hash_maps.adb
+   [Ada]          flyology-wait_policy.adb
+   [Ada]          flyology-data_structures.adb
+   [Ada]          flyology-data_structures-vectors.adb
+   [Ada]          flyology-topology_policy.adb
+   [Ada]          flyology-process_generations-agents.adb
+   [Ada]          flyology-subprocesses-bootstrap.adb
+   [Ada]          flyology-capacity.adb
+   [Ada]          flyology-data_structures-slab_pools.adb
+   [Ada]          flyology-io-timers.adb
+   [Ada]          flyology-subprocesses.adb
+   [Ada]          flyology-io-connections.adb
+   [Ada]          flyology-data_structures-allocation_pools.ads
+   [Ada]          flyology-io-tls-alpn.adb
+   [Ada]          flyology-shared_memory.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy_kernel.ads
+   [Ada]          flyology-data_structures-regions.adb
+   [Ada]          flyology-capacity_policy.adb
+   [Ada]          flyology-data_structures-dynamic-byte_strings.adb
+   [Ada]          flyology-fairness.adb
+   [Ada]          flyology-buffers-channels.adb
+   [Ada]          flyology-io-tls-drivers.adb
+   [Ada]          flyology-channel_policy.adb
+   [Ada]          flyology-cancellation.adb
+   [Ada]          flyology-data_structures-layouts.adb
+   [Ada]          flyology-time_math.adb
+   [Ada]          flyology-supervision-families.adb
+   [Ada]          flyology-io-socket_handoffs.adb
+   [Ada]          flyology-worker_pool_policy.adb
+   [Ada]          flyology-process_generations-messages.adb
+   [Ada]          flyology-memory_regions.adb
+   [Ada]          flyology-wall_clock_policy.adb
+   [Ada]          flyology-descriptor_handoffs.adb
+   [Ada]          flyology-data_structures-handles.ads
+   [Ada]          flyology-supervision-children.adb
+   [Ada]          flyology-data_structures-allocation_algorithms.ads
+   [Ada]          flyology-data_structures-hash_maps.adb
+   [Ada]          flyology-data_structures-rings-spsc.adb
+   [Ada]          flyology-data_structures-rings.ads
+   [Ada]          flyology-data_structures-storage.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span.ads
+   [Ada]          flyology-wall_clock_native_policy.adb
+   [Ada]          flyology-dormancy.adb
+   [Ada]          flyology-wall_clock_waits.adb
+   [Ada]          flyology-data_structures-allocation_pools-adaptive.adb
+   [Ada]          flyology-io-connections-drivers.adb
+   [Ada]          flyology-io.adb
+   [Ada]          flyology-memory_operations.adb
+   [Ada]          flyology-supervision-families-prepared_admissions.adb
+   [Ada]          flyology-io-structured_servers.adb
+   [Ada]          flyology-execution_groups.adb
+   [Ada]          flyology-io-sockets.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-contract.ads
+   [Ada]          flyology-data_structures-waits.adb
+   [Ada]          flyology-data_structures-arenas.ads
+   [Ada]          flyology-buffers-domains-drivers.adb
+   [Ada]          flyology-supervision-service_slots.adb
+   [Ada]          flyology-supervision-adapters.adb
+   [Ada]          flyology-data_structures-rings-mpmc.adb
+   [Ada]          flyology-counter_policy.adb
+   [Ada]          flyology-task_scope_policy.adb
+   [Ada]          flyology-bounded_channels.adb
+   [Ada]          flyology-data_structures-dynamic-vectors.adb
+flyology-io.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-client_connection_test_hooks.ads
+   [Ada]          flyology_http_config.ads
+flyology-io-connections.adb:10:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-io-connections.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-qpack_field_section_policy.adb
+   [Ada]          flyology-http-client.adb
+   [Ada]          flyology-http-server-tls.adb
+   [Ada]          flyology-http-http_3_frame_policy.adb
+   [Ada]          flyology-http-client-sse.adb
+   [Ada]          flyology-http-server-native_routes.adb
+   [Ada]          flyology-http_chunk_encoding.adb
+   [Ada]          flyology-http-http_2_settings.adb
+   [Ada]          flyology-http-http_3_connection.adb
+   [Ada]          flyology-http-server-compression.ads
+   [Ada]          flyology-http-http_3_stream_receive_policy.adb
+   [Ada]          flyology-http-server-middleware_rate_limits.adb
+   [Ada]          flyology-http-server-websocket_deflate.adb
+   [Ada]          flyology-http-http_2_requests.adb
+   [Ada]          flyology-http-server-responses.adb
+   [Ada]          flyology-websocket_policy.adb
+   [Ada]          flyology-http-server-middleware_cors.adb
+   [Ada]          flyology-http-server-websocket_handlers-lifecycle.adb
+   [Ada]          flyology-http-http_2_policy.adb
+   [Ada]          flyology-http-server-metrics.adb
+   [Ada]          flyology-http-server-applications.adb
+   [Ada]          flyology-http-server-connections.adb
+   [Ada]          flyology-http-http_3_header_policy.adb
+   [Ada]          flyology-http-qpack_integer_policy.adb
+   [Ada]          flyology-http-http_2_client_connection.adb
+   [Ada]          flyology-http-client_policy.adb
+   [Ada]          flyology-http-http_2_responses.adb
+   [Ada]          flyology-http-qpack_static_table.adb
+   [Ada]          flyology-http-server-middleware_security_headers.adb
+   [Ada]          flyology-http-server-middleware_errors.adb
+   [Ada]          flyology-http-sse_client_policy.adb
+   [Ada]          flyology-http-http_3_control_policy.adb
+   [Ada]          flyology-http-http_3_message_policy.adb
+   [Ada]          flyology-http-server-routing.adb
+   [Ada]          flyology-http-server-requests.adb
+   [Ada]          flyology-http-server-applications-internals.adb
+   [Ada]          flyology-websocket_deflate_policy.adb
+   [Ada]          flyology-http-header_huffman_policy.adb
+   [Ada]          flyology-http-http_3_stream_policy.adb
+   [Ada]          flyology-http-server-connection_handlers.adb
+   [Ada]          flyology-http-server-middleware_deadlines.adb
+   [Ada]          flyology-http-http_3.adb
+   [Ada]          flyology-http-server-logging.ads
+   [Ada]          flyology-http.adb
+   [Ada]          flyology-http-decoded_path_policy.adb
+   [Ada]          flyology-http-server-middleware_bulkheads.adb
+   [Ada]          flyology-http-http_2_hpack.adb
+   [Ada]          flyology-http-client-testing.adb
+   [Ada]          flyology-http-headers.adb
+   [Ada]          flyology-http-http_2_frames.adb
+   [Ada]          flyology-http-server-websocket_handlers.adb
+   [Ada]          flyology-http-websocket_client.adb
+flyology-io-sockets.adb:10:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-io-sockets.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-server-middleware_metrics.adb
+   [Ada]          flyology-http-client-request_bodies.adb
+   [Ada]          flyology-http-server-cors.adb
+   [Ada]          flyology-http-server-development_certificates.adb
+   [Ada]          flyology-http-server-sse_handlers.adb
+   [Ada]          flyology-rate_limit_policy.adb
+   [Ada]          flyology-websocket_client_policy.adb
+   [Ada]          flyology-http-http_3_client_connection.adb
+   [Ada]          flyology-http-server-request_tasks.adb
+   [Ada]          flyology-http-server-middleware.adb
+   [Ada]          flyology-http-server.adb
+   [Ada]          flyology-http-client-authentication.adb
+   [Ada]          flyology-http-expect_policy.adb
+   [Ada]          flyology-http-http_3_settings_policy.adb
+   [Ada]          flyology-http-server-middleware_logging.adb
+   [Ada]          flyology-http-client-request_bodies-channels.adb
+   [Ada]          flyology-http-methods.ads
+   [Ada]          flyology-http-server-exchange_backends.ads
+   [Ada]          flyology-http-http_2_payloads.adb
+   [Ada]          flyology-http-route_parameter_policy.adb
+   [Ada]          flyology-http-http_2_huffman.adb
+   [Ada]          flyology-http-fixed_response_policy.adb
+   [Ada]          flyology-http-server-http_3.adb
+   [Ada]          flyology-http-server-middleware_request_ids.adb
+   [Ada]          flyology-http-server-middleware_authentication.adb
+   [Ada]          flyology-http-client-request_bodies-files.adb
+   [Ada]          flyology-http-server-http_2.adb
+   [C]            flyology_tls_test.c
+   [C]            fd_count.c
+   [C]            connection_test_hooks.c
+   [C]            resource_count.c
+   [Ada]          flyology-quic-test_connections.adb
+   [Ada]          http_client_corpus_oracle.adb
+   [Ada]          http_client_corpus_sinks.adb
+   [Ada]          http_client_corpus_sources.adb
+   [Ada]          flyology-io-tls-testing.adb
+   [Ada]          tls_test_provider.adb
+   [Ada]          http_client_rfc_seeds.adb
+   [Ada]          http_client_audit_filters.adb
+   [Ada]          flyology-io-connections-testing.adb
+   [Ada]          http_client_corpus_golden.ads
+Build Libraries
+   [gprlib]       flyology_allocators.lexch
+   [gprlib]       Flyology.lexch
+   [archive]      libflyology_allocators.a
+   [index]        libflyology_allocators.a
+   [gprlib]       flyology_cachelines.lexch
+   [gprlib]       Flyology_QUIC.lexch
+   [archive]      libFlyology.a
+   [archive]      libflyology_cachelines.a
+   [index]        libflyology_cachelines.a
+   [index]        libFlyology.a
+   [gprlib]       Flyology_HTTP.lexch
+   [archive]      libFlyology_QUIC.a
+   [index]        libFlyology_QUIC.a
+   [archive]      libFlyology_HTTP.a
+   [index]        libFlyology_HTTP.a
+Bind
+   [gprbind]      flyology-rate_limit_policy_smoke.bexch
+   [gprbind]      flyology-http_chunk_encoding-smoke.bexch
+   [Ada]          flyology-rate_limit_policy_smoke.ali
+   [gprbind]      flyology-websocket_policy-smoke.bexch
+   [Ada]          flyology-http_chunk_encoding-smoke.ali
+   [gprbind]      flyology-websocket_client_policy-smoke.bexch
+   [Ada]          flyology-websocket_policy-smoke.ali
+   [gprbind]      flyology-http-decoded_path_policy-smoke.bexch
+   [Ada]          flyology-websocket_client_policy-smoke.ali
+   [gprbind]      flyology-http-expect_policy-smoke.bexch
+   [Ada]          flyology-http-decoded_path_policy-smoke.ali
+   [Ada]          flyology-http-expect_policy-smoke.ali
+   [gprbind]      flyology-http-fixed_response_policy-smoke.bexch
+   [Ada]          flyology-http-fixed_response_policy-smoke.ali
+   [gprbind]      flyology-http-header_huffman_policy-smoke.bexch
+   [Ada]          flyology-http-header_huffman_policy-smoke.ali
+   [gprbind]      flyology-http-client_policy-smoke.bexch
+   [Ada]          flyology-http-client_policy-smoke.ali
+   [gprbind]      flyology-http-http_2_frames-smoke.bexch
+   [Ada]          flyology-http-http_2_frames-smoke.ali
+   [gprbind]      flyology-http-http_2_huffman-smoke.bexch
+   [Ada]          flyology-http-http_2_huffman-smoke.ali
+   [gprbind]      flyology-http-http_2_hpack-smoke.bexch
+   [Ada]          flyology-http-http_2_hpack-smoke.ali
+   [gprbind]      flyology-http-http_2_client_connection-smoke.bexch
+   [Ada]          flyology-http-http_2_client_connection-smoke.ali
+   [gprbind]      flyology-http-http_2_payloads-smoke.bexch
+   [Ada]          flyology-http-http_2_payloads-smoke.ali
+   [gprbind]      flyology-http-http_2_policy-smoke.bexch
+   [Ada]          flyology-http-http_2_policy-smoke.ali
+   [gprbind]      flyology-http-http_2_requests-smoke.bexch
+   [Ada]          flyology-http-http_2_requests-smoke.ali
+   [gprbind]      flyology-http-http_2_settings-smoke.bexch
+   [Ada]          flyology-http-http_2_settings-smoke.ali
+   [gprbind]      flyology-http-http_3_control_policy-smoke.bexch
+   [Ada]          flyology-http-http_3_control_policy-smoke.ali
+   [gprbind]      flyology-http-http_3_connection-smoke.bexch
+   [Ada]          flyology-http-http_3_connection-smoke.ali
+   [gprbind]      flyology-http-http_3_client_connection-smoke.bexch
+   [Ada]          flyology-http-http_3_client_connection-smoke.ali
+   [gprbind]      development_certificates_smoke.bexch
+   [Ada]          development_certificates_smoke.ali
+   [gprbind]      http3_public_smoke.bexch
+   [Ada]          http3_public_smoke.ali
+   [gprbind]      http3_server_integration.bexch
+   [Ada]          http3_server_integration.ali
+   [gprbind]      http3_handshake_abandon.bexch
+   [Ada]          http3_handshake_abandon.ali
+   [gprbind]      http3_handshake_recovery.bexch
+   [Ada]          http3_handshake_recovery.ali
+   [gprbind]      flyology-http-http_3_frame_policy-smoke.bexch
+   [Ada]          flyology-http-http_3_frame_policy-smoke.ali
+   [gprbind]      flyology-http-http_3_header_policy-smoke.bexch
+   [Ada]          flyology-http-http_3_header_policy-smoke.ali
+   [gprbind]      flyology-http-http_3_message_policy-smoke.bexch
+   [Ada]          flyology-http-http_3_message_policy-smoke.ali
+   [gprbind]      flyology-http-http_3_settings_policy-smoke.bexch
+   [Ada]          flyology-http-http_3_settings_policy-smoke.ali
+   [gprbind]      flyology-http-http_3_stream_policy-smoke.bexch
+   [Ada]          flyology-http-http_3_stream_policy-smoke.ali
+   [gprbind]      flyology-http-http_3_stream_receive_policy-smoke.bexch
+   [Ada]          flyology-http-http_3_stream_receive_policy-smoke.ali
+   [gprbind]      flyology-http-qpack_field_section_policy-smoke.bexch
+   [gprbind]      flyology-http-qpack_integer_policy-smoke.bexch
+   [Ada]          flyology-http-qpack_field_section_policy-smoke.ali
+   [Ada]          flyology-http-qpack_integer_policy-smoke.ali
+   [gprbind]      flyology-http-qpack_static_table-smoke.bexch
+   [Ada]          flyology-http-qpack_static_table-smoke.ali
+   [gprbind]      flyology-http-route_parameter_policy-smoke.bexch
+   [Ada]          flyology-http-route_parameter_policy-smoke.ali
+   [gprbind]      flyology-websocket_deflate_policy_smoke.bexch
+   [gprbind]      buffers_smoke.bexch
+   [Ada]          flyology-websocket_deflate_policy_smoke.ali
+   [gprbind]      tls_smoke.bexch
+   [Ada]          buffers_smoke.ali
+   [gprbind]      http_smoke.bexch
+   [Ada]          tls_smoke.ali
+   [Ada]          http_smoke.ali
+   [gprbind]      http_operations_smoke.bexch
+   [Ada]          http_operations_smoke.ali
+   [gprbind]      http_client_composable_smoke.bexch
+   [Ada]          http_client_composable_smoke.ali
+   [gprbind]      http_client_composable_stale_reuse.bexch
+   [Ada]          http_client_composable_stale_reuse.ali
+   [gprbind]      http1_sse_client_integration.bexch
+   [gprbind]      http_client_smoke.bexch
+   [Ada]          http1_sse_client_integration.ali
+   [Ada]          http_client_smoke.ali
+   [gprbind]      http_client_addressing.bexch
+   [Ada]          http_client_addressing.ali
+   [gprbind]      http_client_authentication.bexch
+   [Ada]          http_client_authentication.ali
+   [gprbind]      http_client_boundaries_smoke.bexch
+   [Ada]          http_client_boundaries_smoke.ali
+   [gprbind]      http_client_body_adapters_smoke.bexch
+   [Ada]          http_client_body_adapters_smoke.ali
+   [gprbind]      http_client_upload_controls_smoke.bexch
+   [Ada]          http_client_upload_controls_smoke.ali
+   [gprbind]      http_client_streaming_smoke.bexch
+   [Ada]          http_client_streaming_smoke.ali
+   [gprbind]      http_unix_client_smoke.bexch
+   [Ada]          http_unix_client_smoke.ali
+   [gprbind]      http_client_rfc_corpus.bexch
+   [Ada]          http_client_rfc_corpus.ali
+   [gprbind]      http_client_parser_matrix.bexch
+   [gprbind]      http_client_parser_randomized.bexch
+   [Ada]          http_client_parser_matrix.ali
+   [Ada]          http_client_parser_randomized.ali
+   [gprbind]      http_client_pool_model.bexch
+   [Ada]          http_client_pool_model.ali
+   [gprbind]      http_client_redirects.bexch
+   [Ada]          http_client_redirects.ali
+   [gprbind]      http_client_tls_closure.bexch
+   [Ada]          http_client_tls_closure.ali
+   [gprbind]      http_client_tls_smoke.bexch
+   [Ada]          http_client_tls_smoke.ali
+   [gprbind]      http2_server_integration.bexch
+   [Ada]          http2_server_integration.ali
+   [gprbind]      websocket_client_smoke.bexch
+   [Ada]          websocket_client_smoke.ali
+   [gprbind]      websocket_client_tls_smoke.bexch
+   [Ada]          websocket_client_tls_smoke.ali
+   [gprbind]      http_server_audit.bexch
+   [Ada]          http_server_audit.ali
+   [gprbind]      http_routing_audit.bexch
+   [Ada]          http_routing_audit.ali
+   [gprbind]      http2_server_audit.bexch
+   [Ada]          http2_server_audit.ali
+   [gprbind]      http_client_audit.bexch
+   [Ada]          http_client_audit.ali
+   [gprbind]      websocket_server_audit.bexch
+   [Ada]          websocket_server_audit.ali
+Link
+   [archive]      libhttp_tests.a
+   [index]        libhttp_tests.a
+   [link]         flyology-rate_limit_policy_smoke.adb
+   [link]         flyology-http_chunk_encoding-smoke.adb
+   [link]         flyology-websocket_policy-smoke.adb
+   [link]         flyology-websocket_client_policy-smoke.adb
+   [link]         flyology-http-decoded_path_policy-smoke.adb
+   [link]         flyology-http-expect_policy-smoke.adb
+   [link]         flyology-http-fixed_response_policy-smoke.adb
+   [link]         flyology-http-header_huffman_policy-smoke.adb
+   [link]         flyology-http-client_policy-smoke.adb
+   [link]         flyology-http-http_2_frames-smoke.adb
+   [link]         flyology-http-http_2_huffman-smoke.adb
+   [link]         flyology-http-http_2_hpack-smoke.adb
+   [link]         flyology-http-http_2_client_connection-smoke.adb
+   [link]         flyology-http-http_2_payloads-smoke.adb
+   [link]         flyology-http-http_2_policy-smoke.adb
+   [link]         flyology-http-http_2_requests-smoke.adb
+   [link]         flyology-http-http_2_settings-smoke.adb
+   [link]         flyology-http-http_3_control_policy-smoke.adb
+   [link]         flyology-http-http_3_connection-smoke.adb
+   [link]         flyology-http-http_3_client_connection-smoke.adb
+   [link]         development_certificates_smoke.adb
+   [link]         http3_public_smoke.adb
+   [link]         http3_server_integration.adb
+   [link]         http3_handshake_abandon.adb
+   [link]         http3_handshake_recovery.adb
+   [link]         flyology-http-http_3_frame_policy-smoke.adb
+   [link]         flyology-http-http_3_header_policy-smoke.adb
+   [link]         flyology-http-http_3_message_policy-smoke.adb
+   [link]         flyology-http-http_3_settings_policy-smoke.adb
+   [link]         flyology-http-http_3_stream_policy-smoke.adb
+   [link]         flyology-http-http_3_stream_receive_policy-smoke.adb
+   [link]         flyology-http-qpack_field_section_policy-smoke.adb
+   [link]         flyology-http-qpack_integer_policy-smoke.adb
+   [link]         flyology-http-qpack_static_table-smoke.adb
+   [link]         flyology-http-route_parameter_policy-smoke.adb
+   [link]         flyology-websocket_deflate_policy_smoke.adb
+   [link]         buffers_smoke.adb
+   [link]         tls_smoke.adb
+   [link]         http_smoke.adb
+   [link]         http_operations_smoke.adb
+   [link]         http_client_composable_smoke.adb
+   [link]         http_client_composable_stale_reuse.adb
+   [link]         http1_sse_client_integration.adb
+   [link]         http_client_smoke.adb
+   [link]         http_client_addressing.adb
+   [link]         http_client_authentication.adb
+   [link]         http_client_boundaries_smoke.adb
+   [link]         http_client_body_adapters_smoke.adb
+   [link]         http_client_upload_controls_smoke.adb
+   [link]         http_client_streaming_smoke.adb
+   [link]         http_unix_client_smoke.adb
+   [link]         http_client_rfc_corpus.adb
+   [link]         http_client_parser_matrix.adb
+   [link]         http_client_parser_randomized.adb
+   [link]         http_client_pool_model.adb
+   [link]         http_client_redirects.adb
+   [link]         http_client_tls_closure.adb
+   [link]         http_client_tls_smoke.adb
+   [link]         http2_server_integration.adb
+   [link]         websocket_client_smoke.adb
+   [link]         websocket_client_tls_smoke.adb
+   [link]         http_server_audit.adb
+   [link]         http_routing_audit.adb
+   [link]         http2_server_audit.adb
+   [link]         http_client_audit.adb
+   [link]         websocket_server_audit.adb
+flyology_http test: BUILD 2 programs (behavioral-http3-composable)
+Setup
+   [mkdir]        object directory for project Flyology_Allocators
+   [mkdir]        object directory for project Flyology
+   [mkdir]        object directory for project Flyology_Cachelines
+   [mkdir]        object directory for project Flyology_QUIC
+   [mkdir]        object directory for project Flyology_HTTP
+   [mkdir]        object directory for project HTTP_Tests
+   [mkdir]        exec directory for project HTTP_Tests
+   [mkdir]        library directory for project Flyology_Allocators
+   [mkdir]        library directory for project Flyology
+   [mkdir]        library directory for project Flyology_Cachelines
+   [mkdir]        library directory for project Flyology_QUIC
+   [mkdir]        library directory for project Flyology_HTTP
+Compile
+   [Ada]          http3_h3spec_server.adb
+   [Ada]          http3_client_composable_smoke.adb
+   [C]            flyology_quic_openssl.c
+   [Ada]          flyology-quic-debug.adb
+   [Ada]          flyology-quic-debug_config.ads
+   [Ada]          flyology-quic-crypto_openssl.adb
+   [Ada]          flyology-quic-ack_range_policy.adb
+   [Ada]          flyology-quic-initial_receiver.adb
+   [Ada]          flyology-quic-protection_policy.adb
+   [Ada]          flyology-quic-application_frame_policy.adb
+   [Ada]          flyology-quic-flow_control_policy.adb
+   [Ada]          flyology-quic-connection_state_policy.adb
+   [Ada]          flyology-quic-initial_frame_policy.adb
+   [Ada]          flyology-quic-stream_table_policy.adb
+   [Ada]          flyology-quic-crypto_reassembly_policy.adb
+   [Ada]          flyology-quic-application_space.adb
+   [Ada]          flyology-quic-connections-io.adb
+   [Ada]          flyology-quic-initial_packet_policy.adb
+   [Ada]          flyology-quic-stream_frame_policy.adb
+   [Ada]          flyology-quic-one_rtt_sender.adb
+   [Ada]          flyology-quic-tls_session.adb
+   [Ada]          flyology-quic-connections.adb
+   [Ada]          flyology-quic-tls_handshake_policy.adb
+   [Ada]          flyology-quic-stream_id_policy.adb
+   [Ada]          flyology-quic.ads
+   [Ada]          flyology-quic-application_connection.adb
+   [Ada]          flyology-quic-tls_extension_policy.adb
+   [Ada]          flyology-quic-long_header_policy.adb
+   [Ada]          flyology-quic-handshake_receiver.adb
+   [Ada]          flyology-quic-sent_packet_policy.adb
+   [Ada]          flyology-quic-recovery_policy.adb
+   [Ada]          flyology-quic-initial_space.adb
+   [Ada]          flyology-quic-handshake_sender.adb
+   [Ada]          flyology-quic-tls_signature_policy.adb
+   [Ada]          flyology-quic-crypto_frame_policy.adb
+   [Ada]          flyology-quic-connection_io.adb
+   [Ada]          flyology-quic-handshake_packet_policy.adb
+   [Ada]          flyology-quic-connection_driver.adb
+   [Ada]          flyology-quic-tls_key_schedule.adb
+   [Ada]          flyology-quic-stream_reassembly_policy.adb
+   [Ada]          flyology-quic-one_rtt_receiver.adb
+   [Ada]          flyology-quic-initial_sender.adb
+   [Ada]          flyology-quic-one_rtt_packet_policy.adb
+   [Ada]          flyology-quic-handshake_space.adb
+   [Ada]          flyology-quic-varint_policy.adb
+   [Ada]          flyology-quic-transport_parameter_policy.adb
+   [Ada]          flyology-quic-ack_frame_policy.adb
+   [Ada]          flyology-quic-packet_number_policy.adb
+   [Ada]          flyology-quic-receive_flow_control_policy.adb
+   [Ada]          flyology-quic-crypto_flight.adb
+   [Ada]          flyology-quic-handshake_connection.adb
+   [Ada]          flyology-quic-tls_authentication_policy.adb
+   [Ada]          flyology-quic-initial_connection.adb
+   [Ada]          flyology_cachelines-platform.adb
+   [Ada]          flyology_cachelines_config.ads
+   [Ada]          flyology_cachelines-padded.ads
+   [Ada]          flyology_cachelines.adb
+   [Ada]          flyology_cachelines-padded_groups.adb
+   [Ada]          flyology_cachelines-fitted_groups.adb
+   [Ada]          flyology_allocators-layouts.adb
+   [Ada]          flyology_allocators-storage.adb
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit_kernel.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span_kernel.adb
+   [Ada]          flyology_allocators-waits.adb
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf_kernel.adb
+   [Ada]          flyology_allocators-allocation_algorithms.ads
+   [Ada]          flyology_allocators-allocation_algorithms-contract.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy.ads
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf.ads
+   [Ada]          flyology_allocators-regions.adb
+   [Ada]          flyology_allocators-policy.adb
+   [Ada]          flyology_allocators-arenas.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy_kernel.adb
+   [Ada]          flyology_allocators.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span.ads
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit.ads
+   [Ada]          flyology_allocators-atomics.adb
+   [C]            flyology_wake_source.c
+   [C]            flyology_sockets.c
+   [C]            flyology_shared_memory.c
+   [C]            flyology_subprocesses.c
+   [C]            flyology_wall_clock.c
+   [C]            flyology_tls_openssl.c
+   [C]            flyology_debug_producer_selection.c
+   [Ada]          flyology-wall_clock_testing.ads
+   [Ada]          flyology-wall_clock_io_testing.ads
+flyology_allocators-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology_allocators-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-file_watch_test_hooks.ads
+   [Ada]          flyology-structured_server_test_hooks.ads
+   [Ada]          flyology-subprocess_test_hooks.ads
+   [Ada]          flyology-task_lifecycle_test_hooks.ads
+   [Ada]          flyology-worker_pool_test_hooks.ads
+   [Ada]          flyology-connection_test_hooks.ads
+   [Ada]          flyology-tls_test_hooks.adb
+   [Ada]          flyology-dns_test_observations.ads
+   [Ada]          flyology-buffer_test_hooks.ads
+   [Ada]          flyology_config.ads
+   [Ada]          flyology-data_structures-clock_abi.ads
+   [Ada]          flyology.ads
+   [Ada]          flyology-shared_memory_native.adb
+   [Ada]          flyology-wall_clock_native.adb
+   [Ada]          flyology-wake_sources.adb
+   [Ada]          flyology-sendfile_bridge.adb
+   [Ada]          flyology-file_watch_native.adb
+   [Ada]          flyology-io-files-transfers.adb
+   [Ada]          flyology-observability.adb
+   [Ada]          flyology-operations.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span_kernel.ads
+   [Ada]          flyology-channels-bounded.adb
+   [Ada]          flyology-observability-stall_watchdogs.adb
+   [Ada]          flyology-io-dns-testing.adb
+   [Ada]          flyology-debug_producer_selection.adb
+   [Ada]          flyology-io-dns.adb
+   [Ada]          flyology-io-file_watches-recursive.adb
+   [Ada]          flyology-tls_policy.adb
+flyology-wall_clock_native.adb:4:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wall_clock_native.adb:4:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-supervision-task_generations.adb
+   [Ada]          flyology-process_generations-command_lines.adb
+flyology-wake_sources.adb:3:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wake_sources.adb:3:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-timer_set_policy.adb
+   [Ada]          flyology-shared_memory_policy.adb
+   [Ada]          flyology-placement_policy.adb
+   [Ada]          flyology-task_results.adb
+   [Ada]          flyology-supervision.adb
+   [Ada]          flyology-process_generations.ads
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf_kernel.ads
+   [Ada]          flyology-supervision-input_task_generations.adb
+   [Ada]          flyology-data_structures-atomics.adb
+flyology-io-files-transfers.adb:8:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files-transfers.adb:8:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-data_structures-policy.adb
+   [Ada]          flyology-buffers-drivers.adb
+   [Ada]          flyology-data_structures-storage_types.ads
+   [Ada]          flyology-connection_policy.adb
+   [Ada]          flyology-data_structures-envelopes.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit_kernel.ads
+flyology-data_structures-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-data_structures-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-process_generations-protocol.adb
+   [Ada]          flyology-file_transfer_policy.adb
+   [Ada]          flyology-data_structures-storage_types-unsigned_64s.adb
+   [Ada]          flyology-shared_memory-unix_sockets.adb
+   [Ada]          flyology-data_structures-storage_types-immutable.adb
+   [Ada]          flyology-bytes.adb
+   [Ada]          flyology-data_structures-byte_strings.adb
+   [Ada]          flyology-io-sockets-gnat_adapters.adb
+   [Ada]          flyology-channels.ads
+   [Ada]          flyology-atomic_primitives.adb
+   [Ada]          flyology-socket_policy.adb
+   [Ada]          flyology-io-tls.adb
+flyology-task_results.adb:5:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-task_results.adb:5:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-io-files.adb
+   [Ada]          flyology-process_generations-transport.adb
+   [Ada]          flyology-task_scopes.adb
+   [Ada]          flyology-execution_groups-topology.adb
+   [Ada]          flyology-dns_policy.adb
+   [Ada]          flyology-supervision-input_children.adb
+   [Ada]          flyology-supervision-static.adb
+flyology-atomic_primitives.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-atomic_primitives.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-io-tls_driver.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy.ads
+   [Ada]          flyology-data_structures-dynamic.ads
+   [Ada]          flyology-file_timeout_policy.adb
+   [Ada]          flyology-shared_memory-segments.adb
+   [Ada]          flyology-supervision_policy.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit.ads
+   [Ada]          flyology-subprocesses-capture.adb
+   [Ada]          flyology-worker_pools.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-adapter.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf.ads
+   [Ada]          flyology-native_executor_policy.adb
+   [Ada]          flyology-buffers.adb
+   [Ada]          flyology-file_open_policy.adb
+   [Ada]          flyology-data_structures-clock_policy.adb
+   [Ada]          flyology-native_executors.adb
+   [Ada]          flyology-process_generations-coordinators.adb
+   [Ada]          flyology-tls_openssl_raw.adb
+   [Ada]          flyology-operations-drivers.adb
+   [Ada]          flyology-structured_server_policy.adb
+   [Ada]          flyology-process_lifecycle.adb
+   [Ada]          flyology-buffers-domains.adb
+   [Ada]          flyology-data_structures-storage_types-elements.adb
+   [Ada]          flyology-io-tls-openssl.adb
+   [Ada]          flyology-process_generation_policy.adb
+   [Ada]          flyology-tls_openssl_policy.adb
+   [Ada]          flyology-io-file_watches.adb
+   [Ada]          flyology-io-connections-tls.adb
+   [Ada]          flyology-data_structures-dynamic-hash_maps.adb
+   [Ada]          flyology-wait_policy.adb
+   [Ada]          flyology-data_structures.adb
+flyology-io-files.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-data_structures-vectors.adb
+   [Ada]          flyology-topology_policy.adb
+   [Ada]          flyology-process_generations-agents.adb
+   [Ada]          flyology-subprocesses-bootstrap.adb
+   [Ada]          flyology-capacity.adb
+   [Ada]          flyology-data_structures-slab_pools.adb
+   [Ada]          flyology-io-timers.adb
+   [Ada]          flyology-subprocesses.adb
+   [Ada]          flyology-io-connections.adb
+   [Ada]          flyology-data_structures-allocation_pools.ads
+   [Ada]          flyology-io-tls-alpn.adb
+   [Ada]          flyology-shared_memory.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy_kernel.ads
+   [Ada]          flyology-data_structures-regions.adb
+   [Ada]          flyology-capacity_policy.adb
+   [Ada]          flyology-data_structures-dynamic-byte_strings.adb
+   [Ada]          flyology-fairness.adb
+   [Ada]          flyology-buffers-channels.adb
+   [Ada]          flyology-io-tls-drivers.adb
+   [Ada]          flyology-channel_policy.adb
+   [Ada]          flyology-cancellation.adb
+   [Ada]          flyology-data_structures-layouts.adb
+   [Ada]          flyology-time_math.adb
+   [Ada]          flyology-supervision-families.adb
+   [Ada]          flyology-io-socket_handoffs.adb
+   [Ada]          flyology-worker_pool_policy.adb
+   [Ada]          flyology-process_generations-messages.adb
+   [Ada]          flyology-memory_regions.adb
+   [Ada]          flyology-wall_clock_policy.adb
+   [Ada]          flyology-descriptor_handoffs.adb
+   [Ada]          flyology-data_structures-handles.ads
+   [Ada]          flyology-supervision-children.adb
+   [Ada]          flyology-data_structures-allocation_algorithms.ads
+   [Ada]          flyology-data_structures-hash_maps.adb
+   [Ada]          flyology-data_structures-rings-spsc.adb
+   [Ada]          flyology-data_structures-rings.ads
+   [Ada]          flyology-data_structures-storage.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span.ads
+   [Ada]          flyology-wall_clock_native_policy.adb
+   [Ada]          flyology-dormancy.adb
+   [Ada]          flyology-wall_clock_waits.adb
+   [Ada]          flyology-data_structures-allocation_pools-adaptive.adb
+   [Ada]          flyology-io-connections-drivers.adb
+   [Ada]          flyology-io.adb
+   [Ada]          flyology-memory_operations.adb
+   [Ada]          flyology-supervision-families-prepared_admissions.adb
+   [Ada]          flyology-io-structured_servers.adb
+   [Ada]          flyology-execution_groups.adb
+   [Ada]          flyology-io-sockets.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-contract.ads
+   [Ada]          flyology-data_structures-waits.adb
+   [Ada]          flyology-data_structures-arenas.ads
+   [Ada]          flyology-buffers-domains-drivers.adb
+   [Ada]          flyology-supervision-service_slots.adb
+   [Ada]          flyology-supervision-adapters.adb
+   [Ada]          flyology-data_structures-rings-mpmc.adb
+   [Ada]          flyology-counter_policy.adb
+   [Ada]          flyology-task_scope_policy.adb
+   [Ada]          flyology-bounded_channels.adb
+   [Ada]          flyology-data_structures-dynamic-vectors.adb
+flyology-io.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-client_connection_test_hooks.ads
+   [Ada]          flyology_http_config.ads
+   [Ada]          flyology-http-qpack_field_section_policy.adb
+   [Ada]          flyology-http-client.adb
+   [Ada]          flyology-http-server-tls.adb
+   [Ada]          flyology-http-http_3_frame_policy.adb
+   [Ada]          flyology-http-client-sse.adb
+   [Ada]          flyology-http-server-native_routes.adb
+   [Ada]          flyology-http_chunk_encoding.adb
+   [Ada]          flyology-http-http_2_settings.adb
+   [Ada]          flyology-http-http_3_connection.adb
+   [Ada]          flyology-http-server-compression.ads
+   [Ada]          flyology-http-http_3_stream_receive_policy.adb
+   [Ada]          flyology-http-server-middleware_rate_limits.adb
+flyology-io-connections.adb:10:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-io-connections.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-server-websocket_deflate.adb
+   [Ada]          flyology-http-http_2_requests.adb
+   [Ada]          flyology-http-server-responses.adb
+   [Ada]          flyology-websocket_policy.adb
+   [Ada]          flyology-http-server-middleware_cors.adb
+   [Ada]          flyology-http-server-websocket_handlers-lifecycle.adb
+   [Ada]          flyology-http-http_2_policy.adb
+   [Ada]          flyology-http-server-metrics.adb
+   [Ada]          flyology-http-server-applications.adb
+   [Ada]          flyology-http-server-connections.adb
+   [Ada]          flyology-http-http_3_header_policy.adb
+   [Ada]          flyology-http-qpack_integer_policy.adb
+   [Ada]          flyology-http-http_2_client_connection.adb
+   [Ada]          flyology-http-client_policy.adb
+   [Ada]          flyology-http-http_2_responses.adb
+   [Ada]          flyology-http-qpack_static_table.adb
+   [Ada]          flyology-http-server-middleware_security_headers.adb
+   [Ada]          flyology-http-server-middleware_errors.adb
+   [Ada]          flyology-http-sse_client_policy.adb
+   [Ada]          flyology-http-http_3_control_policy.adb
+   [Ada]          flyology-http-http_3_message_policy.adb
+   [Ada]          flyology-http-server-routing.adb
+   [Ada]          flyology-http-server-requests.adb
+   [Ada]          flyology-http-server-applications-internals.adb
+   [Ada]          flyology-websocket_deflate_policy.adb
+   [Ada]          flyology-http-header_huffman_policy.adb
+   [Ada]          flyology-http-http_3_stream_policy.adb
+   [Ada]          flyology-http-server-connection_handlers.adb
+   [Ada]          flyology-http-server-middleware_deadlines.adb
+   [Ada]          flyology-http-http_3.adb
+   [Ada]          flyology-http-server-logging.ads
+   [Ada]          flyology-http.adb
+   [Ada]          flyology-http-decoded_path_policy.adb
+   [Ada]          flyology-http-server-middleware_bulkheads.adb
+   [Ada]          flyology-http-http_2_hpack.adb
+   [Ada]          flyology-http-client-testing.adb
+   [Ada]          flyology-http-headers.adb
+   [Ada]          flyology-http-http_2_frames.adb
+   [Ada]          flyology-http-server-websocket_handlers.adb
+   [Ada]          flyology-http-websocket_client.adb
+   [Ada]          flyology-http-server-middleware_metrics.adb
+   [Ada]          flyology-http-client-request_bodies.adb
+   [Ada]          flyology-http-server-cors.adb
+   [Ada]          flyology-http-server-development_certificates.adb
+   [Ada]          flyology-http-server-sse_handlers.adb
+   [Ada]          flyology-rate_limit_policy.adb
+   [Ada]          flyology-websocket_client_policy.adb
+   [Ada]          flyology-http-http_3_client_connection.adb
+   [Ada]          flyology-http-server-request_tasks.adb
+   [Ada]          flyology-http-server-middleware.adb
+   [Ada]          flyology-http-server.adb
+   [Ada]          flyology-http-client-authentication.adb
+   [Ada]          flyology-http-expect_policy.adb
+   [Ada]          flyology-http-http_3_settings_policy.adb
+   [Ada]          flyology-http-server-middleware_logging.adb
+   [Ada]          flyology-http-client-request_bodies-channels.adb
+   [Ada]          flyology-http-methods.ads
+flyology-io-sockets.adb:10:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-io-sockets.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-server-exchange_backends.ads
+   [Ada]          flyology-http-http_2_payloads.adb
+   [Ada]          flyology-http-route_parameter_policy.adb
+   [Ada]          flyology-http-http_2_huffman.adb
+   [Ada]          flyology-http-fixed_response_policy.adb
+   [Ada]          flyology-http-server-http_3.adb
+   [Ada]          flyology-http-server-middleware_request_ids.adb
+   [Ada]          flyology-http-server-middleware_authentication.adb
+   [Ada]          flyology-http-client-request_bodies-files.adb
+   [Ada]          flyology-http-server-http_2.adb
+   [C]            flyology_tls_test.c
+   [C]            fd_count.c
+   [C]            connection_test_hooks.c
+   [C]            resource_count.c
+   [Ada]          flyology-quic-test_connections.adb
+   [Ada]          http_client_corpus_oracle.adb
+   [Ada]          http_client_corpus_sinks.adb
+   [Ada]          http_client_corpus_sources.adb
+   [Ada]          http_client_corpus_golden.ads
+Build Libraries
+   [gprlib]       flyology_allocators.lexch
+   [gprlib]       Flyology.lexch
+   [archive]      libflyology_allocators.a
+   [index]        libflyology_allocators.a
+   [gprlib]       flyology_cachelines.lexch
+   [gprlib]       Flyology_QUIC.lexch
+   [archive]      libFlyology.a
+   [archive]      libflyology_cachelines.a
+   [index]        libflyology_cachelines.a
+   [index]        libFlyology.a
+   [gprlib]       Flyology_HTTP.lexch
+   [archive]      libFlyology_QUIC.a
+   [index]        libFlyology_QUIC.a
+   [archive]      libFlyology_HTTP.a
+   [index]        libFlyology_HTTP.a
+Bind
+   [gprbind]      http3_h3spec_server.bexch
+   [gprbind]      http3_client_composable_smoke.bexch
+   [Ada]          http3_client_composable_smoke.ali
+   [Ada]          http3_h3spec_server.ali
+Link
+   [archive]      libhttp_tests.a
+   [index]        libhttp_tests.a
+   [link]         http3_h3spec_server.adb
+   [link]         http3_client_composable_smoke.adb
+flyology_http test: BUILD 3 programs (behavioral-connection-hooks)
+Setup
+   [mkdir]        object directory for project Flyology_Allocators
+   [mkdir]        object directory for project Flyology
+   [mkdir]        object directory for project Flyology_Cachelines
+   [mkdir]        object directory for project Flyology_QUIC
+   [mkdir]        library directory for project Flyology_Allocators
+   [mkdir]        library directory for project Flyology
+   [mkdir]        library directory for project Flyology_Cachelines
+   [mkdir]        library directory for project Flyology_QUIC
+Compile
+   [Ada]          http_client_pool_races.adb
+   [Ada]          http_client_deadline_matrix.adb
+   [Ada]          http_client_fragmentation.adb
+   [C]            flyology_quic_openssl.c
+   [Ada]          flyology-quic-debug.adb
+   [Ada]          flyology-quic-debug_config.ads
+   [Ada]          flyology-quic-crypto_openssl.adb
+   [Ada]          flyology-quic-ack_range_policy.adb
+   [Ada]          flyology-quic-initial_receiver.adb
+   [Ada]          flyology-quic-protection_policy.adb
+   [Ada]          flyology-quic-application_frame_policy.adb
+   [Ada]          flyology-quic-flow_control_policy.adb
+   [Ada]          flyology-quic-connection_state_policy.adb
+   [Ada]          flyology-quic-initial_frame_policy.adb
+   [Ada]          flyology-quic-stream_table_policy.adb
+   [Ada]          flyology-quic-crypto_reassembly_policy.adb
+   [Ada]          flyology-quic-application_space.adb
+   [Ada]          flyology-quic-connections-io.adb
+   [Ada]          flyology-quic-initial_packet_policy.adb
+   [Ada]          flyology-quic-stream_frame_policy.adb
+   [Ada]          flyology-quic-one_rtt_sender.adb
+   [Ada]          flyology-quic-tls_session.adb
+   [Ada]          flyology-quic-connections.adb
+   [Ada]          flyology-quic-tls_handshake_policy.adb
+   [Ada]          flyology-quic-stream_id_policy.adb
+   [Ada]          flyology-quic.ads
+   [Ada]          flyology-quic-application_connection.adb
+   [Ada]          flyology-quic-tls_extension_policy.adb
+   [Ada]          flyology-quic-long_header_policy.adb
+   [Ada]          flyology-quic-handshake_receiver.adb
+   [Ada]          flyology-quic-sent_packet_policy.adb
+   [Ada]          flyology-quic-recovery_policy.adb
+   [Ada]          flyology-quic-initial_space.adb
+   [Ada]          flyology-quic-handshake_sender.adb
+   [Ada]          flyology-quic-tls_signature_policy.adb
+   [Ada]          flyology-quic-crypto_frame_policy.adb
+   [Ada]          flyology-quic-connection_io.adb
+   [Ada]          flyology-quic-handshake_packet_policy.adb
+   [Ada]          flyology-quic-connection_driver.adb
+   [Ada]          flyology-quic-tls_key_schedule.adb
+   [Ada]          flyology-quic-stream_reassembly_policy.adb
+   [Ada]          flyology-quic-one_rtt_receiver.adb
+   [Ada]          flyology-quic-initial_sender.adb
+   [Ada]          flyology-quic-one_rtt_packet_policy.adb
+   [Ada]          flyology-quic-handshake_space.adb
+   [Ada]          flyology-quic-varint_policy.adb
+   [Ada]          flyology-quic-transport_parameter_policy.adb
+   [Ada]          flyology-quic-ack_frame_policy.adb
+   [Ada]          flyology-quic-packet_number_policy.adb
+   [Ada]          flyology-quic-receive_flow_control_policy.adb
+   [Ada]          flyology-quic-crypto_flight.adb
+   [Ada]          flyology-quic-handshake_connection.adb
+   [Ada]          flyology-quic-tls_authentication_policy.adb
+   [Ada]          flyology-quic-initial_connection.adb
+   [Ada]          flyology_cachelines-platform.adb
+   [Ada]          flyology_cachelines_config.ads
+   [Ada]          flyology_cachelines-padded.ads
+   [Ada]          flyology_cachelines.adb
+   [Ada]          flyology_cachelines-padded_groups.adb
+   [Ada]          flyology_cachelines-fitted_groups.adb
+   [Ada]          flyology_allocators-layouts.adb
+   [Ada]          flyology_allocators-storage.adb
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit_kernel.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span_kernel.adb
+   [Ada]          flyology_allocators-waits.adb
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf_kernel.adb
+   [Ada]          flyology_allocators-allocation_algorithms.ads
+   [Ada]          flyology_allocators-allocation_algorithms-contract.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy.ads
+   [Ada]          flyology_allocators-allocation_algorithms-tlsf.ads
+   [Ada]          flyology_allocators-regions.adb
+   [Ada]          flyology_allocators-policy.adb
+   [Ada]          flyology_allocators-arenas.ads
+   [Ada]          flyology_allocators-allocation_algorithms-buddy_kernel.adb
+   [Ada]          flyology_allocators.adb
+   [Ada]          flyology_allocators-allocation_algorithms-slab_span.ads
+   [Ada]          flyology_allocators-allocation_algorithms-best_fit.ads
+   [Ada]          flyology_allocators-atomics.adb
+   [C]            flyology_wake_source.c
+   [C]            flyology_sockets.c
+   [C]            flyology_shared_memory.c
+   [C]            flyology_subprocesses.c
+   [C]            flyology_wall_clock.c
+   [C]            flyology_tls_openssl.c
+   [C]            flyology_debug_producer_selection.c
+   [Ada]          flyology-wall_clock_testing.ads
+   [Ada]          flyology-wall_clock_io_testing.ads
+   [Ada]          flyology-file_watch_test_hooks.ads
+   [Ada]          flyology-structured_server_test_hooks.ads
+flyology_allocators-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology_allocators-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-subprocess_test_hooks.ads
+   [Ada]          flyology-task_lifecycle_test_hooks.ads
+   [Ada]          flyology-worker_pool_test_hooks.ads
+   [Ada]          flyology-connection_test_hooks.adb
+   [Ada]          flyology-tls_test_hooks.adb
+   [Ada]          flyology-dns_test_observations.ads
+   [Ada]          flyology-buffer_test_hooks.ads
+   [Ada]          flyology_config.ads
+   [Ada]          flyology-data_structures-clock_abi.ads
+   [Ada]          flyology.ads
+   [Ada]          flyology-shared_memory_native.adb
+   [Ada]          flyology-wall_clock_native.adb
+   [Ada]          flyology-wake_sources.adb
+   [Ada]          flyology-sendfile_bridge.adb
+   [Ada]          flyology-file_watch_native.adb
+   [Ada]          flyology-io-files-transfers.adb
+   [Ada]          flyology-observability.adb
+   [Ada]          flyology-operations.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span_kernel.ads
+   [Ada]          flyology-channels-bounded.adb
+   [Ada]          flyology-observability-stall_watchdogs.adb
+   [Ada]          flyology-io-dns-testing.adb
+   [Ada]          flyology-debug_producer_selection.adb
+   [Ada]          flyology-io-dns.adb
+   [Ada]          flyology-io-file_watches-recursive.adb
+   [Ada]          flyology-tls_policy.adb
+   [Ada]          flyology-supervision-task_generations.adb
+   [Ada]          flyology-process_generations-command_lines.adb
+flyology-wall_clock_native.adb:4:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wall_clock_native.adb:4:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-timer_set_policy.adb
+   [Ada]          flyology-shared_memory_policy.adb
+flyology-wake_sources.adb:3:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-wake_sources.adb:3:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-placement_policy.adb
+   [Ada]          flyology-task_results.adb
+   [Ada]          flyology-supervision.adb
+   [Ada]          flyology-process_generations.ads
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf_kernel.ads
+   [Ada]          flyology-supervision-input_task_generations.adb
+   [Ada]          flyology-data_structures-atomics.adb
+flyology-io-files-transfers.adb:8:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files-transfers.adb:8:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-data_structures-policy.adb
+   [Ada]          flyology-buffers-drivers.adb
+   [Ada]          flyology-data_structures-storage_types.ads
+   [Ada]          flyology-connection_policy.adb
+   [Ada]          flyology-data_structures-envelopes.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit_kernel.ads
+   [Ada]          flyology-process_generations-protocol.adb
+   [Ada]          flyology-file_transfer_policy.adb
+   [Ada]          flyology-data_structures-storage_types-unsigned_64s.adb
+flyology-data_structures-atomics.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-data_structures-atomics.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-shared_memory-unix_sockets.adb
+   [Ada]          flyology-data_structures-storage_types-immutable.adb
+   [Ada]          flyology-bytes.adb
+   [Ada]          flyology-data_structures-byte_strings.adb
+   [Ada]          flyology-io-sockets-gnat_adapters.adb
+   [Ada]          flyology-channels.ads
+   [Ada]          flyology-atomic_primitives.adb
+   [Ada]          flyology-socket_policy.adb
+   [Ada]          flyology-io-tls.adb
+   [Ada]          flyology-io-files.adb
+   [Ada]          flyology-process_generations-transport.adb
+flyology-task_results.adb:5:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-task_results.adb:5:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-task_scopes.adb
+   [Ada]          flyology-execution_groups-topology.adb
+   [Ada]          flyology-dns_policy.adb
+flyology-atomic_primitives.adb:1:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-atomic_primitives.adb:1:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-supervision-input_children.adb
+   [Ada]          flyology-supervision-static.adb
+   [Ada]          flyology-io-tls_driver.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy.ads
+   [Ada]          flyology-data_structures-dynamic.ads
+   [Ada]          flyology-file_timeout_policy.adb
+   [Ada]          flyology-shared_memory-segments.adb
+   [Ada]          flyology-supervision_policy.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-best_fit.ads
+   [Ada]          flyology-subprocesses-capture.adb
+   [Ada]          flyology-worker_pools.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-adapter.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-tlsf.ads
+   [Ada]          flyology-native_executor_policy.adb
+   [Ada]          flyology-buffers.adb
+   [Ada]          flyology-file_open_policy.adb
+   [Ada]          flyology-data_structures-clock_policy.adb
+   [Ada]          flyology-native_executors.adb
+   [Ada]          flyology-process_generations-coordinators.adb
+   [Ada]          flyology-tls_openssl_raw.adb
+   [Ada]          flyology-operations-drivers.adb
+   [Ada]          flyology-structured_server_policy.adb
+   [Ada]          flyology-process_lifecycle.adb
+   [Ada]          flyology-buffers-domains.adb
+   [Ada]          flyology-data_structures-storage_types-elements.adb
+   [Ada]          flyology-io-tls-openssl.adb
+   [Ada]          flyology-process_generation_policy.adb
+flyology-io-files.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io-files.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-tls_openssl_policy.adb
+   [Ada]          flyology-io-file_watches.adb
+   [Ada]          flyology-io-connections-tls.adb
+   [Ada]          flyology-data_structures-dynamic-hash_maps.adb
+   [Ada]          flyology-wait_policy.adb
+   [Ada]          flyology-data_structures.adb
+   [Ada]          flyology-data_structures-vectors.adb
+   [Ada]          flyology-topology_policy.adb
+   [Ada]          flyology-process_generations-agents.adb
+   [Ada]          flyology-subprocesses-bootstrap.adb
+   [Ada]          flyology-capacity.adb
+   [Ada]          flyology-data_structures-slab_pools.adb
+   [Ada]          flyology-io-timers.adb
+   [Ada]          flyology-subprocesses.adb
+   [Ada]          flyology-io-connections.adb
+   [Ada]          flyology-data_structures-allocation_pools.ads
+   [Ada]          flyology-io-tls-alpn.adb
+   [Ada]          flyology-shared_memory.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-buddy_kernel.ads
+   [Ada]          flyology-data_structures-regions.adb
+   [Ada]          flyology-capacity_policy.adb
+   [Ada]          flyology-data_structures-dynamic-byte_strings.adb
+   [Ada]          flyology-fairness.adb
+   [Ada]          flyology-buffers-channels.adb
+   [Ada]          flyology-io-tls-drivers.adb
+   [Ada]          flyology-channel_policy.adb
+   [Ada]          flyology-cancellation.adb
+   [Ada]          flyology-data_structures-layouts.adb
+   [Ada]          flyology-time_math.adb
+   [Ada]          flyology-supervision-families.adb
+   [Ada]          flyology-io-socket_handoffs.adb
+   [Ada]          flyology-worker_pool_policy.adb
+   [Ada]          flyology-process_generations-messages.adb
+   [Ada]          flyology-memory_regions.adb
+   [Ada]          flyology-wall_clock_policy.adb
+   [Ada]          flyology-descriptor_handoffs.adb
+   [Ada]          flyology-data_structures-handles.ads
+   [Ada]          flyology-supervision-children.adb
+   [Ada]          flyology-data_structures-allocation_algorithms.ads
+   [Ada]          flyology-data_structures-hash_maps.adb
+   [Ada]          flyology-data_structures-rings-spsc.adb
+   [Ada]          flyology-data_structures-rings.ads
+   [Ada]          flyology-data_structures-storage.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-slab_span.ads
+   [Ada]          flyology-wall_clock_native_policy.adb
+   [Ada]          flyology-dormancy.adb
+   [Ada]          flyology-wall_clock_waits.adb
+   [Ada]          flyology-data_structures-allocation_pools-adaptive.adb
+   [Ada]          flyology-io-connections-drivers.adb
+   [Ada]          flyology-io.adb
+   [Ada]          flyology-memory_operations.adb
+   [Ada]          flyology-supervision-families-prepared_admissions.adb
+   [Ada]          flyology-io-structured_servers.adb
+   [Ada]          flyology-execution_groups.adb
+   [Ada]          flyology-io-sockets.adb
+   [Ada]          flyology-data_structures-allocation_algorithms-contract.ads
+   [Ada]          flyology-data_structures-waits.adb
+   [Ada]          flyology-data_structures-arenas.ads
+   [Ada]          flyology-buffers-domains-drivers.adb
+   [Ada]          flyology-supervision-service_slots.adb
+   [Ada]          flyology-supervision-adapters.adb
+   [Ada]          flyology-data_structures-rings-mpmc.adb
+   [Ada]          flyology-counter_policy.adb
+   [Ada]          flyology-task_scope_policy.adb
+   [Ada]          flyology-bounded_channels.adb
+   [Ada]          flyology-data_structures-dynamic-vectors.adb
+   [Ada]          flyology-http-client_connection_test_hooks.adb
+   [Ada]          flyology_http_config.ads
+flyology-io.adb:6:06: warning: "System.OS_Constants" is an internal GNAT unit [-gnatwi]
+flyology-io.adb:6:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-qpack_field_section_policy.adb
+   [Ada]          flyology-http-client.adb
+   [Ada]          flyology-http-server-tls.adb
+   [Ada]          flyology-http-http_3_frame_policy.adb
+   [Ada]          flyology-http-client-sse.adb
+   [Ada]          flyology-http-server-native_routes.adb
+   [Ada]          flyology-http_chunk_encoding.adb
+   [Ada]          flyology-http-http_2_settings.adb
+   [Ada]          flyology-http-http_3_connection.adb
+   [Ada]          flyology-http-server-compression.ads
+   [Ada]          flyology-http-http_3_stream_receive_policy.adb
+   [Ada]          flyology-http-server-middleware_rate_limits.adb
+   [Ada]          flyology-http-server-websocket_deflate.adb
+   [Ada]          flyology-http-http_2_requests.adb
+   [Ada]          flyology-http-server-responses.adb
+   [Ada]          flyology-websocket_policy.adb
+   [Ada]          flyology-http-server-middleware_cors.adb
+   [Ada]          flyology-http-server-websocket_handlers-lifecycle.adb
+flyology-io-connections.adb:10:06: warning: "System.Soft_Links" is an internal GNAT unit [-gnatwi]
+flyology-io-connections.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-http_2_policy.adb
+   [Ada]          flyology-http-server-metrics.adb
+   [Ada]          flyology-http-server-applications.adb
+   [Ada]          flyology-http-server-connections.adb
+   [Ada]          flyology-http-http_3_header_policy.adb
+   [Ada]          flyology-http-qpack_integer_policy.adb
+   [Ada]          flyology-http-http_2_client_connection.adb
+   [Ada]          flyology-http-client_policy.adb
+   [Ada]          flyology-http-http_2_responses.adb
+   [Ada]          flyology-http-qpack_static_table.adb
+   [Ada]          flyology-http-server-middleware_security_headers.adb
+   [Ada]          flyology-http-server-middleware_errors.adb
+   [Ada]          flyology-http-sse_client_policy.adb
+   [Ada]          flyology-http-http_3_control_policy.adb
+   [Ada]          flyology-http-http_3_message_policy.adb
+   [Ada]          flyology-http-server-routing.adb
+   [Ada]          flyology-http-server-requests.adb
+   [Ada]          flyology-http-server-applications-internals.adb
+   [Ada]          flyology-websocket_deflate_policy.adb
+   [Ada]          flyology-http-header_huffman_policy.adb
+   [Ada]          flyology-http-http_3_stream_policy.adb
+   [Ada]          flyology-http-server-connection_handlers.adb
+   [Ada]          flyology-http-server-middleware_deadlines.adb
+   [Ada]          flyology-http-http_3.adb
+   [Ada]          flyology-http-server-logging.ads
+   [Ada]          flyology-http.adb
+   [Ada]          flyology-http-decoded_path_policy.adb
+   [Ada]          flyology-http-server-middleware_bulkheads.adb
+   [Ada]          flyology-http-http_2_hpack.adb
+   [Ada]          flyology-http-client-testing.adb
+   [Ada]          flyology-http-headers.adb
+   [Ada]          flyology-http-http_2_frames.adb
+   [Ada]          flyology-http-server-websocket_handlers.adb
+   [Ada]          flyology-http-websocket_client.adb
+   [Ada]          flyology-http-server-middleware_metrics.adb
+   [Ada]          flyology-http-client-request_bodies.adb
+   [Ada]          flyology-http-server-cors.adb
+   [Ada]          flyology-http-server-development_certificates.adb
+   [Ada]          flyology-http-server-sse_handlers.adb
+   [Ada]          flyology-rate_limit_policy.adb
+   [Ada]          flyology-websocket_client_policy.adb
+   [Ada]          flyology-http-http_3_client_connection.adb
+   [Ada]          flyology-http-server-request_tasks.adb
+   [Ada]          flyology-http-server-middleware.adb
+   [Ada]          flyology-http-server.adb
+   [Ada]          flyology-http-client-authentication.adb
+   [Ada]          flyology-http-expect_policy.adb
+   [Ada]          flyology-http-http_3_settings_policy.adb
+   [Ada]          flyology-http-server-middleware_logging.adb
+   [Ada]          flyology-http-client-request_bodies-channels.adb
+flyology-io-sockets.adb:10:06: warning: "System.Atomic_Primitives" is an internal GNAT unit [-gnatwi]
+flyology-io-sockets.adb:10:06: warning: use of this unit is non-portable and version-dependent [-gnatwi]
+   [Ada]          flyology-http-methods.ads
+   [Ada]          flyology-http-server-exchange_backends.ads
+   [Ada]          flyology-http-http_2_payloads.adb
+   [Ada]          flyology-http-route_parameter_policy.adb
+   [Ada]          flyology-http-http_2_huffman.adb
+   [Ada]          flyology-http-fixed_response_policy.adb
+   [Ada]          flyology-http-server-http_3.adb
+   [Ada]          flyology-http-server-middleware_request_ids.adb
+   [Ada]          flyology-http-server-middleware_authentication.adb
+   [Ada]          flyology-http-client-request_bodies-files.adb
+   [Ada]          flyology-http-server-http_2.adb
+   [C]            flyology_tls_test.c
+   [C]            fd_count.c
+   [C]            connection_test_hooks.c
+   [C]            resource_count.c
+   [Ada]          flyology-io-connections-testing.adb
+Build Libraries
+   [gprlib]       flyology_allocators.lexch
+   [gprlib]       Flyology.lexch
+   [archive]      libflyology_allocators.a
+   [index]        libflyology_allocators.a
+   [gprlib]       flyology_cachelines.lexch
+   [gprlib]       Flyology_QUIC.lexch
+   [archive]      libFlyology.a
+   [archive]      libflyology_cachelines.a
+   [index]        libflyology_cachelines.a
+   [index]        libFlyology.a
+   [gprlib]       Flyology_HTTP.lexch
+   [archive]      libFlyology_QUIC.a
+   [index]        libFlyology_QUIC.a
+   [archive]      libFlyology_HTTP.a
+   [index]        libFlyology_HTTP.a
+Bind
+   [gprbind]      http_client_pool_races.bexch
+   [gprbind]      http_client_deadline_matrix.bexch
+   [gprbind]      http_client_fragmentation.bexch
+   [Ada]          http_client_pool_races.ali
+   [Ada]          http_client_deadline_matrix.ali
+   [Ada]          http_client_fragmentation.ali
+Link
+   [archive]      libhttp_tests.a
+   [index]        libhttp_tests.a
+   [link]         http_client_pool_races.adb
+   [link]         http_client_deadline_matrix.adb
+   [link]         http_client_fragmentation.adb
+flyology_http test: BEGIN flyology-rate_limit_policy_smoke
+flyology_http test: PASS flyology-rate_limit_policy_smoke
+flyology_http test: BEGIN flyology-http_chunk_encoding-smoke
+flyology_http test: PASS flyology-http_chunk_encoding-smoke
+flyology_http test: BEGIN flyology-websocket_policy-smoke
+flyology_http test: PASS flyology-websocket_policy-smoke
+flyology_http test: BEGIN flyology-websocket_client_policy-smoke
+flyology_http test: PASS flyology-websocket_client_policy-smoke
+flyology_http test: BEGIN flyology-http-decoded_path_policy-smoke
+flyology_http test: PASS flyology-http-decoded_path_policy-smoke
+flyology_http test: BEGIN flyology-http-expect_policy-smoke
+flyology_http test: PASS flyology-http-expect_policy-smoke
+flyology_http test: BEGIN flyology-http-fixed_response_policy-smoke
+flyology_http test: PASS flyology-http-fixed_response_policy-smoke
+flyology_http test: BEGIN flyology-http-header_huffman_policy-smoke
+flyology_http test: PASS flyology-http-header_huffman_policy-smoke
+flyology_http test: BEGIN flyology-http-client_policy-smoke
+flyology_http test: PASS flyology-http-client_policy-smoke
+flyology_http test: BEGIN flyology-http-http_2_frames-smoke
+flyology_http test: PASS flyology-http-http_2_frames-smoke
+flyology_http test: BEGIN flyology-http-http_2_huffman-smoke
+flyology_http test: PASS flyology-http-http_2_huffman-smoke
+flyology_http test: BEGIN flyology-http-http_2_hpack-smoke
+flyology_http test: PASS flyology-http-http_2_hpack-smoke
+flyology_http test: BEGIN flyology-http-http_2_client_connection-smoke
+flyology_http test: PASS flyology-http-http_2_client_connection-smoke
+flyology_http test: BEGIN flyology-http-http_2_payloads-smoke
+flyology_http test: PASS flyology-http-http_2_payloads-smoke
+flyology_http test: BEGIN flyology-http-http_2_policy-smoke
+flyology_http test: PASS flyology-http-http_2_policy-smoke
+flyology_http test: BEGIN flyology-http-http_2_requests-smoke
+flyology_http test: PASS flyology-http-http_2_requests-smoke
+flyology_http test: BEGIN flyology-http-http_2_settings-smoke
+flyology_http test: PASS flyology-http-http_2_settings-smoke
+flyology_http test: BEGIN flyology-http-http_3_control_policy-smoke
+flyology_http test: PASS flyology-http-http_3_control_policy-smoke
+flyology_http test: BEGIN flyology-http-http_3_connection-smoke
+flyology_http test: PASS flyology-http-http_3_connection-smoke
+flyology_http test: BEGIN flyology-http-http_3_client_connection-smoke
+HTTP/3 client stream isolation passed
+flyology_http test: PASS flyology-http-http_3_client_connection-smoke
+flyology_http test: BEGIN development_certificates_smoke
+flyology_http test: PASS development_certificates_smoke
+flyology_http test: BEGIN http3_public_smoke
+flyology_http test: PASS http3_public_smoke
+flyology_http test: BEGIN http3_server_integration
+flyology_http test: PASS http3_server_integration
+flyology_http test: BEGIN http3_handshake_abandon
+flyology_http test: PASS http3_handshake_abandon
+flyology_http test: BEGIN http3_handshake_recovery
+HTTP/3 handshake recovered after dropping CLIENT_INITIAL
+HTTP/3 handshake recovered after dropping SERVER_HANDSHAKE
+flyology_http HTTP/3 handshake probe timeout verified
+flyology_http test: PASS http3_handshake_recovery
+flyology_http test: BEGIN flyology-http-http_3_frame_policy-smoke
+flyology_http test: PASS flyology-http-http_3_frame_policy-smoke
+flyology_http test: BEGIN flyology-http-http_3_header_policy-smoke
+flyology_http test: PASS flyology-http-http_3_header_policy-smoke
+flyology_http test: BEGIN flyology-http-http_3_message_policy-smoke
+flyology_http test: PASS flyology-http-http_3_message_policy-smoke
+flyology_http test: BEGIN flyology-http-http_3_settings_policy-smoke
+flyology_http test: PASS flyology-http-http_3_settings_policy-smoke
+flyology_http test: BEGIN flyology-http-http_3_stream_policy-smoke
+flyology_http test: PASS flyology-http-http_3_stream_policy-smoke
+flyology_http test: BEGIN flyology-http-http_3_stream_receive_policy-smoke
+flyology_http test: PASS flyology-http-http_3_stream_receive_policy-smoke
+flyology_http test: BEGIN flyology-http-qpack_field_section_policy-smoke
+flyology_http test: PASS flyology-http-qpack_field_section_policy-smoke
+flyology_http test: BEGIN flyology-http-qpack_integer_policy-smoke
+flyology_http test: PASS flyology-http-qpack_integer_policy-smoke
+flyology_http test: BEGIN flyology-http-qpack_static_table-smoke
+flyology_http test: PASS flyology-http-qpack_static_table-smoke
+flyology_http test: BEGIN flyology-http-route_parameter_policy-smoke
+flyology_http test: PASS flyology-http-route_parameter_policy-smoke
+flyology_http test: BEGIN flyology-websocket_deflate_policy_smoke
+flyology_http test: PASS flyology-websocket_deflate_policy_smoke
+flyology_http test: BEGIN buffers_smoke
+flyology_http test: PASS buffers_smoke
+flyology_http test: BEGIN tls_smoke
+flyology_http test: PASS tls_smoke
+flyology_http test: BEGIN http_smoke
+flyology_http test: PASS http_smoke
+flyology_http test: BEGIN http_operations_smoke
+flyology_http test: PASS http_operations_smoke
+flyology_http test: BEGIN http_client_composable_smoke
+flyology_http test: PASS http_client_composable_smoke
+flyology_http test: BEGIN http_client_composable_stale_reuse
+flyology_http test: PASS http_client_composable_stale_reuse
+flyology_http test: BEGIN http1_sse_client_integration
+flyology_http test: PASS http1_sse_client_integration
+flyology_http test: BEGIN http_client_smoke
+flyology_http test: PASS http_client_smoke
+flyology_http test: BEGIN http_client_addressing
+flyology_http test: PASS http_client_addressing
+flyology_http test: BEGIN http_client_authentication
+HTTP client authentication passed
+flyology_http test: PASS http_client_authentication
+flyology_http test: BEGIN http_client_boundaries_smoke
+flyology_http test: PASS http_client_boundaries_smoke
+flyology_http test: BEGIN http_client_body_adapters_smoke
+flyology_http test: PASS http_client_body_adapters_smoke
+flyology_http test: BEGIN http_client_upload_controls_smoke
+flyology_http test: PASS http_client_upload_controls_smoke
+flyology_http test: BEGIN http_client_streaming_smoke
+flyology_http test: PASS http_client_streaming_smoke
+flyology_http test: BEGIN http_unix_client_smoke
+flyology_http test: PASS http_unix_client_smoke
+flyology_http test: BEGIN http_client_rfc_corpus
+flyology_http test: PASS http_client_rfc_corpus
+flyology_http test: BEGIN http_client_parser_matrix
+flyology_http test: PASS http_client_parser_matrix
+flyology_http test: BEGIN http_client_parser_randomized
+flyology_http test: PASS http_client_parser_randomized
+flyology_http test: BEGIN http_client_pool_model
+flyology_http test: PASS http_client_pool_model
+flyology_http test: BEGIN http_client_redirects
+HTTP client redirects passed
+flyology_http test: PASS http_client_redirects
+flyology_http test: BEGIN http_client_tls_closure
+flyology_http test: PASS http_client_tls_closure
+flyology_http test: BEGIN http_client_tls_smoke
+flyology_http test: PASS http_client_tls_smoke
+flyology_http test: BEGIN http2_server_integration
+HTTP/2 server integration passed
+flyology_http test: PASS http2_server_integration
+flyology_http test: BEGIN websocket_client_smoke
+flyology_http test: PASS websocket_client_smoke
+flyology_http test: BEGIN websocket_client_tls_smoke
+flyology_http test: PASS websocket_client_tls_smoke
+flyology_http test: BEGIN http_server_audit
+flyology_http test: PASS http_server_audit
+flyology_http test: BEGIN http_routing_audit
+HTTP routing audit passed
+flyology_http test: PASS http_routing_audit
+flyology_http test: BEGIN http2_server_audit
+fixed response overrun and underrun stream isolation
+  ok   /fixed-overrun resets its stream
+  ok   a later stream survives /fixed-overrun
+  ok   /fixed-underrun resets its stream
+  ok   a later stream survives /fixed-underrun
+  ok   /fixed-exception resets its stream
+  ok   a later stream survives /fixed-exception
+S3 request authority, occurrences, and trailers over HTTP/2
+  canonicalization response "authority=localhost headers=2 repeat=two body=abc trailers=3 checksum=second"
+  ok   authority and physical fields survive through trailers
+finding 7: closed-stream DATA connection window accounting
+  connection credit returned: 32768 of 32768 closed-stream bytes
+  ok   closed-stream DATA is credited back on the connection window
+finding 8: reused stream slot receive window
+  ok   a slot reused after a mid-upload reset accepts legal DATA
+finding 14: continuation pin released on a torn-down stream
+  flood delivered 1048576 of 1048576 bytes across 129 field-section fragments
+  ok   the pinned field section is completed, never truncated
+  ok   the reset was parsed while the connection output was pinned
+  ok   connection output resumes after the pinned stream is released
+finding 33: idle-stream connection error code
+  idle DATA GOAWAY code 1, idle WINDOW_UPDATE GOAWAY code 1
+  ok   idle DATA is a connection PROTOCOL_ERROR
+  ok   idle WINDOW_UPDATE is a connection PROTOCOL_ERROR
+findings 3, 16, 31: unvalidated HTTP/2 pseudo-header octets
+  spliced :authority yielded a refused stream
+  ok   an :authority carrying CR LF is refused
+  ok   no Transfer-Encoding is injected through :authority
+  control-byte :path yielded a refused stream
+  ok   a :path carrying CR LF is refused
+  ok   no forged line reaches the request target
+  asterisk-form GET yielded a refused stream
+  ok   asterisk-form :path is refused for GET
+  ok   asterisk-form :path is still admitted for OPTIONS
+finding 9: HPACK table across a refused field section
+  ok   a pseudo-field after a regular field is a stream error
+  index 62 on the following stream yielded "probe=real decoy="
+  ok   the dynamic table still matches the peer's encoder
+  ok   no field the peer never sent reaches the application
+finding 15: CONTINUATION outside an open field section
+  buffered pseudo-headers yielded GOAWAY code 1
+  ok   a CONTINUATION outside a field section is a connection error
+  ok   CONTINUATION residue never becomes a served request
+  buffered regular field yielded GOAWAY code 1
+  ok   residue never prepends the next field section
+  ok   a legally fragmented field section is still served
+finding 4: SSE field validation on the HTTP/2 backend
+  newline event name produced a refused stream
+  ok   a newline in an SSE event name cannot forge a data line
+  ok   a newline in an SSE id cannot forge a data line
+  newline comment produced ": ping
+: data: forged
+
+"
+  ok   a newline in an SSE comment cannot forge a data line
+  ok   invalid UTF-8 never reaches the SSE body
+  ok   a well-formed SSE event is still served over HTTP/2
+  routed asterisk-form GET yielded a refused stream
+  ok   asterisk-form :path never binds a route parameter
+finding 15: CONTINUATION outside a client field section
+  ok   a legally fragmented response section is still accepted
+  the client response failed the connection
+  ok   an unsolicited CONTINUATION fails the client connection
+  ok   residue never prepends a response field section
+  ok   a reset stream reports an invalid composable response
+  ok   a fragmented late CONTINUATION receives GOAWAY
+HTTP/2 server audit passed
+flyology_http test: PASS http2_server_audit
+flyology_http test: BEGIN http_client_audit
+HTTP client audit passed
+flyology_http test: PASS http_client_audit
+flyology_http test: BEGIN websocket_server_audit
+flyology_http test: PASS websocket_server_audit
+flyology_http test: PASS http_client_composable_smoke (lightweight)
+flyology_http test: PASS http_client_composable_stale_reuse (lightweight)
+flyology_http test: PASS http_client_pool_races
+flyology_http test: PASS http_client_deadline_matrix
+flyology_http test: PASS http_client_fragmentation
+composable HTTP/3 client passed
+flyology_http test: PASS http3_client_composable_smoke (native)
+composable HTTP/3 client passed
+flyology_http test: PASS http3_client_composable_smoke (lightweight)
+Flyology HTTP behavioral suite passed

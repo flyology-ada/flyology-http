@@ -1,0 +1,4 @@
+flyology_iri wpt-gate-test: PASS missing corpus fails a required run
+flyology_iri wpt-gate-test: PASS an unset corpus skips the gate and reports the skip
+flyology_iri wpt-gate-test: PASS the workflow pins the corpus by commit and requires the gate
+flyology_iri WPT gate wiring passed

@@ -1,0 +1,749 @@
+[
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-1",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_client_pool_1`"
+  },
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-2",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_client_pool_2`"
+  },
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-3",
+    "discovery": "P1",
+    "verdict": "DUPLICATE of H1-CLIENT-2 (CONFIRMED there)",
+    "final": "P1",
+    "severity": "DUP",
+    "repro": "`repro_h1_client_2` (owned by H1-CLIENT)"
+  },
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-4",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_client_pool_4`"
+  },
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-5",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "none possible (documentation and dead proved code)"
+  },
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-6",
+    "discovery": "P2",
+    "verdict": "PARTIALLY CONFIRMED (code disagreement yes; race UNVERIFIABLE-BY-SPIKE)",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "none"
+  },
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-7",
+    "discovery": "P2",
+    "verdict": "PARTIALLY CONFIRMED (defect yes; \"reachable\" no)",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "none"
+  },
+  {
+    "area": "CLIENT-POOL",
+    "id": "CLIENT-POOL-8",
+    "discovery": "P2",
+    "verdict": "PARTIALLY CONFIRMED (defect yes; trigger needs a seam)",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "none"
+  },
+  {
+    "area": "H1-CLIENT",
+    "id": "H1-CLIENT-1",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`flyology-http-http_3_header_policy-repro_h1_client_1`"
+  },
+  {
+    "area": "H1-CLIENT",
+    "id": "H1-CLIENT-2",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h1_client_2`"
+  },
+  {
+    "area": "H1-CLIENT",
+    "id": "H1-CLIENT-3",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_client_3`"
+  },
+  {
+    "area": "H1-CLIENT",
+    "id": "H1-CLIENT-4",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_client_4`"
+  },
+  {
+    "area": "H1-CLIENT",
+    "id": "H1-CLIENT-5",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_client_5`"
+  },
+  {
+    "area": "H1-CLIENT",
+    "id": "H1-CLIENT-6",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_client_6`"
+  },
+  {
+    "area": "H1-CLIENT",
+    "id": "H1-CLIENT-7",
+    "discovery": "(new)",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h1_client_7`"
+  },
+  {
+    "area": "H1-SERVER",
+    "id": "H1-SERVER-1",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_server_1`"
+  },
+  {
+    "area": "H1-SERVER",
+    "id": "H1-SERVER-2",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_server_2`"
+  },
+  {
+    "area": "H1-SERVER",
+    "id": "H1-SERVER-3",
+    "discovery": "P2",
+    "verdict": "PARTIALLY CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_server_3`"
+  },
+  {
+    "area": "H1-SERVER",
+    "id": "H1-SERVER-4",
+    "discovery": "P2",
+    "verdict": "CONFIRMED (documented limitation)",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h1_server_4`"
+  },
+  {
+    "area": "H1-SERVER",
+    "id": "H1-SERVER-5",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "**P1** (raised)",
+    "severity": "P1",
+    "repro": "`repro_h1_server_5`"
+  },
+  {
+    "area": "H1-SERVER",
+    "id": "H1-SERVER-6",
+    "discovery": "\u2014 (probe)",
+    "verdict": "REFUTED \u2014 no smuggling primitive found",
+    "final": "n/a",
+    "severity": "REFUTED",
+    "repro": "`repro_h1_server_6`"
+  },
+  {
+    "area": "H1-SERVER",
+    "id": "H1-SERVER-7",
+    "discovery": "\u2014 (probe)",
+    "verdict": "REFUTED \u2014 no body/keep-alive desync found",
+    "final": "n/a",
+    "severity": "REFUTED",
+    "repro": "`repro_h1_server_7`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-1",
+    "discovery": "P0",
+    "verdict": "CONFIRMED",
+    "final": "P0",
+    "severity": "P0",
+    "repro": "`flyology-http-http_2_settings-repro_h2_1`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-2",
+    "discovery": "P0",
+    "verdict": "CONFIRMED",
+    "final": "P0",
+    "severity": "P0",
+    "repro": "`repro_h2_2`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-3",
+    "discovery": "P1",
+    "verdict": "PARTIALLY CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h2_3`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-4",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h2_4`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-5",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h2_5`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-6",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`flyology-http-http_2_requests-repro_h2_6`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-7",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h2_7`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-8",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h2_8`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-9",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h2_9`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-10",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h2_10`"
+  },
+  {
+    "area": "H2",
+    "id": "H2-11",
+    "discovery": "P2",
+    "verdict": "PARTIALLY CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h2_11`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-1",
+    "discovery": "P0",
+    "verdict": "CONFIRMED",
+    "final": "P0",
+    "severity": "P0",
+    "repro": "`repro_h3_qpack_1`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-2",
+    "discovery": "P0",
+    "verdict": "CONFIRMED",
+    "final": "P0",
+    "severity": "P0",
+    "repro": "`flyology-http-http_3_stream_receive_policy-repro_h3_qpack_2`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-3",
+    "discovery": "P0",
+    "verdict": "CONFIRMED",
+    "final": "**P1**",
+    "severity": "P1",
+    "repro": "`repro_h3_qpack_3`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-4",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h3_qpack_4`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-5",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h3_qpack_5`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-6",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h3_qpack_6`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-7",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`flyology-http-qpack_field_section_policy-repro_h3_qpack_7`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-8",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`flyology-http-http_3_client_connection-repro_h3_qpack_8`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-9",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_h3_qpack_9`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-10",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h3_qpack_10`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-11",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-http-http_3_message_policy-repro_h3_qpack_11`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-12",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-http-http_3_stream_receive_policy-repro_h3_qpack_12`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-13",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_h3_qpack_13`"
+  },
+  {
+    "area": "H3-QPACK",
+    "id": "H3-QPACK-14",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-http-http_3_header_policy-repro_h3_qpack_14`"
+  },
+  {
+    "area": "IRI",
+    "id": "IRI-1",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_iri_1` (shell)"
+  },
+  {
+    "area": "IRI",
+    "id": "IRI-2",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_iri_2` (shell)"
+  },
+  {
+    "area": "IRI",
+    "id": "IRI-3",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_iri_3` (shell)"
+  },
+  {
+    "area": "IRI",
+    "id": "IRI-4",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "**P1** (raised)",
+    "severity": "P1",
+    "repro": "`repro_iri_4`"
+  },
+  {
+    "area": "LIFETIME",
+    "id": "LIFETIME-1",
+    "discovery": "P2",
+    "verdict": "PARTIALLY CONFIRMED (omission yes; every runtime consequence the entry claims, no)",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "none possible \u2014 see entry"
+  },
+  {
+    "area": "LIFETIME",
+    "id": "LIFETIME-2",
+    "discovery": "P2",
+    "verdict": "CONFIRMED (all four claimed evasions, plus a fifth)",
+    "final": "P1 on the test-integrity axis; P2 if forced onto the product rubric",
+    "severity": "P1",
+    "repro": "`repro_lifetime_2.sh` (shell)"
+  },
+  {
+    "area": "LIFETIME",
+    "id": "LIFETIME-3",
+    "discovery": "P2",
+    "verdict": "CONFIRMED, and stronger than recorded: both `.ads` sentences are false, not merely unpinned",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_lifetime_3`, with controls `repro_lifetime_3b`/`3c`/`3d`"
+  },
+  {
+    "area": "LIFETIME",
+    "id": "LIFETIME-4",
+    "discovery": "P2",
+    "verdict": "DUPLICATE of CLIENT-POOL-8 (primary); on its own terms DOCUMENTED LIMITATION",
+    "final": "P2",
+    "severity": "DUP",
+    "repro": "none, and none manufactured"
+  },
+  {
+    "area": "QUIC-TLS",
+    "id": "QUIC-TLS-1",
+    "discovery": "P1",
+    "verdict": "DUPLICATE of QUIC-TRANSPORT-3",
+    "final": "deferred to that entry",
+    "severity": "DUP",
+    "repro": "owned by the QUIC-TRANSPORT verifier"
+  },
+  {
+    "area": "QUIC-TLS",
+    "id": "QUIC-TLS-2",
+    "discovery": "P1",
+    "verdict": "DUPLICATE of QUIC-TRANSPORT-4 (same site, folded at drafting)",
+    "final": "P1 (code path certain; peer breadth not established)",
+    "severity": "DUP",
+    "repro": "`flyology-quic-connection_driver-repro_quic_tls_2`"
+  },
+  {
+    "area": "QUIC-TLS",
+    "id": "QUIC-TLS-3",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "**P1** (raised)",
+    "severity": "P1",
+    "repro": "`flyology-quic-tls_session-repro_quic_tls_3`"
+  },
+  {
+    "area": "QUIC-TLS",
+    "id": "QUIC-TLS-4",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-quic-tls_session-repro_quic_tls_4`"
+  },
+  {
+    "area": "QUIC-TLS",
+    "id": "QUIC-TLS-5",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-quic-connection_driver-repro_quic_tls_5`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-1",
+    "discovery": "P0",
+    "verdict": "CONFIRMED (ratios corrected)",
+    "final": "P0",
+    "severity": "P0",
+    "repro": "`flyology-quic-connection_driver-repro_quic_transport_1`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-2",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`flyology-quic-connection_driver-repro_quic_transport_2`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-3",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`flyology-quic-connection_driver-repro_quic_transport_3`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-4",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`flyology-quic-application_space-repro_quic_transport_4`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-5",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "**P1** (raised)",
+    "severity": "P1",
+    "repro": "`repro_quic_transport_5`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-6",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-quic-application_space-repro_quic_transport_6`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-7",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-quic-application_space-repro_quic_transport_7`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-8",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_quic_transport_8`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-9",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-quic-application_space-repro_quic_transport_9`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-10",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`flyology-quic-connection_driver-repro_quic_transport_10`"
+  },
+  {
+    "area": "QUIC-TRANSPORT",
+    "id": "QUIC-TRANSPORT-11",
+    "discovery": "new",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_quic_transport_11`"
+  },
+  {
+    "area": "ROUTING-MW",
+    "id": "ROUTING-MW-1",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_routing_mw_1`"
+  },
+  {
+    "area": "ROUTING-MW",
+    "id": "ROUTING-MW-2",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P1 (raised)",
+    "severity": "P1",
+    "repro": "`repro_routing_mw_2`"
+  },
+  {
+    "area": "ROUTING-MW",
+    "id": "ROUTING-MW-3",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_routing_mw_3`"
+  },
+  {
+    "area": "ROUTING-MW",
+    "id": "ROUTING-MW-4",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_routing_mw_4`"
+  },
+  {
+    "area": "ROUTING-MW",
+    "id": "ROUTING-MW-5",
+    "discovery": "P2",
+    "verdict": "CONFIRMED (citation corrected)",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_routing_mw_5`"
+  },
+  {
+    "area": "SSE",
+    "id": "SSE-1",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_sse_1`"
+  },
+  {
+    "area": "SSE",
+    "id": "SSE-2",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_sse_2`"
+  },
+  {
+    "area": "SSE",
+    "id": "SSE-3",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_sse_3`"
+  },
+  {
+    "area": "WEBSOCKET",
+    "id": "WEBSOCKET-1",
+    "discovery": "P1",
+    "verdict": "CONFIRMED",
+    "final": "P1",
+    "severity": "P1",
+    "repro": "`repro_websocket_1`"
+  },
+  {
+    "area": "WEBSOCKET",
+    "id": "WEBSOCKET-2",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "**P1** (raised)",
+    "severity": "P1",
+    "repro": "`repro_websocket_2`"
+  },
+  {
+    "area": "WEBSOCKET",
+    "id": "WEBSOCKET-3",
+    "discovery": "P2",
+    "verdict": "CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_websocket_3`"
+  },
+  {
+    "area": "WEBSOCKET",
+    "id": "WEBSOCKET-4",
+    "discovery": "P2",
+    "verdict": "PARTIALLY CONFIRMED",
+    "final": "P2",
+    "severity": "P2",
+    "repro": "`repro_websocket_4`"
+  }
+]
